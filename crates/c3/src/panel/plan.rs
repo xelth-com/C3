@@ -18,6 +18,8 @@ use super::routing::{
 const PANEL_FLOOR_PURPOSES: &[&str] = &["framing", "decision"];
 
 /// The vendor prefix table (`$script:LabVendors`), longest-match-by-order as the plugin walks it.
+/// (0.2.5, wave C1) Every model family of the current roster resolves: `grok` (xAI) joined, and the
+/// OpenAI `o<digit>` reasoning ids resolve in [`model_lab`] (a bare `o` prefix would catch `opus`).
 const LAB_VENDORS: &[(&str, &str)] = &[
     ("qwen", "alibaba"),
     ("deepseek", "deepseek"),
@@ -29,6 +31,7 @@ const LAB_VENDORS: &[(&str, &str)] = &[
     ("mimo", "xiaomi"),
     ("gemini", "google"),
     ("muse", "meta"),
+    ("grok", "xai"),
     ("gpt", "openai"),
     // (0.6.0, wave 29) the claude engine's ids and aliases
     ("claude", "anthropic"),
@@ -51,14 +54,31 @@ pub fn default_size(purpose: &str) -> i32 {
 }
 
 /// `Get-ModelLab`: the lab a model id belongs to by its vendor prefix; `""` when unknown.
+/// (0.2.5, wave C1) An OpenAI `o<digit>` id (`o3`, `o4-mini`) is openai; an id with a `/` that
+/// does not resolve whole (an OpenRouter-style `vendor/model`) is tried by its last segment.
 pub fn model_lab(model: &str) -> String {
     let m = model.trim().to_lowercase();
     if m.is_empty() {
         return String::new();
     }
-    for (prefix, lab) in LAB_VENDORS {
-        if m.starts_with(prefix) {
-            return (*lab).to_string();
+    let by_prefix = |id: &str| -> Option<&'static str> {
+        for (prefix, lab) in LAB_VENDORS {
+            if id.starts_with(prefix) {
+                return Some(*lab);
+            }
+        }
+        let mut chars = id.chars();
+        if chars.next() == Some('o') && chars.next().is_some_and(|c| c.is_ascii_digit()) {
+            return Some("openai");
+        }
+        None
+    };
+    if let Some(lab) = by_prefix(&m) {
+        return lab.to_string();
+    }
+    if let Some((_, last)) = m.rsplit_once('/') {
+        if let Some(lab) = by_prefix(last) {
+            return lab.to_string();
         }
     }
     String::new()
@@ -93,6 +113,21 @@ pub fn entry_lab(declared_lab: &str, model: &str, lineage: &str) -> (String, Lab
         return (v, LabSource::Vendor);
     }
     (lineage.to_lowercase(), LabSource::Singleton)
+}
+
+/// The lab of a roster entry as the panel seats it: (0.6.0, wave 29b, E5) a claude endpoint entry
+/// without a declared `lab` takes the lab of its base URL's host first, else [`entry_lab`] on the
+/// resolved `model` / `lineage`.
+pub fn member_lab(entry: &RosterEntry, model: &str, lineage: &str) -> (String, LabSource) {
+    let host_lab = match (&entry.endpoint, entry.lab.is_empty()) {
+        (Some(ep), true) if entry.auth == "endpoint" => c3_core::claude::lab_of_host(&ep.host_name),
+        _ => "",
+    };
+    if !host_lab.is_empty() {
+        (host_lab.to_string(), LabSource::Vendor)
+    } else {
+        entry_lab(&entry.lab, model, lineage)
+    }
 }
 
 // ------------------------------------------------------------------ endpoint groups + concurrency
@@ -479,8 +514,9 @@ pub struct RoutingRecord {
     pub explored: Vec<String>,
     pub required: Vec<String>,
     /// (C3, M9) the content of the trailing `ext` key: `{ c3: { router: {...} } }` when the
-    /// router used priors or non-default parameters; `None` writes no key, so the record stays
-    /// byte-identical to the plugin's.
+    /// router used priors or non-default parameters, (0.2.5, wave C1) `c3.seating` when the
+    /// one-seat-per-lab / upper-tier rules could change the seats; `None` writes no key, so the
+    /// record stays byte-identical to the plugin's.
     pub ext: Option<serde_json::Value>,
 }
 
@@ -523,6 +559,16 @@ pub struct PanelRoutingResult {
     pub size_asked: i64,
     pub routing: RoutingRecord,
     pub warnings: Vec<String>,
+}
+
+/// (0.2.5, wave C1) The not-picked reason of a member kept out because its lab holds a seat.
+pub fn lab_seated_reason(lab: &str, by: i64) -> String {
+    format!("lab {lab} already seated by #{by}")
+}
+
+/// Whether a not-picked reason is [`lab_seated_reason`]'s.
+pub fn is_lab_seated_reason(reason: &str) -> bool {
+    reason.starts_with("lab ") && reason.contains(" already seated by #")
 }
 
 /// Round to `d` decimals (banker's rounding matches PowerShell's `[Math]::Round`).
@@ -606,18 +652,7 @@ pub fn select_panel_routing_with(
             "codex".into()
         };
         let lineage = format_reviewer_lineage(&m.provider, &m.model, &engine);
-        // (0.6.0, wave 29b, E5) a claude endpoint entry: the lab of its base URL's host first
-        let host_lab = match (&m.entry.endpoint, m.entry.lab.is_empty()) {
-            (Some(ep), true) if m.entry.auth == "endpoint" => {
-                c3_core::claude::lab_of_host(&ep.host_name)
-            }
-            _ => "",
-        };
-        let (lab, lab_source) = if !host_lab.is_empty() {
-            (host_lab.to_string(), LabSource::Vendor)
-        } else {
-            entry_lab(&m.entry.lab, &m.model, &lineage)
-        };
+        let (lab, lab_source) = member_lab(&m.entry, &m.model, &lineage);
         let scored = router::score(
             ratings,
             router::Lineage {
@@ -670,6 +705,14 @@ pub fn select_panel_routing_with(
         .collect();
     let eligible_count = eligible_idx.len() as i64;
 
+    // (0.2.5, wave C1) A C3 panel seats ONE entry per lab (the model's maker): two models of one
+    // vendor repeat each other, so their agreement is not corroboration. Not for the routed bare
+    // default (one reviewer), not for -PanelAll (every eligible entry, warned below), and not in the
+    // plugin-compat run (`C3_PLUGIN_COMPAT=1`), whose oracle texts are the plugin's draw.
+    let compat = c3_core::spelling::plugin();
+    let lab_rule = !compat && size_source != "bare-default" && size_source != "-PanelAll";
+    let panel_all = !compat && size_source == "-PanelAll";
+
     let mut k: i64 = size as i64;
     if k <= 0 {
         k = eligible_count;
@@ -717,33 +760,82 @@ pub fn select_panel_routing_with(
         .collect();
     let (seed_bytes, seed_hex, _) = panel_seed(task, purpose, brief_sha, &lineages, nonce);
 
+    // The draw candidates: the eligible members in roster order.
+    let cands: Vec<Candidate> = eligible_idx
+        .iter()
+        .map(|&i| Candidate {
+            position: seated[i].position,
+            lab: seated[i].lab.clone(),
+            // (wave 9) budget-aware: the lineage's score scaled by its plan's multiplier.
+            weight: seated[i].score.score * seated[i].mult,
+            pinned: seated[i].required,
+        })
+        .collect();
+    // (0.2.5, wave C1) one seat per lab caps the panel at every pin plus one seat per other lab.
+    let k_before_labs = k;
+    if lab_rule {
+        k = k.min(routing::lab_seat_cap(&cands) as i64);
+    }
+    // (0.2.5, wave C1) the upper tier: on a weighty purpose a panel of two or more seats holds at
+    // least one `panel: weighty` entry when one is eligible (available, not held, not on-request -
+    // every such skip already left it out of the eligible).
+    let tier: Vec<i64> = if lab_rule && c3_core::purpose::is_weighty(purpose) && k >= 2 {
+        eligible_idx
+            .iter()
+            .filter(|&&i| members[i].entry.panel == "weighty")
+            .map(|&i| seated[i].position)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     // Seats: (member index into `seated`, rule).
     let mut seats: Vec<(usize, i32, String)> = Vec::new();
     // (C3 panel re-seat (c)) the eligible-but-unseated members in draw order, for promotion when a
     // seat is lost to a before-start preflight failure.
     let mut reserve_positions: Vec<i64> = Vec::new();
+    // (0.2.5, wave C1) the eligible kept out because their lab holds a seat: (position, by).
+    let mut kept_out: Vec<(i64, i64)> = Vec::new();
+    let seat_index =
+        |position: i64| -> usize { seated.iter().position(|m| m.position == position).unwrap() };
     if mode == "routed" {
-        let cands: Vec<Candidate> = eligible_idx
-            .iter()
-            .map(|&i| Candidate {
-                position: seated[i].position,
-                lab: seated[i].lab.clone(),
-                // (wave 9) budget-aware: the lineage's score scaled by its plan's multiplier.
-                weight: seated[i].score.score * seated[i].mult,
-                pinned: seated[i].required,
-            })
-            .collect();
-        let drawn = invoke_panel_draw(&cands, k as usize, &seed_bytes, neutral, ROUTING_EXPLORE);
-        // the reserve continues the SAME seeded draw past the panel's seats
-        for s in routing::invoke_panel_draw_reserve(&cands, &drawn, &seed_bytes, ROUTING_EXPLORE) {
-            reserve_positions.push(s.position);
-        }
+        let drawn = if lab_rule {
+            let d = routing::invoke_lab_draw(
+                &cands,
+                k as usize,
+                &seed_bytes,
+                neutral,
+                ROUTING_EXPLORE,
+                &tier,
+            );
+            for s in
+                routing::invoke_lab_draw_reserve(&cands, &d.seats, &seed_bytes, ROUTING_EXPLORE)
+            {
+                reserve_positions.push(s.position);
+            }
+            kept_out = d.lab_seated;
+            d.seats
+        } else {
+            let drawn =
+                invoke_panel_draw(&cands, k as usize, &seed_bytes, neutral, ROUTING_EXPLORE);
+            // the reserve continues the SAME seeded draw past the panel's seats
+            for s in
+                routing::invoke_panel_draw_reserve(&cands, &drawn, &seed_bytes, ROUTING_EXPLORE)
+            {
+                reserve_positions.push(s.position);
+            }
+            drawn
+        };
         for s in drawn {
-            let mi = seated
-                .iter()
-                .position(|m| m.position == s.position)
-                .unwrap();
-            seats.push((mi, s.slot, s.rule));
+            seats.push((seat_index(s.position), s.slot, s.rule));
+        }
+    } else if lab_rule {
+        // roster order, one seat per lab (the first entry of each lab in roster order)
+        let (d, reserve) = routing::roster_lab_seats(&cands, k as usize, &tier);
+        reserve_positions = reserve;
+        kept_out = d.lab_seated;
+        for s in d.seats {
+            seats.push((seat_index(s.position), s.slot, s.rule));
         }
     } else {
         // roster order: required first, then the rest, up to k.
@@ -788,7 +880,10 @@ pub fn select_panel_routing_with(
     for &i in &eligible_idx {
         if seated[i].slot <= 0 {
             seated[i].state = "not-picked".into();
-            seated[i].reason = format!("panel size {k}");
+            seated[i].reason = match kept_out.iter().find(|(p, _)| *p == seated[i].position) {
+                Some((_, by)) => lab_seated_reason(&seated[i].lab, *by),
+                None => format!("panel size {k}"),
+            };
         }
     }
 
@@ -799,12 +894,60 @@ pub fn select_panel_routing_with(
             "panel size raised: asked {size_asked}, required {pinned_count}"
         ));
     }
-    if k < size_asked {
+    if k < k_before_labs {
+        warnings.push(format!(
+            "panel size reduced: asked {size_asked}, eligible {eligible_count}, one seat per lab leaves {k} (--panel-all seats every entry)"
+        ));
+    } else if k < size_asked {
         warnings.push(format!(
             "panel size reduced: asked {size_asked}, eligible {eligible_count}"
         ));
     }
-    if mode == "routed" {
+    // (0.2.5, wave C1) two required reviewers of one lab are both seated (an explicit ask), and
+    // -PanelAll seats every entry: say once which labs hold more than one seat.
+    let shared_labs = |only_pinned: bool| -> Vec<(String, Vec<i64>)> {
+        let mut by_lab: Vec<(String, Vec<i64>)> = Vec::new();
+        for (mi, _, _) in &seats {
+            let m = &seated[*mi];
+            if only_pinned && !m.required {
+                continue;
+            }
+            match by_lab.iter_mut().find(|(l, _)| *l == m.lab) {
+                Some((_, ps)) => ps.push(m.position),
+                None => by_lab.push((m.lab.clone(), vec![m.position])),
+            }
+        }
+        by_lab.retain(|(_, ps)| ps.len() > 1);
+        by_lab
+    };
+    let hash_list = |ps: &[i64]| -> String {
+        ps.iter()
+            .map(|p| format!("#{p}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if lab_rule {
+        for (lab, ps) in shared_labs(true) {
+            warnings.push(format!(
+                "required reviewers {} share lab {lab} - each is seated because it is required (a panel otherwise seats one entry per lab)",
+                hash_list(&ps)
+            ));
+        }
+    }
+    if panel_all {
+        let shared = shared_labs(false);
+        if !shared.is_empty() {
+            let labs: Vec<String> = shared
+                .iter()
+                .map(|(lab, ps)| format!("lab {lab} holds {} ({})", ps.len(), hash_list(ps)))
+                .collect();
+            warnings.push(format!(
+                "--panel-all seats every eligible entry: {} - a panel otherwise seats one entry per lab",
+                labs.join("; ")
+            ));
+        }
+    }
+    if mode == "routed" || lab_rule {
         for &i in &eligible_idx {
             if seated[i].lab_source == LabSource::Singleton {
                 warnings.push(format!(
@@ -829,6 +972,21 @@ pub fn select_panel_routing_with(
         .iter()
         .filter(|(_, _, r)| r.starts_with("lab-"))
         .count() as i64;
+    // (0.2.5, wave C1) The record says when the C3 seating rules could seat differently from the
+    // plugin's draw - two eligible entries share a lab, or an upper-tier seat was drawn - so `c3
+    // router replay` replays it with the same rules: `ext.c3.seating = {labs: "one-per-lab", tier:
+    // [the upper-tier positions, empty when the guarantee was not in force]}`. Otherwise the draws
+    // are the same and the record stays the plugin's.
+    let mut ext = router::routing_ext(ctx, &prior_uses);
+    let labs_shared = cands
+        .iter()
+        .enumerate()
+        .any(|(i, c)| cands[..i].iter().any(|o| o.lab == c.lab));
+    let tier_seated = seats.iter().any(|(_, _, r)| r.starts_with("tier"));
+    if lab_rule && (labs_shared || tier_seated) {
+        let v = ext.get_or_insert_with(|| serde_json::json!({ "c3": {} }));
+        v["c3"]["seating"] = serde_json::json!({ "labs": "one-per-lab", "tier": tier });
+    }
     let routing = RoutingRecord {
         mode: mode.clone(),
         order: order.to_string(),
@@ -875,7 +1033,7 @@ pub fn select_panel_routing_with(
             .filter(|&&i| seated[i].required)
             .map(|&i| seated[i].lineage.clone())
             .collect(),
-        ext: router::routing_ext(ctx, &prior_uses),
+        ext,
     };
 
     let picked: Vec<SeatedMember> = seats.iter().map(|(mi, _, _)| seated[*mi].clone()).collect();
@@ -1365,6 +1523,326 @@ mod tests {
         assert_eq!(res.routing.fallback, "no ratings");
         // Priors were loaded, so the record still names them.
         assert!(res.routing.ext.is_some());
+    }
+
+    // ------------------------------------------------ (0.2.5, wave C1) one seat per lab, the tier
+
+    fn input<'a>(
+        members: &'a [MemberInput],
+        size: i32,
+        size_source: &'a str,
+        purpose: &'a str,
+        nonce: &'a str,
+        required: &'a [i64],
+    ) -> PanelRoutingInput<'a> {
+        PanelRoutingInput {
+            members,
+            size,
+            size_source,
+            order: "routed",
+            ratings: &[],
+            purpose,
+            topics: &[],
+            utc_now: Utc::now(),
+            task: "task",
+            brief_sha: "sha",
+            nonce,
+            nonce_source: "-PanelSeed",
+            required,
+        }
+    }
+
+    fn weighty(mut m: MemberInput) -> MemberInput {
+        m.entry.panel = "weighty".into();
+        m
+    }
+
+    /// A claude endpoint entry on a made-up host (no lab of its own).
+    fn endpoint_member(position: usize, provider: &str, model: &str) -> MemberInput {
+        let mut m = member(position, provider, model, "run");
+        m.engine = "claude".into();
+        m.entry.engine = "claude".into();
+        m.entry.auth = "endpoint".into();
+        m.entry.endpoint = Some(c3_core::claude::ClaudeEndpoint {
+            base_url: "https://llm.example.test/anthropic".into(),
+            canonical: "https://llm.example.test/anthropic".into(),
+            host_name: "llm.example.test".into(),
+            env_key: "EXAMPLE_KEY".into(),
+            ..Default::default()
+        });
+        m
+    }
+
+    /// Ratings that put `model` (provider `prov`, codex engine) over the routed threshold, so the
+    /// draw routes.
+    fn ratings_for(prov: &str, model: &str, purpose: &str) -> Vec<Rating> {
+        ratings_on(prov, model, "codex", purpose)
+    }
+
+    fn ratings_on(prov: &str, model: &str, engine: &str, purpose: &str) -> Vec<Rating> {
+        let now = Utc::now().fixed_offset();
+        (0..3)
+            .map(|_| Rating {
+                provider: prov.into(),
+                model: model.into(),
+                engine: engine.into(),
+                purpose: purpose.into(),
+                topics: vec![],
+                consult_when: Some(now),
+                useful: "yes".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn model_lab_covers_the_roster_families() {
+        for (id, lab) in [
+            ("grok-4.7", "xai"),
+            ("muse-spark-1.3-contributor", "meta"),
+            ("muse-wonder-1.0", "meta"),
+            ("deepseek-v4.1-flash-1017", "deepseek"),
+            ("qwen4-max", "alibaba"),
+            ("kimi-code/k3.1-pro", "moonshot"),
+            ("kimi-code/kimi-for-coding", "moonshot"),
+            ("k3.1-pro", "moonshot"),
+            ("glm-5.3-flash", "zhipu"),
+            ("mimo-v2.6-pro", "xiaomi"),
+            ("gemini-3.8-flash-high", "google"),
+            ("gpt-6.2-astra", "openai"),
+            ("o3", "openai"),
+            ("o4-mini", "openai"),
+            ("claude-opus-5-5", "anthropic"),
+            ("opus", "anthropic"),
+            ("dola-seed-2-0-pro", "bytedance"),
+            ("seed-oss", "bytedance"),
+            // an OpenRouter-style id resolves by its last segment
+            ("x-ai/grok-5", "xai"),
+            ("google/gemini-4", "google"),
+        ] {
+            assert_eq!(model_lab(id), lab, "{id}");
+        }
+        assert_eq!(model_lab("orca-1"), "");
+        // no singleton warning for a roster family any more
+        let members = vec![
+            member(1, "grok", "grok-4.7", "run"),
+            member(2, "meta", "muse-spark-1.3-contributor", "run"),
+        ];
+        let res = select_panel_routing(&input(&members, 2, "purpose", "framing", "n", &[]));
+        assert!(
+            !res.warnings.iter().any(|w| w.contains("no lab known")),
+            "{:?}",
+            res.warnings
+        );
+    }
+
+    // The 2026-11-20 panel (roster order, no ratings): glm-5.3, glm-5.3-flash, mimo - the second
+    // GLM is kept out, the next lab takes its seat.
+    #[test]
+    fn two_glm_entries_never_sit_in_one_panel() {
+        let members = vec![
+            endpoint_member(1, "ZAI-claude", "glm-5.3"),
+            endpoint_member(2, "ZAI-claude", "glm-5.3-flash"),
+            endpoint_member(3, "mimo-claude", "mimo-v2.6-pro"),
+            member(4, "gemini", "gemini-3.8-flash-high", "run"),
+        ];
+        let res = select_panel_routing(&input(&members, 3, "purpose", "framing", "n", &[]));
+        assert_eq!(res.routing.mode, "roster");
+        let picked: Vec<i64> = res.picked.iter().map(|p| p.position).collect();
+        assert_eq!(picked, vec![1, 3, 4]);
+        let m2 = res.members.iter().find(|m| m.position == 2).unwrap();
+        assert_eq!(m2.state, "not-picked");
+        assert_eq!(m2.reason, "lab zhipu already seated by #1");
+        assert!(is_lab_seated_reason(&m2.reason));
+        // the reserve never holds a seated lab
+        assert!(res.reserve.iter().all(|m| m.position != 2));
+        // the record says so, for the replay
+        let ext = res.routing.ext.expect("seating recorded");
+        assert_eq!(ext["c3"]["seating"]["labs"], "one-per-lab");
+        // routed (with ratings), over many seeds: never two zhipu seats
+        let ratings = ratings_on("ZAI-claude", "glm-5.3-flash", "claude", "framing");
+        for n in 1..=200 {
+            let nonce = n.to_string();
+            let mut inp = input(&members, 3, "purpose", "framing", &nonce, &[]);
+            inp.ratings = &ratings;
+            let res = select_panel_routing(&inp);
+            assert_eq!(res.routing.mode, "routed");
+            let labs: Vec<&str> = res.picked.iter().map(|p| p.lab.as_str()).collect();
+            assert_eq!(
+                labs.iter().filter(|l| **l == "zhipu").count(),
+                1,
+                "nonce {n}: {labs:?}"
+            );
+            // the better-rated flash is zhipu's pick
+            assert!(res.picked.iter().any(|p| p.position == 2), "nonce {n}");
+        }
+    }
+
+    // Qwen and DeepSeek behind ONE label are two labs: both seatable.
+    #[test]
+    fn qwen_and_deepseek_behind_one_label_are_two_labs() {
+        let members = vec![
+            endpoint_member(1, "alibaba-claude", "qwen4-max"),
+            endpoint_member(2, "alibaba-claude", "deepseek-v4.1-flash-1017"),
+            endpoint_member(3, "byteplus-claude", "deepseek-v4-1-flash"),
+        ];
+        let res = select_panel_routing(&input(&members, 3, "-PanelSize", "framing", "n", &[]));
+        let picked: Vec<(i64, &str)> = res
+            .picked
+            .iter()
+            .map(|p| (p.position, p.lab.as_str()))
+            .collect();
+        assert_eq!(picked, vec![(1, "alibaba"), (2, "deepseek")]);
+        // the second deepseek (another label) is kept out, and the size says why
+        let m3 = res.members.iter().find(|m| m.position == 3).unwrap();
+        assert_eq!(m3.reason, "lab deepseek already seated by #2");
+        assert!(res
+            .warnings
+            .iter()
+            .any(|w| w.contains("one seat per lab leaves 2")));
+    }
+
+    // --require naming two entries of one lab: both seated, with a warning; -PanelAll seats every
+    // entry and warns once; the bare default keeps the plugin's draw.
+    #[test]
+    fn require_two_of_one_lab_seats_both_with_a_warning() {
+        let members = vec![
+            member(1, "ZAI", "glm-5.3", "run"),
+            member(2, "ZAI", "glm-5.3-flash", "run"),
+            member(3, "ZAI", "glm-5.2", "run"),
+            member(4, "gemini", "gemini-3", "run"),
+        ];
+        let res = select_panel_routing(&input(&members, 3, "purpose", "framing", "n", &[1, 2]));
+        let picked: Vec<(i64, &str)> = res
+            .picked
+            .iter()
+            .map(|p| (p.position, p.rule.as_str()))
+            .collect();
+        assert_eq!(
+            picked,
+            vec![(1, "required"), (2, "required"), (4, "roster")]
+        );
+        assert_eq!(
+            res.members.iter().find(|m| m.position == 3).unwrap().reason,
+            "lab zhipu already seated by #1"
+        );
+        let w: Vec<&String> = res
+            .warnings
+            .iter()
+            .filter(|w| w.starts_with("required reviewers #1, #2 share lab zhipu"))
+            .collect();
+        assert_eq!(w.len(), 1, "{:?}", res.warnings);
+
+        let all = select_panel_routing(&input(&members, 0, "-PanelAll", "framing", "n", &[]));
+        assert_eq!(all.picked.len(), 4);
+        let w: Vec<&String> = all
+            .warnings
+            .iter()
+            .filter(|w| w.starts_with("--panel-all seats every eligible entry"))
+            .collect();
+        assert_eq!(w.len(), 1, "{:?}", all.warnings);
+        assert!(w[0].contains("lab zhipu holds 3 (#1, #2, #3)"), "{}", w[0]);
+        assert!(
+            all.routing.ext.is_none(),
+            "-PanelAll keeps the plugin's record"
+        );
+
+        // the routed bare default (one reviewer) draws over every entry as before: across seeds
+        // both GLM entries can be the pick (one-per-lab would always take the first)
+        let two = vec![
+            member(1, "ZAI", "glm-5.3", "run"),
+            member(2, "ZAI", "glm-5.3-flash", "run"),
+        ];
+        let mut ratings = ratings_for("ZAI", "glm-5.3", "framing");
+        ratings.extend(ratings_for("ZAI", "glm-5.3-flash", "framing"));
+        let mut seen: Vec<i64> = Vec::new();
+        for n in 1..=60 {
+            let nonce = n.to_string();
+            let mut inp = input(&two, 1, "bare-default", "framing", &nonce, &[]);
+            inp.ratings = &ratings;
+            let res = select_panel_routing(&inp);
+            assert_eq!(res.routing.mode, "routed");
+            assert!(res.routing.ext.is_none());
+            let p = res.picked[0].position;
+            if !seen.contains(&p) {
+                seen.push(p);
+            }
+        }
+        seen.sort_unstable();
+        assert_eq!(seen, vec![1, 2]);
+    }
+
+    // The upper tier: on a weighty purpose a panel of two or more seats holds a `panel: weighty`
+    // entry when one is eligible - not on a light purpose, not when the panel has one seat.
+    #[test]
+    fn a_weighty_purpose_seats_the_upper_tier() {
+        let members = vec![
+            member(1, "ZAI", "glm-5.3", "run"),
+            member(2, "mimo", "mimo-v2.6-pro", "run"),
+            member(3, "gemini", "gemini-3", "run"),
+            weighty(member(4, "kimi", "kimi-for-coding", "run")),
+        ];
+        // roster order (no ratings): the tier entry takes the first seat
+        let res = select_panel_routing(&input(&members, 3, "purpose", "framing", "n", &[]));
+        let picked: Vec<(i64, &str)> = res
+            .picked
+            .iter()
+            .map(|p| (p.position, p.rule.as_str()))
+            .collect();
+        assert_eq!(picked, vec![(4, "tier"), (1, "roster"), (2, "roster")]);
+        assert_eq!(
+            res.routing.ext.as_ref().unwrap()["c3"]["seating"]["tier"],
+            serde_json::json!([4])
+        );
+        // routed: the well-rated three would win, yet every panel holds the tier entry
+        let mut ratings = ratings_for("ZAI", "glm-5.3", "framing");
+        ratings.extend(ratings_for("mimo", "mimo-v2.6-pro", "framing"));
+        ratings.extend(ratings_for("gemini", "gemini-3", "framing"));
+        for n in 1..=100 {
+            let nonce = n.to_string();
+            let mut inp = input(&members, 3, "purpose", "framing", &nonce, &[]);
+            inp.ratings = &ratings;
+            let res = select_panel_routing(&inp);
+            assert_eq!(res.routing.mode, "routed");
+            assert!(res.picked.iter().any(|p| p.position == 4), "nonce {n}");
+        }
+        // a light purpose (the weighty gate is passed here only to prove the purpose decides): no
+        // tier seat; a one-seat panel: none either
+        let res = select_panel_routing(&input(&members, 3, "purpose", "diff-review", "n", &[]));
+        assert!(res.picked.iter().all(|p| p.rule != "tier"));
+        assert!(res.routing.ext.is_none());
+        let res = select_panel_routing(&input(&members, 1, "-PanelSize", "framing", "n", &[]));
+        assert_eq!(res.picked.len(), 1);
+        assert_eq!(res.picked[0].position, 1);
+    }
+
+    // A routed record carrying the seating rules replays identically (`c3 router replay`).
+    #[test]
+    fn a_one_per_lab_record_replays_identically() {
+        let members = vec![
+            member(1, "ZAI", "glm-5.3", "run"),
+            weighty(member(2, "ZAI", "glm-5.3-flash", "run")),
+            member(3, "mimo", "mimo-v2.6-pro", "run"),
+            member(4, "gemini", "gemini-3", "run"),
+            weighty(member(5, "kimi", "kimi-for-coding", "run")),
+        ];
+        let mut ratings = ratings_for("ZAI", "glm-5.3", "framing");
+        ratings.extend(ratings_for("gemini", "gemini-3", "framing"));
+        for n in 1..=40 {
+            let nonce = n.to_string();
+            for order in ["routed", "roster"] {
+                let mut inp = input(&members, 3, "purpose", "framing", &nonce, &[]);
+                inp.ratings = &ratings;
+                inp.order = order;
+                let res = select_panel_routing(&inp);
+                let v = crate::panel::run::routing_value(&res.routing);
+                let rec: c3_core::ledger::PanelRouting = serde_json::from_value(v).unwrap();
+                assert!(
+                    crate::router::replay::replay_record(&rec).is_none(),
+                    "nonce {n} {order}: {:?}",
+                    crate::router::replay::replay_record(&rec)
+                );
+            }
+        }
     }
 
     #[test]

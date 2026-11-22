@@ -103,7 +103,8 @@ or a value that is not a lowercase slug is refused before anything starts, and t
   - spelled exactly so (the lookup is case-sensitive, as the plugin's: `OPUS` is refused).
   The table documents the known ids, but a new Claude model needs no C3 release: any id of the
   published shape `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]` (case-sensitive, an
-  optional `[1m]`) is also accepted.
+  optional `[1m]`) is also accepted. The shape only admits the id; telemetry sends it by name only
+  when it is in the table or published (see "The classes" under Telemetry), else as `other`.
   An alias floats: every thread is pinned to the id its first init event resolved
   (`engine_run.model_resolved`), and every later turn of it sends that id.
 - **Three auth modes.** `subscription` (the default): the claude.ai login, checked by
@@ -308,6 +309,23 @@ thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.
   A consultation without `--provider` goes to the roster's first available entry only on
   `acceptance` and `core-contract`; on every other purpose it is one routed pick
   (`--panel-seed` reproduces it). `c3 providers` and `c3 router explain` show both states.
+- **One seat per lab, and the upper tier on weighty questions**: a panel seats at most ONE roster
+  entry per lab - the model's maker, from the entry's `"lab"` or else its model id's prefix (`glm`
+  zhipu, `qwen` alibaba, `deepseek` deepseek, `kimi`/`k3` moonshot, `mimo` xiaomi, `gemini` google,
+  `muse` meta, `grok` xai, `gpt`/`o<n>` openai, `claude` and its aliases anthropic, `dola`/`seed`
+  bytedance; a claude endpoint entry without a `lab` takes its host's), never the provider label:
+  `kimi` and `kimi-claude` are one lab, Qwen and DeepSeek behind `alibaba-claude` are two. Each lab
+  is represented by its best-weighted eligible entry (the first in roster order without ratings)
+  and the draw runs among labs; a sibling shows `not picked: lab zhipu already seated by #3`, and a
+  size above the lab count is cut to one seat per lab with a warning. Every `--require`d entry is
+  seated (two of one lab with a warning), `--panel-all` seats every eligible entry (one warning
+  names the shared labs), and the bare default's single routed pick is unchanged. On a weighty
+  purpose (`framing`, `decision`, `core-contract`, `acceptance`, `stuck`) a panel of two or more
+  seats gives one seat to a `"panel": "weighty"` entry when one is eligible (available, not held,
+  not on-request) and no required entry already is one (rule `tier-draw`; `tier` in roster order).
+  The ledger's `panel.routing.ext.c3.seating` names the rules whenever they could change the seats,
+  so `c3 router replay` replays them; `c3 router explain` marks an entry its lab's pick keeps out.
+  The plugin-compat run (`C3_PLUGIN_COMPAT=1`, the harness oracle) keeps the plugin's draw.
 - **`--budget <percent>`** (env `CODEX_CONSULT_QUOTA_BUDGET`, default 90, 0 = off): the stall watch
   reads the run's rollout every 15 s and stops the main turn at the budget - the partial kept, no
   continuation, `failed: stopped at the quota budget: 5-hour window 91 % used, resets 18:32; the
@@ -372,7 +390,13 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
   form only when the vendor slug is one of `openai`, `anthropic`, `google`, `z-ai`, `moonshotai`,
   `minimax`, `xiaomi`, `qwen` (alibaba's list), `meta-llama` (meta's list) AND the model part
   equals an entry of that class's list (`openai/gpt-5.1`), else `other`; an http endpoint of a
-  listed vendor's host takes that vendor's class, any other host `other`.
+  listed vendor's host takes that vendor's class, any other host `other`. **Published names:** a
+  model outside its class's list is also sent when `c3 maintain` holds it from a TRUSTED public
+  source FOR THAT CLASS - the built-in catalog (OpenRouter; `qwen/qwen4-max` counts as `qwen4-max`
+  of `alibaba` only), or a configured catalog / page declared `"public": true` (a page's plain ids
+  count for the class of its own host, e.g. `docs.z.ai` -> `zai`). An endpoint's own model list, an
+  engine's list, an undeclared configured source, another class's name and a reviewer without a
+  class never count; without a maintain state the closed lists alone decide.
 * **Never:** task names, prompts, briefs, paths, thread ids, `consult_id`, finding texts, notes,
   topics, labels as typed, the coordinator's host, user names, keys. The server drops
   secret-named keys on arrival and reports how many; C3 treats a non-zero count as its own bug.
@@ -597,11 +621,12 @@ its one-line report.
   a version not lower and another suffix (seated `gemini-3.8-flash-high`, catalog
   `gemini-4-hydrogen`) — at most 5 per entry, and on a catalog's first collection only ids created
   within the last 30 days. The SessionStart line stays short; `c3 maintain` prints the full list.
-  `"model_catalogs": ["<https url>", ...]` in the C3 config replaces the default catalog list;
-  `"model_pages": [{"name": "<label>", "url": "<https url>", "pattern": "<regex with one capture
-  group>"}]` adds vendor pages whose every capture is a candidate id. The ids of these public
-  sources are published names, so telemetry sends such a model as itself instead of `other` (an
-  endpoint's own list is never treated so).
+  `"model_catalogs": ["<https url>" or {"url": "<https url>", "public": true}, ...]` in the C3
+  config replaces the default catalog list; `"model_pages": [{"name": "<label>", "url": "<https
+  url>", "pattern": "<regex with one capture group>"[, "public": true]}]` adds vendor pages whose
+  every capture is a candidate id. Every source feeds successor candidates, but only the built-in
+  catalog and a source declared `"public": true` make its ids published names telemetry may send
+  (bound to their vendor - see "The classes" under Telemetry); an endpoint's own list never does.
 - **By hand.** `c3 maintain` prints the report; `c3 maintain --run [--engine <name>] [--dry-run]
   [--force]` runs a pass now; `c3 maintain --models [--dry-run]` runs only the model step (no CLI is
   checked or updated, the weekly schedule does not move; with `--dry-run` nothing is smoked or
@@ -676,6 +701,14 @@ one session's memory. C3 keeps the state in the repository and checks it.
   `c3 finish` names unknown branches and worktrees after its commit and never refuses because of them.
 - **Switch (default ON).** `C3_BRANCH_CHECK=off`, or `"branch_check": false` in
   `<codex home>/c3/config.json`, turns the hook line off (`c3 branches` and `c3 doctor` are explicit).
+- **A red CI run is named.** `c3 finish` (after its commit) and the SessionStart hook ask `gh run list
+  --branch <default>` for the latest completed run and print `CI: the latest run on main failed -
+  <title> (run <id>)` when it failed; never a refusal, under a 10 s (hook: 3 s) deadline, silent
+  without `gh`, a login or a GitHub remote, and the hook asks once a day per repository. Switch
+  (default ON): `C3_CI_CHECK=off`, or `"ci_check": false` in `<codex home>/c3/config.json`.
+- **Old rule text is completed.** `c3 init` never rewrites `.claude/rules/02-delegation.md`; `c3 doctor`
+  reports a C3-written copy that lacks the "BRANCHES AND WORKTREES" section and `c3 doctor --fix`
+  appends exactly that section (a rewritten file is only reported).
 - **C3's own throwaway worktree.** Before the `kimi` engine removes the worktree its reviewer ran in,
   every symlink and junction inside it is unlinked without being followed, so a forced removal can
   never empty a checkout a link points into. Such a worktree (directly in the system temp directory,

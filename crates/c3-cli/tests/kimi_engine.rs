@@ -329,6 +329,41 @@ fn a_structured_run_is_usable_with_a_kimi_session_and_no_usage() {
     );
 }
 
+// ------------------------------------------------------------------ (F02-21) a junction left in the worktree
+#[test]
+fn a_junction_the_reviewer_left_is_unlinked_and_its_outside_target_survives() {
+    // (F02-21, F03-2, F04-5) the reviewer leaves a `node_modules` junction in its throwaway
+    // worktree pointing at a directory OUTSIDE it; the guard's removal unlinks the junction without
+    // following it, removes the worktree, and the outside sentinel keeps its bytes.
+    let e = setup("junction");
+    let outside = e.work.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("sentinel.txt"), "keep me\n").unwrap();
+    let o = e.consult(
+        &["--engine", "kimi", "--model", "kimi-code/k3"],
+        &[
+            ("FAKE_KIMI_TOOLCALL", "1"),
+            ("FAKE_KIMI_JUNCTION", &outside.to_string_lossy()),
+        ],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    let wt = turns[0]["cwd"].as_str().unwrap_or("");
+    assert!(wt.contains("c3-kimi-wt"), "{wt}");
+    assert!(
+        std::fs::symlink_metadata(wt).is_err(),
+        "the throwaway worktree was removed: {wt}\n{t}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.join("sentinel.txt")).unwrap(),
+        "keep me\n",
+        "the junction's outside target survived"
+    );
+    assert!(!t.contains("was left in place"), "{t}");
+}
+
 // ------------------------------------------------------------------ (R7) an uncommitted brief reaches kimi in its worktree
 
 #[test]

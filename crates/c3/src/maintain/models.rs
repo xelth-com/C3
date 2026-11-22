@@ -744,30 +744,53 @@ pub fn family_news(
     out
 }
 
-/// The published model names the maintain state holds: every id of a PUBLIC source (a catalog or a
-/// page - never an endpoint's own list, which may be private), lower-cased, both as recorded
-/// (`qwen/qwen4-max`) and with the vendor part stripped (`qwen4-max`). Empty when there is no state.
-pub fn published_from(state: &ModelsState) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
+/// (F02-19) The published model names telemetry may send, each bound to the vendor class its
+/// source attributes it to: `(class, lower-case model id)`.
+pub type Published = std::collections::HashSet<(String, String)>;
+
+/// The published model names the maintain state holds: every id of a TRUSTED public source
+/// ([`super::web::trusted_sources`]: the built-in catalog, or a configured catalog / page declared
+/// `"public": true` - never an endpoint's own list, an engine's list or an undeclared configured
+/// source, which may be private), bound to a vendor class: a `<vendor>/<model>` id to the class of
+/// its OpenRouter vendor slug (`qwen/qwen4-max` -> `(alibaba, qwen4-max)`; an unknown slug binds
+/// nowhere), a plain id to the class of the source's own host ([`super::web::TrustedSource`]), or
+/// nowhere. Lower-cased. Empty when there is no state.
+pub fn published_from(state: &ModelsState, trusted: &[super::web::TrustedSource]) -> Published {
+    let mut out = Published::new();
     for s in state.sources.iter().filter(|s| is_public_source(&s.source)) {
+        let Some(t) = trusted.iter().find(|t| t.source == s.source) else {
+            continue;
+        };
         for id in &s.ids {
-            out.insert(id.to_ascii_lowercase());
-            out.insert(strip_vendor(id).to_ascii_lowercase());
+            let id = id.to_ascii_lowercase();
+            let pair = match id.split_once('/') {
+                Some((slug, model)) => crate::telemetry::classes::OPENROUTER_VENDORS
+                    .iter()
+                    .find(|(s, _)| *s == slug)
+                    .map(|(_, class)| (class.to_string(), model.to_string())),
+                None => t.class.map(|c| (c.to_string(), id.clone())),
+            };
+            if let Some(p) = pair.filter(|(_, m)| valid_model_id(m)) {
+                out.insert(p);
+            }
         }
     }
     out
 }
 
-/// [`published_from`] of the maintain state on disk, read once per process (telemetry asks per
+/// [`published_from`] of the maintain state on disk and the C3 config's trusted sources (a config
+/// that does not load trusts the built-in catalog only), read once per process (telemetry asks per
 /// event). Always empty in this crate's unit tests, so they never depend on the machine's state.
-pub fn published_ids() -> &'static std::collections::HashSet<String> {
-    static P: std::sync::OnceLock<std::collections::HashSet<String>> = std::sync::OnceLock::new();
+pub fn published_ids() -> &'static Published {
+    static P: std::sync::OnceLock<Published> = std::sync::OnceLock::new();
     P.get_or_init(|| {
         if cfg!(test) {
             return Default::default();
         }
+        let cfg = crate::c3config::load().ok().flatten();
+        let trusted = super::web::trusted_sources(cfg.as_ref());
         super::state_dir()
-            .map(|d| published_from(&super::read_state(&d).models))
+            .map(|d| published_from(&super::read_state(&d).models, &trusted))
             .unwrap_or_default()
     })
 }
@@ -1601,16 +1624,44 @@ mod tests {
             ],
             ..Default::default()
         };
-        let p = published_from(&st);
-        assert!(p.contains("qwen/qwen4-max"));
-        assert!(p.contains("qwen4-max"));
-        assert!(p.contains("glm-6"));
-        assert!(!p.contains("glm-9-secret"));
+        let has = |p: &Published, class: &str, id: &str| p.contains(&(class.into(), id.into()));
+        // the built-in catalog only (no config): its ids, bound to their vendor slug's class
+        let p = published_from(&st, &crate::maintain::web::trusted_sources(None));
+        assert!(has(&p, "alibaba", "qwen4-max"));
+        assert!(!has(&p, "zai", "qwen4-max"), "bound to its own vendor only");
         assert!(
-            !p.contains("glm-9-x"),
+            !has(&p, "zai", "glm-6"),
+            "a configured page is not trusted unless declared public"
+        );
+        assert!(!p.iter().any(|(_, m)| m == "glm-9-secret" || m == "glm-9-x"));
+        assert!(
+            !p.iter().any(|(_, m)| m == "grok-4.7"),
+            "an engine's own list stays private"
+        );
+        assert_eq!(p.len(), 1, "{p:?}");
+        // the page declared public: its plain ids bind to its host's class (docs.z.ai -> zai)
+        let cfg = crate::c3config::C3Config {
+            model_pages: vec![crate::c3config::ModelPageConfig {
+                name: "zai-docs".into(),
+                url: "https://docs.z.ai/models".into(),
+                pattern: "(glm-[0-9.]+)".into(),
+                public: true,
+            }],
+            ..Default::default()
+        };
+        let p = published_from(&st, &crate::maintain::web::trusted_sources(Some(&cfg)));
+        assert!(has(&p, "zai", "glm-6"));
+        assert!(!has(&p, "alibaba", "glm-6"));
+        assert!(
+            !p.iter().any(|(_, m)| m == "glm-9-secret" || m == "glm-9-x"),
             "a keyed endpoint list stays private"
         );
-        assert!(!p.contains("grok-4.7"));
+        // no state -> nothing published
+        assert!(published_from(
+            &ModelsState::default(),
+            &crate::maintain::web::trusted_sources(Some(&cfg))
+        )
+        .is_empty());
     }
 
     #[test]

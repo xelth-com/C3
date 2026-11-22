@@ -74,14 +74,22 @@ fn scratch(tag: &str) -> PathBuf {
     p
 }
 
+/// Run `git -C <repo> <args>`; a failure panics with git's exit code and its stderr (a flake on a
+/// CI runner - `git init` failing in a scratch directory - must say what git said).
 fn git(repo: &Path, args: &[&str]) {
-    let st = Command::new("git")
+    let out = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(args)
-        .status()
+        .output()
         .expect("git on PATH");
-    assert!(st.success(), "git {args:?}");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed in {} (exit {:?}): {}",
+        repo.display(),
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
 }
 
 const FAKE_CMD: &str = "@echo off\r\nset \"FAKE_CODEX_ARGS=%*\"\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-codex.ps1\"\r\nexit /b %ERRORLEVEL%\r\n";

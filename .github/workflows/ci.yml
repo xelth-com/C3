@@ -57,8 +57,9 @@ jobs:
         run: cargo clippy -p c3 -p c3-core -p c3-cli --all-targets -- -D warnings
       # Windows: one test thread - the fake codex/claude launchers each start Windows PowerShell 5.1,
       # and a parallel cold start on the runner outlasts the bridge's 15 s `--version` probe.
+      # --no-fail-fast: one failed test binary must not hide the binaries after it.
       - name: Test (default features)
-        run: cargo test --workspace ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
+        run: cargo test --workspace --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
 
   index-surreal:
     name: ubuntu-latest / index-surreal
@@ -88,4 +89,4 @@ jobs:
       - name: Clippy (index-surreal)
         run: cargo clippy -p c3 -p c3-core -p c3-cli --all-targets --features c3-cli/index-surreal -- -D warnings
       - name: Test (index-surreal)
-        run: cargo test --workspace --features c3-cli/index-surreal
+        run: cargo test --workspace --no-fail-fast --features c3-cli/index-surreal

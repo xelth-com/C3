@@ -11,6 +11,25 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Added
 
+- **A red CI run is named, not left for someone to notice.** `c3 finish`, after its commit, and the
+  SessionStart hook ask the GitHub CLI for the latest completed run of the default branch (`gh run
+  list --branch <default> --limit 5 --json ...`) and print one line when it failed: `CI: the latest
+  run on main failed - <title> (run <id>)` (also under `"ci"` in `c3 finish --json`). A cancelled or
+  skipped run decides nothing; a green one prints nothing. It is a note, never a refusal; `gh` runs
+  under a deadline (10 s for `finish`, 3 s in the hook) and is killed past it; it is silent without
+  `gh` on PATH, a login, or a GitHub remote. The hook asks at most once a day per repository (the
+  attempt is cached in `<codex home>/c3/ci-check.json`, written before the call, so a failing `gh`
+  costs one try a day too) and never inside a C3 child. Default ON; `C3_CI_CHECK=off` or
+  `"ci_check": false` in the C3 config turns it off. CI sat red for a week (2026-11-08..15) with
+  nobody looking.
+- **`c3 doctor` reports - and `--fix` completes - a delegation rule written before a section
+  existed.** `c3 init` writes `.claude/rules/02-delegation.md` only when it is missing, so a project
+  set up before the "BRANCHES AND WORKTREES" section never got it. Doctor now reports such a file
+  (exit 1) when it still carries C3's own title line, and `c3 doctor --fix` appends exactly that
+  section, taken from the embedded template, in the file's own line ending, through a temp file and a
+  rename (a link, a hard-linked file or a concurrent edit is refused and reported). A file the user
+  rewrote is reported as a warning and never edited. The SessionStart hook does not do this, and
+  nothing happens inside a C3 child.
 - **`c3 doctor` now flags a pinned agent model.** Each `.claude/agents/*.md` whose frontmatter
   `model:` names a concrete id (e.g. `claude-opus-4-8`) instead of a floating alias is reported,
   one line per file, with the alias to write instead (derived from the id's family). The aliases
@@ -88,6 +107,28 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Changed
 
+- **The hook's waiting rule says why and says it applies to every session.** The old one-liner
+  ("c3: coordinator rules - the c3:coordinate skill; ... schedule a wakeup ... about 20 min") read
+  as a pointer to a skill and as a rule about c3 work, and a coordinator waiting on ordinary
+  subagents filed it away; the `ScheduleWakeup` tool's own description ("/loop only", "never keep
+  the cache warm") won, and every completion notice then re-read a several-hundred-thousand-token
+  context at full price. `plugin/hooks/c3-hook.ps1` and `c3-hook.sh` now print `c3: WAITING RULE (the
+  operator's standing instruction, for every session, with or without c3)`: before ending a turn
+  while anything is running in the background, call `ScheduleWakeup` with `delaySeconds` 1800 and a
+  one-line prompt; why (a wake-up inside the cache lifetime keeps the context cached); what to do at
+  the wake-up; and that it overrides the tool's own advice. The delay is one number (1800 s), no
+  range. The `coordinate` skill opens with the same rule (stating it is not limited to c3 work), and
+  `c3 consult --detach` / `c3 work --detach` print one sentence of it on stderr when they start.
+  The hook scripts also stopped dropping most of what `c3 hook` says: the maintenance, branch,
+  model-repair and red-CI lines never reached a plugin session, because the scripts kept only a
+  whitelist of four lines. Both now forward every line of `c3 hook` that starts with `c3: `,
+  `codex-consult: ` or `CI: ` - in the order printed, each once, at most 10, each cut to 400
+  characters (`...` appended) - and then the waiting rule; the two print byte-identical text
+  (tested with a fake `c3`, the `.ps1` under Windows PowerShell 5.1 and the `.sh` under `sh`).
+- **CI no longer stops at the first failed test binary.** The `ci` workflow's test steps (Windows and
+  Linux, default features and `index-surreal`) run with `--no-fail-fast`, so one failed binary does
+  not hide the rest; `kill_record_durable`'s `git()` helper now panics with git's exit code and
+  stderr (a Windows runner flake at `git init` once left no message).
 - **`C3_MAINTAIN_MODELS=off` holds for `c3 maintain --models` too (F02-18).** An explicit `--models`
   used to turn `off` into `announce` and fetch the engine, endpoint and public lists anyway. With
   `off` it now fetches nothing, writes nothing and says so; set `announce` or `swap` to run it.
@@ -98,16 +139,42 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   write-before-install record and post-update smoke, keeping the record's original `previous` as the
   rollback target; resolved when it smokes clean, otherwise the record stays with the new target.
   The no-rollback-path branch (agy) has an integration test now.
+- **A panel seats one entry per lab.** A 2026-11-20 framing panel seated `glm-5.3` and
+  `glm-5.3-flash` side by side - a model and its light sibling repeat each other, so their agreement
+  looked like corroboration and a seat was spent. The routed draw and the roster order (also the
+  "no ratings" fallback, where that panel came from) now seat at most one roster entry per lab: the
+  model's maker (the entry's `lab`, a claude endpoint's host, else the model id's prefix; an
+  unknown one counts as a lab of its own), never the provider label - `kimi` and `kimi-claude` are
+  one lab, Qwen and DeepSeek behind `alibaba-claude` are two. Each lab is represented by its
+  best-weighted eligible entry (the first in roster order on a tie), then the draw runs among labs;
+  a size above the lab count is cut to one seat per lab with a warning, and the reserve a lost seat
+  is refilled from holds only labs without a seat. Every `--require`d entry is still seated (two of
+  one lab with a warning); `--panel-all` seats every eligible entry and warns once which labs hold
+  several seats; the routed bare default (one reviewer) and the plugin-compat run
+  (`C3_PLUGIN_COMPAT=1`) keep the plugin's draw. When the rules could change the seats the ledger's
+  `panel.routing` carries `ext.c3.seating`, and `c3 router replay` replays such a record with them.
+- **On a weighty purpose a panel holds the upper tier.** On framing, decision, core-contract,
+  acceptance and stuck, a panel of two or more seats now gives one seat to a `"panel": "weighty"`
+  entry when one is eligible (available, not held by its reserve, not on-request) and no required
+  entry already is one - drawn first among the weighty entries (rule `tier-draw` / `tier-explore`,
+  `tier` in roster order). The same 2026-11-20 run had seated three low-cost entries for a framing
+  question with weighty entries available.
+- **`c3 router explain` and the panel plan say when a lab already holds the seat.** A member kept
+  out by the one-seat-per-lab rule shows `not picked: lab zhipu already seated by #3` in the plan
+  (dry run and real run) and in `panel.members`, and the summary lists it on its own line
+  `not picked (one seat per lab): ...` instead of under the panel size; `c3 router explain` marks
+  an entry its lab's best-weighted candidate keeps out (`[lab zhipu: #3 takes its seat - one seat
+  per lab]`).
 - **OpenAI's GPT-6.2 models are known to telemetry.** The `openai` class's closed model list now
   also holds `gpt-6.1-sol`, `gpt-6.2-astra` and `gpt-6.2-sol` (released 2026-11, listed for
   ChatGPT accounts by Codex). Before this a judge record naming them was sent as `other`. The
   docs now name `openai :: gpt-6.2-sol` as the codex worker.
 - **A new Claude model id is accepted without a C3 release.** The closed `CLAUDE_MODELS` table is
   kept (it documents the known ids and the plugin parity), but a roster / `--model` of a `claude`
-  entry (auth subscription or api-key) and the telemetry class `anthropic` now also accept any id of
-  the published shape `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]` (case-sensitive, an
-  optional `[1m]`). A private endpoint's model name, which does not match the shape, is still
-  withheld from telemetry.
+  entry (auth subscription or api-key) now also accepts any id of the published shape
+  `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]` (case-sensitive, an optional `[1m]`). The
+  shape only admits the id: telemetry sends a Claude id by name only when it is in `CLAUDE_MODELS`
+  or published for the `anthropic` class (below), else as `other` (F02-20, F04-8).
 - **`c3 maintain`: a successor may cross a major version.** `version::successor` keeps the same
   prefix and suffix but now accepts a higher major too and picks the highest version above the
   seated one; an id without a minor counts as `.0` (`qwen4-max` is 4.0, `gpt-6-astra` 6.0,
@@ -116,9 +183,12 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   edited, protected / on-request entries never smoked or edited). The repository `AGENTS.md`
   follows the roster across a major the same way (`Qwen3.8-Max` -> `Qwen4-Max`).
 - **Telemetry: a published model id is sent as itself.** A model outside its vendor's closed list
-  that the maintain state holds for a PUBLIC source (a catalog or a page - never an endpoint's own
-  list, which may be private) is sent by name instead of `other`. Without a maintain state the
-  closed lists alone decide, as before.
+  that the maintain state holds from a TRUSTED public source, attributed to that same vendor, is
+  sent by name instead of `other`: the built-in catalog (OpenRouter, whose `<vendor>/<model>` ids
+  bind to the vendor slug's class), or a configured catalog or page whose config entry says
+  `"public": true` (a page's plain ids bind to the class of its own host). Never an endpoint's own
+  list, an engine's list or an undeclared configured source, which may be private. Without a
+  maintain state the closed lists alone decide, as before.
 - **A newer member of a declared model family passes the effort check.** A codex custom provider
   or the muse engine refused any id outside the host's caps-v1 list before launch ("no effort
   vocabulary declared for model ..."). An id with the same prefix and suffix as a listed one and a
@@ -146,6 +216,37 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **Every model family of the roster resolves to its lab.** The vendor prefix table missed `grok`
+  (now xai) and the OpenAI `o<digit>` ids (`o3`, `o4-mini`: openai), so a Grok entry drew the "no lab
+  known" warning and counted as a lab of its own; an OpenRouter-style `vendor/model` id that does not
+  resolve whole is now tried by its last segment (`x-ai/grok-5` xai, `google/gemini-4` google).
+- **Telemetry never sends a private model name (F02-19, F02-20, F04-8, F03-5).** Any configured
+  catalog or page made the ids it listed "published", in one global set: a keyless internal catalog
+  listing a private endpoint's model would have let telemetry send that name, even for a reviewer
+  of an unknown vendor; and the `anthropic` class sent every id of the Claude shape. Now only the
+  built-in catalog host (openrouter.ai) and a configured catalog or page declared `"public": true`
+  (`"model_catalogs"` takes `{"url": ..., "public": true}` beside a bare URL; a page takes
+  `"public"`) confer published status, decided at send time from the code and the current config,
+  and a published id counts only for the vendor class its source attributes it to (OpenRouter's
+  `<vendor>/` slug, else the source host's class) - never for another class or a reviewer without
+  one. A Claude-shaped id goes out only from `CLAUDE_MODELS` or that set. The `[1m]` suffix is
+  stripped in any case (`opus[1M]` is `opus`), as the roster rule does. End-to-end tests through
+  `c3 telemetry --backfill-ratings` cover the built-in catalog, an undeclared and a declared
+  catalog, a page, an endpoint list, an unpublished Claude id and no maintain state.
+- **The kimi throwaway worktree removal never reaches outside it (F02-21, F03-2, F04-5).** The
+  unlink pass before `git worktree remove --force` treated only what Rust reports as a symlink as a
+  link, swallowed every error, reopened directories by path, and the forced removal and
+  `remove_dir_all` ran whatever it found. Now every reparse point counts as a link
+  (`FILE_ATTRIBUTE_REPARSE_POINT`, as `panel/roles.rs`; a symlink elsewhere) and is never descended
+  into; each directory is re-checked before it is read and before its entries are acted on to be a
+  real directory whose canonical path lies inside the root, else the pass aborts; every error is
+  collected. If any link could not be removed, any error occurred, or the root itself is a link,
+  nothing destructive runs (no `worktree remove`, no prune, no `remove_dir_all`): the directory is
+  left, one line says why, and `c3 doctor --fix` - which now reports such a refusal as not removed
+  - retries it later. The directory fallback after git runs only after the same checks pass again.
+  Tests: a junction to an outside sentinel on a real worktree and through the real `c3` binary with
+  a fake kimi, an injected unlink failure (a git recorder shows `worktree remove` was not called),
+  and a root replaced by a junction.
 - **`c3 branches --set` / `--clear` keep a foreign description byte for byte (F02-7, F03-3,
   F04-9).** The description is now read from the repository's own config with NUL framing
   (`git config --local -z --get-all`) and never trimmed, so trailing line breaks, CRLF and a

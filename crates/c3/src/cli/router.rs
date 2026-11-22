@@ -179,6 +179,119 @@ fn read_meta_age() -> Option<String> {
     })
 }
 
+/// (0.2.5, wave C1) One explain row's part in the one-seat-per-lab draw.
+#[derive(Debug, Clone)]
+struct LabRow {
+    position: i64,
+    lab: String,
+    label: String,
+    weight: f64,
+    /// The draw could seat it on this purpose: not on request, not held, past the weighty gate.
+    drawable: bool,
+    light: bool,
+}
+
+/// The lab picks of the explain table: per lab, the best-weighted drawable entry (the first in
+/// roster order on a tie) - the entry a panel seats for that lab when it is available.
+struct LabPicks {
+    rows: Vec<LabRow>,
+}
+
+impl LabPicks {
+    /// The rows that take part in the draw: drawable, and a light entry on a weighty purpose only
+    /// when no other drawable entry of its provider label is (it stands in then).
+    fn from_rows(mut rows: Vec<LabRow>, weighty_purpose: bool) -> Self {
+        if weighty_purpose {
+            let snapshot = rows.clone();
+            for r in rows.iter_mut().filter(|r| r.light && r.drawable) {
+                r.drawable = !snapshot.iter().any(|o| {
+                    o.position != r.position && o.label == r.label && o.drawable && !o.light
+                });
+            }
+        }
+        LabPicks { rows }
+    }
+
+    /// The position that represents `lab` (best weight, first on a tie).
+    fn pick_of(&self, lab: &str) -> Option<i64> {
+        let mut best: Option<&LabRow> = None;
+        for r in self.rows.iter().filter(|r| r.drawable && r.lab == lab) {
+            if best.is_none_or(|b| r.weight > b.weight) {
+                best = Some(r);
+            }
+        }
+        best.map(|b| b.position)
+    }
+
+    /// The mark of a drawable entry its lab's pick keeps out of a panel.
+    fn mark(&self, position: i64) -> Option<String> {
+        let row = self
+            .rows
+            .iter()
+            .find(|r| r.position == position && r.drawable)?;
+        let pick = self.pick_of(&row.lab)?;
+        (pick != position)
+            .then(|| format!("lab {}: #{pick} takes its seat - one seat per lab", row.lab))
+    }
+}
+
+/// Build the [`LabPicks`] of the roster for `args.purpose`, with the same weights the table shows.
+fn lab_picks(
+    roster: &c3_core::roster::Roster,
+    ratings: &[crate::panel::routing::Rating],
+    args: &ExplainArgs,
+    ctx: &router::RouterContext,
+    budget_mults: &std::collections::HashMap<String, f64>,
+    now: DateTime<Utc>,
+) -> LabPicks {
+    let weighty_purpose = c3_core::purpose::is_weighty(&args.purpose);
+    let rows: Vec<LabRow> = roster
+        .active_entries()
+        .map(|e| {
+            let engine = if e.engine.is_empty() {
+                "codex"
+            } else {
+                &e.engine
+            };
+            let lineage = c3_core::lineage::format_reviewer_lineage(&e.provider, &e.model, engine);
+            let score = router::score(
+                ratings,
+                Lineage {
+                    provider: &e.provider,
+                    model: &e.model,
+                    engine,
+                },
+                &args.purpose,
+                &args.topic,
+                now,
+                ctx,
+            )
+            .base
+            .score;
+            let mult = crate::budget::effective_multiplier(
+                score,
+                crate::panel::routing::ROUTING_NEUTRAL,
+                budget_mults
+                    .get(&crate::budget::budget_key(e))
+                    .copied()
+                    .unwrap_or(1.0),
+            );
+            let held = !c3_core::purpose::is_standing(&args.purpose)
+                && e.reserve_percent > 0
+                && crate::budget::entry_reserve_hold(roster, e, now, true).is_some();
+            LabRow {
+                position: e.position as i64,
+                lab: crate::panel::plan::member_lab(e, &e.model, &lineage).0,
+                label: e.provider.clone(),
+                weight: score * mult,
+                drawable: !e.on_request && !held && !(e.panel == "weighty" && !weighty_purpose),
+                light: e.panel == "light",
+            }
+        })
+        .collect();
+    LabPicks::from_rows(rows, weighty_purpose)
+}
+
 fn run_explain(args: ExplainArgs) -> i32 {
     if args.purpose.trim().is_empty() {
         eprintln!("c3 router explain: --purpose is required");
@@ -238,6 +351,8 @@ fn run_explain(args: ExplainArgs) -> i32 {
         "{:<40} {:>6} {:>7} {:>5} {:<16} {:>16} {:>10} prior(mean/support/m)",
         "lineage", "score", "weight", "mult", "budget", "basis", "local n"
     );
+    // (0.2.5, wave C1) one seat per lab: which entry represents each lab in the draw.
+    let lab_picks = lab_picks(&roster, &ratings, &args, &ctx, &budget_mults, now);
     // (ext.c3.inactive) an inactive entry is not a routing candidate.
     for e in roster.active_entries() {
         let engine = if e.engine.is_empty() {
@@ -285,6 +400,9 @@ fn run_explain(args: ExplainArgs) -> i32 {
         {
             tail.push_str("  [held: reserve]");
         }
+        if let Some(mark) = lab_picks.mark(e.position as i64) {
+            tail.push_str(&format!("  [{mark}]"));
+        }
         println!(
             "{:<40} {:>6.3} {:>7.3} {:>5.2} {:<16} {:>16} {:>10.2} {}",
             lineage,
@@ -298,4 +416,57 @@ fn run_explain(args: ExplainArgs) -> i32 {
         );
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(position: i64, lab: &str, label: &str, weight: f64) -> LabRow {
+        LabRow {
+            position,
+            lab: lab.into(),
+            label: label.into(),
+            weight,
+            drawable: true,
+            light: false,
+        }
+    }
+
+    // (0.2.5, wave C1) explain marks the entry its lab's pick keeps out of a panel.
+    #[test]
+    fn explain_marks_the_entry_its_lab_keeps_out() {
+        let mut held = row(4, "moonshot", "kimi", 2.0);
+        held.drawable = false;
+        let picks = LabPicks::from_rows(
+            vec![
+                row(1, "zhipu", "ZAI", 1.125),
+                row(2, "zhipu", "ZAI", 1.5),
+                row(3, "xiaomi", "mimo", 1.0),
+                held,
+                row(5, "moonshot", "kimi-claude", 1.0),
+            ],
+            true,
+        );
+        assert_eq!(
+            picks.mark(1).as_deref(),
+            Some("lab zhipu: #2 takes its seat - one seat per lab")
+        );
+        assert_eq!(picks.mark(2), None);
+        assert_eq!(picks.mark(3), None);
+        // a held entry is no candidate: its sibling represents the lab, unmarked
+        assert_eq!(picks.mark(4), None);
+        assert_eq!(picks.mark(5), None);
+        // a light entry on a weighty purpose stands in only without a sibling of its label
+        let mut light = row(6, "openai", "openai", 2.0);
+        light.light = true;
+        let picks = LabPicks::from_rows(vec![row(5, "openai", "openai", 1.0), light.clone()], true);
+        assert_eq!(picks.mark(5), None);
+        assert_eq!(picks.mark(6), None);
+        let picks = LabPicks::from_rows(vec![row(5, "openai", "openai", 1.0), light], false);
+        assert_eq!(
+            picks.mark(5).as_deref(),
+            Some("lab openai: #6 takes its seat - one seat per lab")
+        );
+    }
 }

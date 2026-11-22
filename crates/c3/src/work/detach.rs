@@ -175,6 +175,9 @@ pub fn start_detached(o: &Options, pre: &Prepared, id: &str, rec_dir: &Path) -> 
         o.task,
         collab_for_cmd.as_deref().map(|c| format!(" --collab-dir \"{c}\"")).unwrap_or_default(),
     );
+    // (0.2.5) the operator's waiting rule, where the waiting begins (stderr: stdout keeps the
+    // lines callers parse).
+    eprintln!("{}", crate::hook::WAITING_NOTICE);
     0
 }
 

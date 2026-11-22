@@ -10,7 +10,10 @@ use std::path::PathBuf;
 
 use c3_core::ledger::{PanelRouting, SessionsFile};
 
-use crate::panel::routing::{invoke_panel_draw, Candidate, Seat, ROUTING_EXPLORE, ROUTING_NEUTRAL};
+use crate::panel::routing::{
+    invoke_lab_draw, invoke_panel_draw, roster_lab_seats, Candidate, Seat, ROUTING_EXPLORE,
+    ROUTING_NEUTRAL,
+};
 
 /// The result of replaying one or more panels.
 #[derive(Debug, Clone, Default)]
@@ -67,6 +70,12 @@ pub fn replay_sessions(file: &SessionsFile, nn: Option<i64>) -> ReplayReport {
     report
 }
 
+/// Replay one routing record on its own (consult number 0 in the message); `Some(msg)` on the
+/// first difference.
+pub fn replay_record(routing: &PanelRouting) -> Option<String> {
+    replay_one(0, routing)
+}
+
 /// Replay a single panel's routing record; `Some(msg)` on the first difference.
 fn replay_one(n: i64, routing: &PanelRouting) -> Option<String> {
     let explore = recorded_explore(routing);
@@ -85,6 +94,9 @@ fn replay_one(n: i64, routing: &PanelRouting) -> Option<String> {
         })
         .collect();
 
+    // (0.2.5, wave C1) a record that carries `ext.c3.seating` was seated one entry per lab (with
+    // the upper-tier seat when its `tier` list is not empty); one without it took the plugin's draw.
+    let seating = recorded_seating(routing);
     let seats: Vec<Seat> = if routing.mode == "routed" {
         let seed = match hex_decode(&routing.seed) {
             Some(b) => b,
@@ -95,16 +107,36 @@ fn replay_one(n: i64, routing: &PanelRouting) -> Option<String> {
                 ))
             }
         };
-        invoke_panel_draw(
-            &cands,
-            routing.size as usize,
-            &seed,
-            ROUTING_NEUTRAL,
-            explore,
-        )
+        match &seating {
+            Some(tier) => {
+                invoke_lab_draw(
+                    &cands,
+                    routing.size as usize,
+                    &seed,
+                    ROUTING_NEUTRAL,
+                    explore,
+                    tier,
+                )
+                .seats
+            }
+            None => invoke_panel_draw(
+                &cands,
+                routing.size as usize,
+                &seed,
+                ROUTING_NEUTRAL,
+                explore,
+            ),
+        }
     } else {
-        // Roster mode: required first (roster order), then the rest, up to size.
-        roster_seats(&cands, routing.size as usize)
+        match &seating {
+            Some(tier) => {
+                roster_lab_seats(&cands, routing.size as usize, tier)
+                    .0
+                    .seats
+            }
+            // Roster mode: required first (roster order), then the rest, up to size.
+            None => roster_seats(&cands, routing.size as usize),
+        }
     };
 
     // Compare seat by seat against the recorded picked rows.
@@ -190,6 +222,22 @@ fn lineage_at(routing: &PanelRouting, position: i64) -> String {
         .find(|p| p.position == position)
         .map(|p| p.lineage.clone())
         .unwrap_or_default()
+}
+
+/// (0.2.5, wave C1) The seating rules of the record: `Some(upper-tier positions)` when it carries
+/// `ext.c3.seating.labs = "one-per-lab"`, `None` for the plugin's draw.
+fn recorded_seating(routing: &PanelRouting) -> Option<Vec<i64>> {
+    let seating = routing.extra.get("ext")?.get("c3")?.get("seating")?;
+    if seating.get("labs").and_then(|v| v.as_str()) != Some("one-per-lab") {
+        return None;
+    }
+    Some(
+        seating
+            .get("tier")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|p| p.as_i64()).collect())
+            .unwrap_or_default(),
+    )
 }
 
 /// The `explore` rate the policy used: `ext.c3.router.params.explore` when the record carries

@@ -1814,11 +1814,26 @@ fn render_summary(
         .iter()
         .filter(|r| r.state == "not-picked" && !promoted_positions.contains(&r.position))
         .collect();
-    if !not_picked.is_empty() {
-        let names: Vec<String> = not_picked.iter().map(|r| r.shown.clone()).collect();
+    // (0.2.5, wave C1) a member kept out because its lab already holds a seat says so on a line
+    // of its own, not under the panel size.
+    let (lab_out, size_out): (Vec<&DisplayRow>, Vec<&DisplayRow>) = not_picked
+        .into_iter()
+        .partition(|r| plan::is_lab_seated_reason(&r.reason));
+    if !size_out.is_empty() {
+        let names: Vec<String> = size_out.iter().map(|r| r.shown.clone()).collect();
         block.push(format!(
             "  not picked (panel size {}): {}",
             b.k,
+            names.join(", ")
+        ));
+    }
+    if !lab_out.is_empty() {
+        let names: Vec<String> = lab_out
+            .iter()
+            .map(|r| format!("{} ({})", r.shown, r.reason))
+            .collect();
+        block.push(format!(
+            "  not picked (one seat per lab): {}",
             names.join(", ")
         ));
     }
@@ -2511,7 +2526,7 @@ fn pending_dry_tail(item: &crate::consult::recovery::RecoveryItem) -> String {
 /// The routing record as the member's ledger `panel.routing` value (`Select-PanelRouting`'s
 /// object: mode, order, fallback, seed, nonce, nonce_source, size, size_asked, size_source,
 /// reserve, eligible[], picked[], explored[], required[]).
-fn routing_value(rt: &RoutingRecord) -> Value {
+pub(crate) fn routing_value(rt: &RoutingRecord) -> Value {
     let mut v = routing_value_plugin(rt);
     // (C3, M9) ONE trailing key, an object, only when the router has something to say; the
     // plugin's own keys stay untouched and in their order.

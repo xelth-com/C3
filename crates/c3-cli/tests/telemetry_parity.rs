@@ -825,6 +825,116 @@ fn backfill_of_a_mark_without_a_saved_judge_never_takes_the_backfills_coordinato
     let _ = std::fs::remove_dir_all(&e.work);
 }
 
+// --------------------------------------------------------------------------- PUBLISHED NAMES (F02-19)
+
+/// The reviewers of the published-name tests: `(engine, base_url, model)` - every one rated once.
+const PUBLISHED_REVIEWERS: [(&str, &str, &str); 11] = [
+    ("codex", "https://api.z.ai/api/v1", "glm-9-pub"),
+    ("codex", "https://api.z.ai/api/v1", "glm-9-cfg"),
+    ("codex", "https://api.z.ai/api/v1", "glm-9-ep"),
+    ("codex", "https://api.z.ai/api/v1", "glm-9-page"),
+    ("codex", "https://api.z.ai/api/v1", "glm-9-trusted"),
+    ("claude", "", "claude-opus-9-1"),
+    ("claude", "", "claude-opus-9-2"),
+    (
+        "codex",
+        "https://llm.acmecorp-internal.example/v1",
+        "glm-9-pub",
+    ),
+    ("codex", "https://api.z.ai/api/v1", "glm-5.3"),
+    ("http", "https://openrouter.ai/api/v1", "z-ai/glm-9-pub"),
+    ("claude", "", "opus[1M]"),
+];
+
+/// Seed a ledger with one entry per [`PUBLISHED_REVIEWERS`] row and an unsent rating of each, run
+/// `c3 telemetry --backfill-ratings`, and return each rating event's `details.model`.
+fn backfilled_models(e: &Env) -> Vec<String> {
+    let tdir = e.repo.join(".collab").join("t");
+    std::fs::create_dir_all(tdir.join("handoffs")).unwrap();
+    let when = (chrono::Local::now() - chrono::Duration::hours(1))
+        .format("%Y-%m-%dT%H:%M:%S%:z")
+        .to_string();
+    let mut consults = Vec::new();
+    let mut ratings = Vec::new();
+    for (i, (engine, base_url, model)) in PUBLISHED_REVIEWERS.iter().enumerate() {
+        let n = i + 1;
+        let cid = format!("00000000-0000-4000-8000-{n:012}");
+        let pc = if base_url.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::json!({"base_url": base_url})
+        };
+        consults.push(serde_json::json!({"n": n, "when": when, "purpose": "checkpoint", "consult_id": cid,
+            "reviewer": {"provider": "Label", "model": model, "engine": engine, "provider_config": pc}}));
+        ratings.push(serde_json::json!({"n": n, "consult_id": cid, "lineage": format!("Label :: {model}"),
+            "provider": "Label", "model": model, "purpose": "checkpoint", "useful": "yes", "note": "", "when": when}));
+    }
+    let sessions = serde_json::json!({"task_id": "t", "cwd": "x", "codex": {"tool": "x", "consults": consults}});
+    std::fs::write(tdir.join("sessions.json"), sessions.to_string()).unwrap();
+    let findings = serde_json::json!({"task_id": "t", "findings": [], "ratings": ratings});
+    std::fs::write(tdir.join("findings.json"), findings.to_string()).unwrap();
+    let bf = e.c3(&["telemetry", "--backfill-ratings"], &[]);
+    assert_eq!(bf.status.code(), Some(0), "{}", text(&bf));
+    let evs = e.spool_events();
+    assert_eq!(evs.len(), PUBLISHED_REVIEWERS.len(), "{evs:#?}");
+    evs.iter()
+        .map(|ev| ev["details"]["model"].as_str().unwrap_or("?").to_string())
+        .collect()
+}
+
+#[test]
+fn only_a_trusted_vendor_bound_published_id_is_sent_by_name() {
+    let e = setup("tel-published");
+    // the maintain state `c3 maintain` left: the built-in catalog, a configured catalog NOT declared
+    // public, one declared public, an endpoint's own list and a configured page (not public)
+    let mdir = e.home.join("c3").join("maintain");
+    std::fs::create_dir_all(&mdir).unwrap();
+    let state = serde_json::json!({"models": {"sources": [
+        {"source": "web:openrouter.ai", "ids": ["z-ai/glm-9-pub", "anthropic/claude-opus-9-2"]},
+        {"source": "web:models.example.com", "ids": ["z-ai/glm-9-cfg"]},
+        {"source": "web:pub.example.com", "ids": ["z-ai/glm-9-trusted"]},
+        {"source": "endpoint:https://api.z.ai:443/api/v1|RT_ZAI_KEY|", "ids": ["glm-9-ep"]},
+        {"source": "page:zai-docs", "ids": ["glm-9-page"]}
+    ]}});
+    std::fs::write(mdir.join("state.json"), state.to_string()).unwrap();
+    let cfg = serde_json::json!({"config_version": 1,
+        "model_catalogs": ["https://models.example.com/v1/models", {"url": "https://pub.example.com/v1/models", "public": true}],
+        "model_pages": [{"name": "zai-docs", "url": "https://docs.z.ai/models", "pattern": "(glm-[0-9a-z.-]+)"}]});
+    std::fs::write(e.home.join("c3").join("config.json"), cfg.to_string()).unwrap();
+    let models = backfilled_models(&e);
+    assert_eq!(
+        models,
+        [
+            "glm-9-pub",       // the built-in catalog, for its own vendor (z-ai -> zai)
+            "other",           // a configured catalog not declared public
+            "other",           // an endpoint's own list
+            "other",           // a configured page not declared public
+            "glm-9-trusted",   // a configured catalog declared "public": true
+            "other",           // an unpublished Claude-shaped id
+            "claude-opus-9-2", // a Claude id the built-in catalog attributes to anthropic
+            "other",           // a published name on a reviewer of no vendor class
+            "glm-5.3",         // the closed list
+            "z-ai/glm-9-pub",  // OpenRouter's own form of the published name
+            "opus",            // the closed list, `[1M]` stripped
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
+#[test]
+fn without_a_maintain_state_the_closed_lists_decide() {
+    let e = setup("tel-published-none");
+    let models = backfilled_models(&e);
+    assert_eq!(
+        models,
+        [
+            "other", "other", "other", "other", "other", "other", "other", "other", "glm-5.3",
+            "other", "opus",
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
 // --------------------------------------------------------------------------- STATUS / FORGET (CLI)
 
 #[test]

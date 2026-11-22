@@ -305,6 +305,13 @@ fn detached_single_runs_of_one_task_run_side_by_side_and_speak_c3() {
     );
     assert!(out_a.contains("--wait --id "), "{out_a}");
     assert!(!out_a.contains(".ps1"), "{out_a}");
+    // (0.2.5) where the waiting begins, the operator's waiting rule is said once more (stderr)
+    let err_a = String::from_utf8_lossy(&a.stderr);
+    assert!(
+        err_a.contains("waiting rule (every session, with or without c3)")
+            && err_a.contains("ScheduleWakeup with delaySeconds 1800"),
+        "{err_a}"
+    );
     // both reach the ledger; two 6 s turns in sequence would need > 12 s after the starts
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {

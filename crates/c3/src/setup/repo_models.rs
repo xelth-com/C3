@@ -236,12 +236,12 @@ fn refresh_repo_models_at(repo_root: &Path, roster_models: &[String]) -> RepairR
 
 /// One planned edit: the file, the directories under the repository root that must be real
 /// directories for it, the bytes the edit was computed from and the new bytes.
-struct Edit<'a> {
-    file: String,
-    path: &'a Path,
-    dirs: &'a [(&'a Path, &'a str)],
-    snapshot: &'a [u8],
-    new_content: &'a [u8],
+pub(crate) struct Edit<'a> {
+    pub(crate) file: String,
+    pub(crate) path: &'a Path,
+    pub(crate) dirs: &'a [(&'a Path, &'a str)],
+    pub(crate) snapshot: &'a [u8],
+    pub(crate) new_content: &'a [u8],
 }
 
 /// Make one edit (or record why not) in `report`.
@@ -268,7 +268,7 @@ fn apply(report: &mut RepairReport, edit: &Edit<'_>, old: String, new: String) {
 /// Why `path` may not be edited, or `None` when it may: every directory of `dirs` must be a real
 /// directory (not a symlink or junction), the file a regular file that is not a link, with exactly
 /// one name (a second hard link would see the edit too).
-fn edit_refusal(dirs: &[(&Path, &str)], path: &Path) -> Option<String> {
+pub(crate) fn edit_refusal(dirs: &[(&Path, &str)], path: &Path) -> Option<String> {
     for (dir, label) in dirs {
         if !is_real_dir(dir) {
             return Some(format!(
@@ -295,7 +295,7 @@ fn edit_refusal(dirs: &[(&Path, &str)], path: &Path) -> Option<String> {
 /// file is written, synced and read back; the links are checked again and the original re-read and
 /// compared with `edit.snapshot`; then the temporary file is renamed over the original. On any
 /// failure the temporary file is removed and the original is untouched.
-fn replace_file(edit: &Edit<'_>) -> Result<(), String> {
+pub(crate) fn replace_file(edit: &Edit<'_>) -> Result<(), String> {
     let dir = edit
         .path
         .parent()

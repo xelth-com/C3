@@ -56,10 +56,10 @@ pub fn enabled() -> bool {
 pub fn configured_sources() -> (Vec<String>, Vec<Page>) {
     match crate::c3config::load() {
         Ok(Some(cfg)) => {
-            let catalogs = cfg
-                .model_catalogs
-                .clone()
-                .unwrap_or_else(|| DEFAULT_CATALOGS.iter().map(|s| s.to_string()).collect());
+            let catalogs = match &cfg.model_catalogs {
+                Some(list) => list.iter().map(|c| c.url.clone()).collect(),
+                None => DEFAULT_CATALOGS.iter().map(|s| s.to_string()).collect(),
+            };
             let pages = cfg
                 .model_pages
                 .iter()
@@ -93,9 +93,56 @@ pub fn catalog_source(url: &str) -> Option<String> {
     Some(format!("web:{host}"))
 }
 
-/// Whether a source name is a public one (a catalog or a page), whose ids are published names.
+/// Whether a source name is a public one (a catalog or a page) - fetched keyless, its ids feed
+/// successor candidates. Telemetry trusts only some of them ([`trusted_sources`]).
 pub fn is_public_source(source: &str) -> bool {
     source.starts_with("web:") || source.starts_with("page:")
+}
+
+/// (F02-19) A public source whose ids telemetry may send by name, and the vendor class it
+/// attributes an id WITHOUT a `<vendor>/` part to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedSource {
+    /// The source name (`web:<host>` / `page:<name>`).
+    pub source: String,
+    /// The vendor class of the source's own host (a vendor's documentation page on `docs.z.ai` is
+    /// `zai`) - the attribution of its plain ids; `None` (any other host, and OpenRouter, whose ids
+    /// carry their vendor) attributes them to nobody.
+    pub class: Option<&'static str>,
+}
+
+/// (F02-19) The public sources whose ids are PUBLISHED names telemetry may send: the catalog
+/// hosts shipped in the code ([`DEFAULT_CATALOGS`] - OpenRouter), always; a configured catalog or
+/// page only when its config entry says `"public": true` explicitly. Separate from what is fetched:
+/// a configured source feeds successor candidates either way, but it may be an internal one, and a
+/// name it lists is no proof that the name is no private endpoint's secret.
+pub fn trusted_sources(cfg: Option<&crate::c3config::C3Config>) -> Vec<TrustedSource> {
+    let mut out: Vec<TrustedSource> = Vec::new();
+    let mut add = |source: String, url: &str| {
+        if out.iter().any(|t| t.source == source) {
+            return;
+        }
+        let class = crate::telemetry::classes::vendor_by_host(url)
+            .map(|v| v.class)
+            .filter(|c| *c != crate::telemetry::classes::OPENROUTER.class);
+        out.push(TrustedSource { source, class });
+    };
+    for url in DEFAULT_CATALOGS {
+        if let Some(source) = catalog_source(url) {
+            add(source, url);
+        }
+    }
+    if let Some(cfg) = cfg {
+        for c in cfg.model_catalogs.iter().flatten().filter(|c| c.public) {
+            if let Some(source) = catalog_source(&c.url) {
+                add(source, &c.url);
+            }
+        }
+        for p in cfg.model_pages.iter().filter(|p| p.public) {
+            add(format!("page:{}", p.name), &p.url);
+        }
+    }
+    out
 }
 
 /// The model part of a catalog id (`qwen/qwen4-max` -> `qwen4-max`); a plain id is itself.

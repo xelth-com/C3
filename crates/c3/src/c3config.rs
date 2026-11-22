@@ -46,22 +46,37 @@ pub struct C3Config {
     /// The SessionStart branch/worktree check (`c3 branches`); default ON, `"branch_check": false`
     /// off.
     pub branch_check: bool,
+    /// The red-CI check of `c3 finish` and the SessionStart hook (the latest completed run of the
+    /// default branch, read through `gh`); default ON, `"ci_check": false` off.
+    pub ci_check: bool,
     /// The public model sources of `c3 maintain`'s model step (catalogs and pages, a keyless GET);
     /// default ON, `"model_web": false` off.
     pub model_web: bool,
-    /// `"model_catalogs"`: the catalog URLs (https) that replace the default list; `None` = default.
-    pub model_catalogs: Option<Vec<String>>,
+    /// `"model_catalogs"`: the catalogs (https) that replace the default list; `None` = default.
+    pub model_catalogs: Option<Vec<ModelCatalogConfig>>,
     /// `"model_pages"`: extra public pages, each read with a one-group regex.
     pub model_pages: Vec<ModelPageConfig>,
 }
 
-/// One validated `"model_pages"` entry: a slug label, an https URL and a regex with exactly one
-/// capture group (compiled at validation time).
+/// One validated `"model_catalogs"` entry: an https URL (written as a bare string or as
+/// `{"url": ..., "public": ...}`), and whether the operator declared its ids PUBLISHED names
+/// (F02-19): only then may telemetry send a model it lists by name. Default `false` - a configured
+/// catalog feeds successor candidates, but it may be an internal one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelCatalogConfig {
+    pub url: String,
+    pub public: bool,
+}
+
+/// One validated `"model_pages"` entry: a slug label, an https URL, a regex with exactly one
+/// capture group (compiled at validation time), and whether its ids are declared published names
+/// (`"public": true`, default `false` - as [`ModelCatalogConfig::public`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPageConfig {
     pub name: String,
     pub url: String,
     pub pattern: String,
+    pub public: bool,
 }
 
 /// The most catalogs / pages a configuration may declare, and the longest page pattern.
@@ -79,6 +94,7 @@ impl Default for C3Config {
             maintain: true,
             repo_models: true,
             branch_check: true,
+            ci_check: true,
             model_web: true,
             model_catalogs: None,
             model_pages: Vec::new(),
@@ -240,6 +256,7 @@ fn validate(root: &Value) -> Result<C3Config, String> {
             "maintain",
             "repo_models",
             "branch_check",
+            "ci_check",
             "model_web",
             "model_catalogs",
             "model_pages",
@@ -282,6 +299,11 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err("c3 config: branch_check must be true or false".to_string()),
     };
+    let ci_check = match obj.get("ci_check") {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("c3 config: ci_check must be true or false".to_string()),
+    };
     let model_web = match obj.get("model_web") {
         None => true,
         Some(Value::Bool(b)) => *b,
@@ -302,6 +324,7 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         maintain,
         repo_models,
         branch_check,
+        ci_check,
         model_web,
         model_catalogs,
         model_pages,
@@ -338,8 +361,9 @@ fn is_public_https_url(s: &str) -> bool {
     }
 }
 
-/// `"model_catalogs"`: a non-empty array of at most [`MAX_MODEL_CATALOGS`] https URLs.
-fn validate_model_catalogs(v: &Value) -> Result<Vec<String>, String> {
+/// `"model_catalogs"`: a non-empty array of at most [`MAX_MODEL_CATALOGS`] entries, each an https
+/// URL as a string, or an object `{"url": "<https url>", "public": true|false}`.
+fn validate_model_catalogs(v: &Value) -> Result<Vec<ModelCatalogConfig>, String> {
     let arr = v
         .as_array()
         .ok_or_else(|| "c3 config: model_catalogs must be an array of https URLs".to_string())?;
@@ -348,23 +372,45 @@ fn validate_model_catalogs(v: &Value) -> Result<Vec<String>, String> {
             "c3 config: model_catalogs must list 1 to {MAX_MODEL_CATALOGS} https URLs"
         ));
     }
+    let bad_url = || {
+        "c3 config: each model_catalogs entry must be an https URL without credentials".to_string()
+    };
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        match item.as_str() {
-            Some(s) if is_public_https_url(s) => out.push(s.to_string()),
-            _ => {
-                return Err(
-                    "c3 config: each model_catalogs entry must be an https URL without credentials"
-                        .to_string(),
-                )
+        let (url, public) = match item {
+            Value::String(s) => (s.as_str(), false),
+            Value::Object(o) => {
+                check_keys(o.keys(), &["url", "public"], "a model catalog")?;
+                let public = public_flag(o.get("public"), "model catalog")?;
+                (o.get("url").and_then(|u| u.as_str()).unwrap_or(""), public)
             }
+            _ => return Err(bad_url()),
+        };
+        if !is_public_https_url(url) {
+            return Err(bad_url());
         }
+        out.push(ModelCatalogConfig {
+            url: url.to_string(),
+            public,
+        });
     }
     Ok(out)
 }
 
-/// `"model_pages"`: an array of at most [`MAX_MODEL_PAGES`] `{name, url, pattern}` objects - a
-/// unique slug name, an https URL, a regex with exactly ONE capture group.
+/// The optional `"public"` flag of a model catalog or page: absent `false`, else a boolean.
+fn public_flag(v: Option<&Value>, what: &str) -> Result<bool, String> {
+    match v {
+        None => Ok(false),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(format!(
+            "c3 config: a {what}'s public must be true or false"
+        )),
+    }
+}
+
+/// `"model_pages"`: an array of at most [`MAX_MODEL_PAGES`] `{name, url, pattern[, public]}`
+/// objects - a unique slug name, an https URL, a regex with exactly ONE capture group, an optional
+/// boolean `public`.
 fn validate_model_pages(v: &Value) -> Result<Vec<ModelPageConfig>, String> {
     let arr = v
         .as_array()
@@ -379,7 +425,12 @@ fn validate_model_pages(v: &Value) -> Result<Vec<ModelPageConfig>, String> {
         let o = item
             .as_object()
             .ok_or_else(|| "c3 config: each model_pages entry must be an object".to_string())?;
-        check_keys(o.keys(), &["name", "url", "pattern"], "a model page")?;
+        check_keys(
+            o.keys(),
+            &["name", "url", "pattern", "public"],
+            "a model page",
+        )?;
+        let public = public_flag(o.get("public"), "model page")?;
         let name = match o.get("name").and_then(|v| v.as_str()) {
             Some(s) if is_slug(s) => s.to_string(),
             _ => {
@@ -421,7 +472,12 @@ fn validate_model_pages(v: &Value) -> Result<Vec<ModelPageConfig>, String> {
                 ))
             }
         }
-        out.push(ModelPageConfig { name, url, pattern });
+        out.push(ModelPageConfig {
+            name,
+            url,
+            pattern,
+            public,
+        });
     }
     Ok(out)
 }
@@ -777,10 +833,34 @@ mod tests {
         assert!(!cfg.model_web);
         assert_eq!(
             cfg.model_catalogs.as_deref(),
-            Some(&["https://example.com/api/v1/models".to_string()][..])
+            Some(
+                &[ModelCatalogConfig {
+                    url: "https://example.com/api/v1/models".to_string(),
+                    public: false
+                }][..]
+            )
         );
         assert_eq!(cfg.model_pages.len(), 1);
         assert_eq!(cfg.model_pages[0].name, "zai-docs");
+        assert!(
+            !cfg.model_pages[0].public,
+            "a page is not public by default"
+        );
+        // (F02-19) `"public": true` is an explicit declaration, per catalog (object form) and page
+        let p = write(
+            &d,
+            r#"{"config_version":1,
+                "model_catalogs":["https://a.example/m",{"url":"https://b.example/m","public":true},{"url":"https://c.example/m"}],
+                "model_pages":[{"name":"zai-docs","url":"https://docs.z.ai/models","pattern":"(glm-[0-9.]+)","public":true}]}"#,
+        );
+        let cfg = load_from(&p).unwrap().unwrap();
+        let cats = cfg.model_catalogs.unwrap();
+        assert_eq!(
+            cats.iter().map(|c| c.public).collect::<Vec<_>>(),
+            [false, true, false]
+        );
+        assert_eq!(cats[1].url, "https://b.example/m");
+        assert!(cfg.model_pages[0].public);
         // refusals: a non-bool switch, an http catalog, a catalog with credentials (not echoed),
         // an empty list, a page with two groups / zero groups / a bad regex / an http url / an
         // unknown key
@@ -818,6 +898,27 @@ mod tests {
                 r#"{"config_version":1,"model_pages":[{"name":"a","url":"https://x.io/","pattern":"(a)","key":"k"}]}"#,
                 "unknown key 'key'",
             ),
+            (
+                r#"{"config_version":1,"model_pages":[{"name":"a","url":"https://x.io/","pattern":"(a)","public":"yes"}]}"#,
+                "public must be true or false",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":[{"url":"https://x.io/m","public":1}]}"#,
+                "public must be true or false",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":[{"url":"https://u:sk-secret@x.io/m","public":true}]}"#,
+                "https URL",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":[{"public":true}]}"#,
+                "https URL",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":[{"url":"https://x.io/m","vendor":"zai"}]}"#,
+                "unknown key 'vendor'",
+            ),
+            (r#"{"config_version":1,"model_catalogs":[7]}"#, "https URL"),
         ] {
             let p = write(&d, body);
             let e = load_from(&p).unwrap_err();

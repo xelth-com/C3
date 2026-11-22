@@ -180,6 +180,20 @@ re-asked from scratch.** Skip a *rating* when a timeout or plan limit killed it;
 eligible one; `--panel-size <n>` overrides). Needs a roster; refused with `--provider`,
 `--thread` or `--mode resume`.
 
+- **One seat per lab.** A panel seats at most one roster entry per lab — the model's maker, from
+  the entry's `"lab"` or its model id's prefix (`glm` zhipu, `qwen` alibaba, `deepseek`, `kimi`/`k3`
+  moonshot, `mimo` xiaomi, `gemini` google, `muse` meta, `grok` xai, `gpt`/`o<n>` openai,
+  `claude` anthropic, `dola`/`seed` bytedance), NOT the provider label: `kimi` and `kimi-claude`
+  are one lab, Qwen and DeepSeek behind `alibaba-claude` are two. Each lab is represented by its
+  best-weighted eligible entry (the first in roster order without ratings), then the draw runs
+  among labs. A sibling shows `not picked: lab zhipu already seated by #3`; a size above the lab
+  count is cut to one seat per lab with a warning. Every `--require`d entry is seated (two of one
+  lab with a warning); `--panel-all` seats every eligible entry and warns once; the bare default's
+  single pick is unchanged. `c3 router explain` marks an entry its lab's pick keeps out.
+- **The upper tier on weighty questions.** On framing / decision / core-contract / acceptance /
+  stuck, a panel of two or more seats gives one seat to a `"panel": "weighty"` entry when one is
+  eligible (available, not held, not on-request) and no required entry already is one (rule
+  `tier-draw`, or `tier` in roster order).
 - `--panel-all` — include `"weighty"` roster entries whatever the purpose (forces size 0).
 - `--panel-order routed` (default, a seeded weighted draw by track record) or `roster`.
 - `--panel-seed <nonce>` — pins the draw so a dry run and the real run seat the same members.

@@ -240,22 +240,42 @@ pub(crate) const OPENROUTER_VENDORS: [(&str, &str); 9] = [
 
 /// (C3 extension) The model token of an OpenRouter reviewer: `<slug>/<listed model>` when the
 /// vendor slug is one of [`OPENROUTER_VENDORS`] and the model part EQUALS an entry of that
-/// class's closed list (the table's own text), else `other`; `unknown` for no model.
+/// class's closed list (the table's own text) or is published for that class, else `other`;
+/// `unknown` for no model.
 pub(crate) fn openrouter_model_token(model: &str) -> String {
+    openrouter_model_token_with(model, crate::maintain::models::published_ids())
+}
+
+/// [`openrouter_model_token`] over an explicit published set.
+fn openrouter_model_token_with(
+    model: &str,
+    published: &crate::maintain::models::Published,
+) -> String {
     let m = model.trim().to_lowercase();
     if m.is_empty() {
         return "unknown".to_string();
     }
-    let m = m.strip_suffix("[1m]").unwrap_or(&m);
+    let m = strip_1m(&m);
     let Some((slug, rest)) = m.split_once('/') else {
         return "other".to_string();
     };
     let Some((slug, class)) = OPENROUTER_VENDORS.iter().find(|(s, _)| *s == slug) else {
         return "other".to_string();
     };
-    match model_token(vendor_of_class(class), rest).as_str() {
+    match model_token_with(vendor_of_class(class), rest, published).as_str() {
         "other" | "unknown" => "other".to_string(),
         listed => format!("{slug}/{listed}"),
+    }
+}
+
+/// A model without its trailing 1M-context suffix `[1m]`, matched case-insensitively (F03-5) - the
+/// roster rule's strip (`c3_core::claude::model_base`), so `opus[1M]` is `opus`.
+fn strip_1m(m: &str) -> &str {
+    let n = m.len();
+    if n >= 4 && m.is_char_boundary(n - 4) && m[n - 4..].eq_ignore_ascii_case("[1m]") {
+        &m[..n - 4]
+    } else {
+        m
     }
 }
 
@@ -297,36 +317,27 @@ pub(crate) fn vendor_by_host(base_url: &str) -> Option<&'static Vendor> {
 }
 
 /// `Get-TelemetryModelToken`: the entry of `vendor`'s closed list the model EQUALS after
-/// lower-casing both (and stripping a trailing `[1m]`), as the TABLE spells it; `other` for a
-/// model outside the list or without a vendor; `unknown` for no model at all.
+/// lower-casing both (and stripping a trailing `[1m]`, any case), as the TABLE spells it; `other`
+/// for a model outside the list or without a vendor; `unknown` for no model at all.
 pub(crate) fn model_token(vendor: Option<&Vendor>, model: &str) -> String {
     model_token_with(vendor, model, crate::maintain::models::published_ids())
 }
 
 /// [`model_token`] over an explicit set of PUBLISHED names (the ids `c3 maintain` collected from a
-/// public catalog or page - [`crate::maintain::models::published_from`]): a model outside the
-/// vendor's closed list that is such a published name is sent as itself, since a name a public
-/// catalog lists is no private endpoint's secret. An endpoint's own list is never in the set (it
-/// may be private), and with no maintain state the set is empty - the closed lists alone, as before.
+/// TRUSTED public source - [`crate::maintain::models::published_from`]): a model outside the
+/// vendor's closed list that is published FOR THAT VENDOR CLASS is sent as itself, since a name the
+/// built-in public catalog (or a source the operator declared `"public": true`) attributes to that
+/// vendor is no private endpoint's secret. An endpoint's own list and an undeclared configured
+/// source are never in the set (they may be private), a name published for another vendor does not
+/// count, and without a vendor nothing counts (F02-19). With no maintain state the set is empty -
+/// the closed lists alone. A Claude-shaped id is no exception (F02-20, F04-8): the open Claude shape
+/// admits an id to a roster, it does not authorise sending it - only `CLAUDE_MODELS` or the
+/// published set do.
 pub(crate) fn model_token_with(
     vendor: Option<&Vendor>,
     model: &str,
-    published: &std::collections::HashSet<String>,
+    published: &crate::maintain::models::Published,
 ) -> String {
-    let closed = model_token_closed(vendor, model);
-    if closed != "other" {
-        return closed;
-    }
-    let m = model.trim().to_lowercase();
-    let m = m.strip_suffix("[1m]").unwrap_or(&m);
-    if !m.is_empty() && crate::maintain::version::valid_model_id(m) && published.contains(m) {
-        return m.to_string();
-    }
-    closed
-}
-
-/// The closed-list part of [`model_token`].
-fn model_token_closed(vendor: Option<&Vendor>, model: &str) -> String {
     let m = model.trim().to_lowercase();
     if m.is_empty() {
         return "unknown".to_string();
@@ -335,18 +346,16 @@ fn model_token_closed(vendor: Option<&Vendor>, model: &str) -> String {
         return "other".to_string();
     };
     if v.class == OPENROUTER.class {
-        return openrouter_model_token(&m);
+        return openrouter_model_token_with(&m, published);
     }
-    let m = m.strip_suffix("[1m]").unwrap_or(&m);
+    let m = strip_1m(&m);
     if let Some(known) = v.models.iter().find(|known| known.to_lowercase() == m) {
         return known.to_string();
     }
-    // (Part B) the `anthropic` class additionally sends an id of the published Claude shape
-    // (`claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]`): the closed list exists so a PRIVATE
-    // endpoint's model name is never sent, and a published Claude id is safe to send - so a new
-    // Claude model of a known family needs no C3 release here either. A private id (e.g. `glm-5.3`
-    // on a claude endpoint) does not match the shape and is still withheld as `other`.
-    if v.class == "anthropic" && c3_core::claude::is_published_claude_shape(m) {
+    if !m.is_empty()
+        && crate::maintain::version::valid_model_id(m)
+        && published.contains(&(v.class.to_string(), m.to_string()))
+    {
         return m.to_string();
     }
     "other".to_string()
@@ -1148,57 +1157,119 @@ mod tests {
             model_token(vendor_of_class("minimax"), "MiniMax-M3"),
             "minimax-m3"
         );
-        // (Part B) the anthropic class sends a published-shape Claude id even when the closed list
-        // does not list it, but still withholds a private endpoint's model name as `other`.
+        // (F02-20, F04-8) the anthropic class sends a Claude id only from its closed list (or the
+        // published set): an id of the open Claude shape that neither lists is withheld as `other`
+        // - the shape admits it to a roster, it does not authorise disclosure.
         let anthropic = vendor_of_class("anthropic");
         assert_eq!(model_token(anthropic, "claude-opus-5-5"), "claude-opus-5-5");
-        assert_eq!(model_token(anthropic, "claude-opus-6-1"), "claude-opus-6-1");
-        assert_eq!(model_token(anthropic, "Claude-Sonnet-7"), "claude-sonnet-7");
-        assert_eq!(
-            model_token(anthropic, "claude-opus-6-1[1m]"),
-            "claude-opus-6-1"
-        );
+        assert_eq!(model_token(anthropic, "claude-opus-6-1"), "other");
+        assert_eq!(model_token(anthropic, "Claude-Sonnet-7"), "other");
+        assert_eq!(model_token(anthropic, "claude-opus-6-1[1m]"), "other");
         assert_eq!(model_token(anthropic, "glm-5.3"), "other");
         assert_eq!(model_token(anthropic, "claude-nonexistent-9"), "other");
+        // (F03-5) the `[1m]` suffix is stripped in any case, as the roster rule does
+        assert_eq!(model_token(anthropic, "opus[1M]"), "opus");
+        assert_eq!(
+            model_token(anthropic, "CLAUDE-OPUS-5-5[1M]"),
+            "claude-opus-5-5"
+        );
+        assert_eq!(model_token(zai, "GLM-5.3[1M]"), "glm-5.3");
+        assert_eq!(openrouter_model_token("z-ai/glm-5.3[1M]"), "z-ai/glm-5.3");
+        assert_eq!(strip_1m("x[1M]"), "x");
+        assert_eq!(strip_1m("[1m]"), "");
+        assert_eq!(strip_1m("x[2m]"), "x[2m]");
+        assert_eq!(strip_1m("1m]"), "1m]");
     }
 
     #[test]
     fn a_published_id_of_the_maintain_state_is_sent_as_itself() {
+        use crate::c3config::{C3Config, ModelCatalogConfig, ModelPageConfig};
         use crate::maintain::models::{published_from, ModelsState};
-        // the maintain state: a public catalog lists qwen4-max; an endpoint's OWN list (possibly
-        // private) holds glm-9-secret; a page lists glm-6
+        use crate::maintain::web::trusted_sources;
+        // the maintain state: the built-in catalog lists qwen4-max, gemini-4-hydrogen and a Claude
+        // id; a configured catalog (not declared public) lists glm-9-cfg; an endpoint's OWN list
+        // (possibly private) holds glm-9-secret; a configured page lists glm-6
         let state: ModelsState = serde_json::from_str(
             r#"{"sources":[
-                {"source":"web:openrouter.ai","ids":["qwen/qwen4-max","google/gemini-4-hydrogen"]},
-                {"source":"endpoint:api.z.ai","ids":["glm-9-secret"]},
+                {"source":"web:openrouter.ai","ids":["qwen/qwen4-max","google/gemini-4-hydrogen","anthropic/claude-opus-6-1","mistralai/mistral-9"]},
+                {"source":"web:models.example.com","ids":["z-ai/glm-9-cfg","glm-9-plain"]},
+                {"source":"endpoint:https://api.z.ai:443/api/v1|ZAI_API_KEY|zai","ids":["glm-9-secret"]},
                 {"source":"page:zai-docs","ids":["glm-6"]}
             ]}"#,
         )
         .unwrap();
-        let published = published_from(&state);
+        // no config: only the built-in catalog is trusted (F02-19)
+        let published = published_from(&state, &trusted_sources(None));
         let alibaba = vendor_of_class("alibaba");
         let zai = vendor_of_class("zai");
-        // in a public source -> sent as itself (stripped of the vendor, or as the catalog spells it)
+        let anthropic = vendor_of_class("anthropic");
+        let openrouter = vendor_of_class("openrouter");
+        // in the built-in catalog, for its own vendor -> sent as itself
         assert_eq!(
             model_token_with(alibaba, "qwen4-max", &published),
             "qwen4-max"
         );
         assert_eq!(
-            model_token_with(alibaba, "QWEN4-MAX[1m]", &published),
+            model_token_with(alibaba, "QWEN4-MAX[1M]", &published),
             "qwen4-max"
         );
-        assert_eq!(model_token_with(zai, "glm-6", &published), "glm-6");
         assert_eq!(
             model_token_with(vendor_of_class("google"), "gemini-4-hydrogen", &published),
             "gemini-4-hydrogen"
         );
-        // only in an endpoint's own list -> still withheld
+        assert_eq!(
+            model_token_with(openrouter, "qwen/qwen4-max", &published),
+            "qwen/qwen4-max"
+        );
+        // (F02-20) a Claude id the built-in catalog attributes to anthropic is sent; another
+        // Claude-shaped id is not
+        assert_eq!(
+            model_token_with(anthropic, "claude-opus-6-1", &published),
+            "claude-opus-6-1"
+        );
+        assert_eq!(
+            model_token_with(anthropic, "claude-opus-6-2", &published),
+            "other"
+        );
+        // bound to the vendor: another class, no vendor, an unknown OpenRouter slug -> withheld
+        assert_eq!(model_token_with(zai, "qwen4-max", &published), "other");
+        assert_eq!(model_token_with(None, "qwen4-max", &published), "other");
+        assert_eq!(
+            model_token_with(openrouter, "mistralai/mistral-9", &published),
+            "other"
+        );
+        assert_eq!(model_token_with(None, "mistral-9", &published), "other");
+        // a configured source not declared public, an endpoint's own list -> withheld
+        assert_eq!(model_token_with(zai, "glm-9-cfg", &published), "other");
+        assert_eq!(model_token_with(zai, "glm-6", &published), "other");
         assert_eq!(model_token_with(zai, "glm-9-secret", &published), "other");
-        // the closed lists still answer first, and no state means today's behaviour
+        // the closed lists still answer first, and no state means the closed lists alone
         assert_eq!(model_token_with(zai, "glm-5.3", &published), "glm-5.3");
-        let empty = published_from(&ModelsState::default());
+        let empty = published_from(&ModelsState::default(), &trusted_sources(None));
         assert_eq!(model_token_with(alibaba, "qwen4-max", &empty), "other");
         assert_eq!(model_token_with(zai, "  ", &published), "unknown");
+        // declared `"public": true`: the catalog's vendor-prefixed ids count for their vendor (a
+        // plain id of a host that is no vendor's counts for nobody); the page's plain ids for its
+        // host's class (docs.z.ai -> zai)
+        let cfg = C3Config {
+            model_catalogs: Some(vec![ModelCatalogConfig {
+                url: "https://models.example.com/v1/models".into(),
+                public: true,
+            }]),
+            model_pages: vec![ModelPageConfig {
+                name: "zai-docs".into(),
+                url: "https://docs.z.ai/models".into(),
+                pattern: "(glm-[0-9.]+)".into(),
+                public: true,
+            }],
+            ..Default::default()
+        };
+        let declared = published_from(&state, &trusted_sources(Some(&cfg)));
+        assert_eq!(model_token_with(zai, "glm-9-cfg", &declared), "glm-9-cfg");
+        assert_eq!(model_token_with(zai, "glm-9-plain", &declared), "other");
+        assert_eq!(model_token_with(zai, "glm-6", &declared), "glm-6");
+        assert_eq!(model_token_with(alibaba, "glm-6", &declared), "other");
+        assert_eq!(model_token_with(zai, "glm-9-secret", &declared), "other");
     }
 
     #[test]

@@ -19,6 +19,8 @@
 #   FAKE_KIMI_ERROR=<text>      an `error: <text>` line on stderr; exit 1 (no resume hint)
 #   FAKE_KIMI_EXIT=<n>          exits n after the events
 #   FAKE_KIMI_STDERR=<text>     written to stderr
+#   FAKE_KIMI_JUNCTION=<dir>    leave a `node_modules` junction to <dir> in the cwd (the throwaway
+#                               worktree), as a reviewer's install command could (F02-21)
 $ErrorActionPreference = 'Stop'
 $u8 = New-Object System.Text.UTF8Encoding($false)
 $raw = [string]$env:FAKE_KIMI_ARGS
@@ -119,6 +121,7 @@ if ($kind -eq 'version') { Out-Bytes "kimi 0.27.0-fake`n"; exit 0 }
 if ($kind -ne 'turn') { Err-Bytes "fake kimi: unknown invocation: $raw"; exit 2 }
 
 if ($env:FAKE_KIMI_STDERR) { Err-Bytes $env:FAKE_KIMI_STDERR }
+if ($env:FAKE_KIMI_JUNCTION) { $null = New-Item -ItemType Junction -Path (Join-Path (Get-Location).Path 'node_modules') -Target ([string]$env:FAKE_KIMI_JUNCTION) }
 
 # a start failure: kimi prints the reason on stderr and exits non-zero, with NO resume hint.
 if ($env:FAKE_KIMI_ERROR) {

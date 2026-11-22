@@ -156,14 +156,16 @@ fn git_capture(repo: &Path, args: &[&str]) -> Result<String, String> {
 /// tool-restriction flag and WILL execute writes, so the reviewer never runs in the real checkout.
 /// A fresh detached worktree of HEAD under the OS temp is created on [`create`], the kimi child runs
 /// with its `cwd`, and the worktree is removed when this guard drops (every success / failure /
-/// timeout path), with `git worktree prune` after. The orchestrator's strict tree check on the MAIN
-/// tree stays as the second guard.
+/// timeout path), with `git worktree prune` after - unless the removal cannot be made safely
+/// ([`remove_worktree_dir`]), when the directory is left for `c3 doctor --fix`. The orchestrator's
+/// strict tree check on the MAIN tree stays as the second guard.
 struct KimiWorktree {
     repo: PathBuf,
     path: PathBuf,
     head: String,
     main_dirty: bool,
-    removed: bool,
+    /// The outcome of the one removal attempt (`None`: not tried yet).
+    removal: Option<Result<(), String>>,
 }
 
 /// The directory-name prefix of the throwaway worktree a kimi review runs in (directly under the
@@ -188,7 +190,7 @@ impl KimiWorktree {
             path,
             head,
             main_dirty,
-            removed: false,
+            removal: None,
         })
     }
 
@@ -208,89 +210,241 @@ impl KimiWorktree {
         l
     }
 
-    fn remove(&mut self) {
-        if self.removed {
-            return;
+    /// Remove the worktree once ([`remove_worktree_dir`] with the real git and unlink); a refusal
+    /// is logged in one line and returned. A second call returns the first call's outcome.
+    fn remove(&mut self) -> Result<(), String> {
+        if let Some(r) = &self.removal {
+            return r.clone();
         }
-        self.removed = true;
-        let path_s = self.path.to_string_lossy().to_string();
-        // The reviewer can run commands in this worktree: a symlink or junction it left there
-        // (say a `node_modules` junction into the main checkout) must never be followed by the
-        // forced removal below. Unlink every link first, without descending into it.
-        unlink_links_inside(&self.path);
-        let _ = git_capture(&self.repo, &["worktree", "remove", "--force", &path_s]);
-        let _ = git_capture(&self.repo, &["worktree", "prune"]);
-        // A belt-and-suspenders directory removal in case `worktree remove` left anything.
-        let _ = std::fs::remove_dir_all(&self.path);
+        let r = remove_worktree_dir(&self.repo, &self.path, &REAL_REMOVAL);
+        if let Err(why) = &r {
+            eprintln!(
+                "codex-consult: the kimi throwaway worktree {} was left in place: {why} (`c3 doctor --fix` removes it once that is safe)",
+                self.path.display()
+            );
+        }
+        self.removal = Some(r.clone());
+        r
     }
 }
 
-/// Remove every symlink and Windows junction INSIDE `root` without following it: the walk uses
-/// `symlink_metadata` (which reports a junction as a link too), removes a link itself
-/// (`remove_dir` for a directory link or junction, `remove_file` otherwise) and never descends into
-/// one. `root` itself is not touched. Errors are swallowed. Returns how many links were removed.
-pub(crate) fn unlink_links_inside(root: &Path) -> usize {
-    let mut removed = 0usize;
+/// Removes ONE link (never its target) - [`remove_link`] in production.
+type UnlinkFn = fn(&Path, &std::fs::Metadata) -> std::io::Result<()>;
+
+/// The git runner and the link remover of a throwaway worktree removal: the real ones in
+/// production ([`REAL_REMOVAL`]); a test passes a git recorder or an injected unlink failure.
+struct RemovalOps {
+    git: fn(&Path, &[&str]) -> Result<String, String>,
+    unlink: UnlinkFn,
+}
+
+const REAL_REMOVAL: RemovalOps = RemovalOps {
+    git: git_capture,
+    unlink: remove_link,
+};
+
+/// Remove a throwaway worktree of `repo` WITHOUT ever reaching outside it (F02-21, F03-2, F04-5).
+/// First every link inside is unlinked ([`unlink_links_inside_with`]: every reparse point counts
+/// as a link and is never descended into). If that pass hit ANY error - a link that could not be
+/// removed, an unreadable entry, a directory that is no longer a real directory inside the root -
+/// or the root itself is (now) a link, NOTHING destructive runs: no `git worktree remove --force`,
+/// no prune, no `remove_dir_all`; `Err` says why and the directory stays for a later `c3 doctor
+/// --fix`. After a clean pass the root is checked once more and the worktree removed with git; the
+/// directory fallback (when git left something) runs only after the same pass comes back clean
+/// again. A path that does not exist at all is only pruned.
+fn remove_worktree_dir(repo: &Path, path: &Path, ops: &RemovalOps) -> Result<(), String> {
+    if let Err(e) = std::fs::symlink_metadata(path) {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            let _ = (ops.git)(repo, &["worktree", "prune"]);
+            return Ok(());
+        }
+    }
+    let pass = unlink_links_inside_with(path, ops.unlink);
+    if !pass.errors.is_empty() {
+        return Err(pass.summary());
+    }
+    real_dir_canonical(path).map_err(|why| format!("the worktree root {why}"))?;
+    let path_s = path.to_string_lossy().to_string();
+    let _ = (ops.git)(repo, &["worktree", "remove", "--force", &path_s]);
+    let _ = (ops.git)(repo, &["worktree", "prune"]);
+    if std::fs::symlink_metadata(path).is_err() {
+        return Ok(());
+    }
+    // `worktree remove` left something (or refused): the same checks again, then the directory.
+    let again = unlink_links_inside_with(path, ops.unlink);
+    if !again.errors.is_empty() {
+        return Err(again.summary());
+    }
+    std::fs::remove_dir_all(path)
+        .map_err(|e| format!("the directory could not be removed ({e})"))?;
+    let _ = (ops.git)(repo, &["worktree", "prune"]);
+    Ok(())
+}
+
+/// The result of one unlink pass: how many links were removed and every error met.
+#[derive(Debug, Default)]
+struct UnlinkPass {
+    removed: usize,
+    errors: Vec<String>,
+}
+
+impl UnlinkPass {
+    /// One line: the first error and how many more there were.
+    fn summary(&self) -> String {
+        match self.errors.len() {
+            0 => String::new(),
+            1 => self.errors[0].clone(),
+            n => format!("{} (and {} more error(s))", self.errors[0], n - 1),
+        }
+    }
+}
+
+/// Whether an entry's metadata (read WITHOUT following it) is a link: on Windows every reparse
+/// point (`FILE_ATTRIBUTE_REPARSE_POINT` - a symlink, a junction, a mount point or any other
+/// kind), the same test `panel/roles.rs` uses; elsewhere a symlink.
+fn is_link(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        meta.file_type().is_symlink()
+    }
+}
+
+/// The canonical path of `p` when it is a real directory - not a link (read without following
+/// it) and a directory; else why not.
+fn real_dir_canonical(p: &Path) -> Result<PathBuf, String> {
+    let meta = std::fs::symlink_metadata(p).map_err(|e| format!("cannot be read ({e})"))?;
+    if is_link(&meta) {
+        return Err("is a link".to_string());
+    }
+    if !meta.is_dir() {
+        return Err("is not a directory".to_string());
+    }
+    std::fs::canonicalize(p).map_err(|e| format!("cannot be resolved ({e})"))
+}
+
+/// Remove every link INSIDE `root` without following it: `root` must be a real directory (not a
+/// link); the walk reads each entry with `symlink_metadata`, removes a link ([`is_link`]: every
+/// reparse point on Windows) with `unlink` and never descends into one. Before a directory is read,
+/// and again before its entries are acted on, it is re-checked to still be a real directory whose
+/// canonical path lies inside the root's - otherwise the walk ABORTS. Every other error (an
+/// unreadable directory or entry, a link that could not be removed or is still there) is collected
+/// and the walk goes on. `root` itself is not touched.
+fn unlink_links_inside_with(root: &Path, unlink: UnlinkFn) -> UnlinkPass {
+    let mut pass = UnlinkPass::default();
+    let canon_root = match real_dir_canonical(root) {
+        Ok(c) => c,
+        Err(why) => {
+            pass.errors.push(format!("the worktree root {why}"));
+            return pass;
+        }
+    };
+    let inside = |dir: &Path| -> Result<(), String> {
+        match real_dir_canonical(dir) {
+            Ok(c) if c.starts_with(&canon_root) => Ok(()),
+            Ok(_) => Err(format!("{} resolves outside the worktree", dir.display())),
+            Err(why) => Err(format!("{} {why}", dir.display())),
+        }
+    };
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in rd.flatten() {
-            let path = entry.path();
-            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+        if let Err(why) = inside(&dir) {
+            pass.errors.push(why);
+            return pass;
+        }
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                pass.errors
+                    .push(format!("{} cannot be listed ({e})", dir.display()));
                 continue;
-            };
-            let ft = meta.file_type();
-            if ft.is_symlink() {
-                if remove_link(&path, &ft).is_ok() {
-                    removed += 1;
+            }
+        };
+        let mut entries: Vec<PathBuf> = Vec::new();
+        for entry in rd {
+            match entry {
+                Ok(en) => entries.push(en.path()),
+                Err(e) => pass.errors.push(format!(
+                    "an entry of {} cannot be read ({e})",
+                    dir.display()
+                )),
+            }
+        }
+        if let Err(why) = inside(&dir) {
+            pass.errors.push(why);
+            return pass;
+        }
+        for path in entries {
+            let meta = match std::fs::symlink_metadata(&path) {
+                Ok(m) => m,
+                Err(e) => {
+                    pass.errors
+                        .push(format!("{} cannot be read ({e})", path.display()));
+                    continue;
                 }
-            } else if ft.is_dir() {
+            };
+            if is_link(&meta) {
+                match unlink(&path, &meta) {
+                    Ok(()) if std::fs::symlink_metadata(&path).is_err() => pass.removed += 1,
+                    Ok(()) => pass
+                        .errors
+                        .push(format!("the link {} is still there", path.display())),
+                    Err(e) => pass.errors.push(format!(
+                        "the link {} could not be removed ({e})",
+                        path.display()
+                    )),
+                }
+            } else if meta.is_dir() {
                 stack.push(path);
             }
         }
     }
-    removed
+    pass
 }
 
-/// Remove one link (never its target).
-fn remove_link(path: &Path, ft: &std::fs::FileType) -> std::io::Result<()> {
+/// Remove one link (never its target): on Windows a reparse point carrying the directory attribute
+/// (a junction, a directory symlink) with `remove_dir`, any other with `remove_file` (each falling
+/// back to the other); elsewhere `remove_file`. Neither call follows the link.
+fn remove_link(path: &Path, meta: &std::fs::Metadata) -> std::io::Result<()> {
     #[cfg(windows)]
     {
-        use std::os::windows::fs::FileTypeExt;
-        // A junction carries the directory attribute and is reported as a directory symlink.
-        if ft.is_symlink_dir() {
-            return std::fs::remove_dir(path);
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x10 != 0 {
+            return std::fs::remove_dir(path).or_else(|_| std::fs::remove_file(path));
         }
         std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path))
     }
     #[cfg(not(windows))]
     {
-        let _ = ft;
+        let _ = meta;
         std::fs::remove_file(path)
     }
 }
 
 impl Drop for KimiWorktree {
     fn drop(&mut self) {
-        self.remove();
+        let _ = self.remove();
     }
 }
 
 /// (`c3 doctor --fix`) Remove a throwaway worktree a crashed run left behind, with exactly the
-/// removal a live run's guard runs on drop ([`KimiWorktree::remove`]: links inside are unlinked
-/// first, never followed). The caller has established that `path` is such a worktree of `repo`
-/// and that no live run owns it (`setup::branches`).
-pub(crate) fn remove_throwaway_worktree(repo: &Path, path: &Path) {
+/// removal a live run's guard runs on drop ([`remove_worktree_dir`]: links inside are unlinked
+/// first, never followed, and nothing is deleted when that pass was not clean). The caller has
+/// established that `path` is such a worktree of `repo` and that no live run owns it
+/// (`setup::branches`). `true` only when the removal ran to the end; a refused one is `false`.
+pub(crate) fn remove_throwaway_worktree(repo: &Path, path: &Path) -> bool {
     let mut wt = KimiWorktree {
         repo: repo.to_path_buf(),
         path: path.to_path_buf(),
         head: String::new(),
         main_dirty: false,
-        removed: false,
+        removal: None,
     };
-    wt.remove();
+    wt.remove().is_ok()
 }
 
 /// (R7 / A1) Whether a brief reference can be staged into the throwaway worktree at the SAME path:
@@ -1397,41 +1551,174 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
-    // Windows only: a junction is made with `mklink /J`, which exists only on Windows (and needs no
-    // privilege, unlike a symlink there). The symlink variant below covers the other platforms.
-    #[cfg(windows)]
-    #[test]
-    fn unlink_removes_a_junction_without_following_it() {
-        let (base, wt, outside) = link_scratch("junction");
-        let link = wt.join("sub").join("node_modules");
-        let ok = std::process::Command::new("cmd")
-            .args(["/c", "mklink", "/J"])
-            .arg(&link)
-            .arg(&outside)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        assert!(ok, "mklink /J failed");
+    /// A directory link at `link` to `target`: a junction on Windows (`mklink /J` needs no
+    /// privilege, unlike a symlink there), a symlink elsewhere.
+    fn make_dir_link(link: &Path, target: &Path) {
+        #[cfg(windows)]
+        {
+            let ok = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            assert!(ok, "mklink /J failed");
+        }
+        #[cfg(not(windows))]
+        std::os::unix::fs::symlink(target, link).unwrap();
         assert!(
             link.join("sentinel.txt").exists(),
-            "the junction does not resolve"
+            "the link does not resolve"
         );
-        assert_eq!(unlink_links_inside(&wt), 1);
+    }
+
+    #[test]
+    fn unlink_removes_a_directory_link_without_following_it() {
+        let (base, wt, outside) = link_scratch("dirlink");
+        let link = wt.join("sub").join("node_modules");
+        make_dir_link(&link, &outside);
+        let pass = unlink_links_inside_with(&wt, remove_link);
+        assert_eq!(pass.removed, 1);
+        assert!(pass.errors.is_empty(), "{:?}", pass.errors);
         assert_link_gone_and_sentinel_kept(&base, &wt, &outside, &link);
     }
 
-    #[cfg(not(windows))]
+    thread_local! {
+        /// The git calls a [`recording_git`] removal made on this test's thread.
+        static GIT_CALLS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// A git recorder: notes the subcommand and does nothing.
+    fn recording_git(_repo: &Path, args: &[&str]) -> Result<String, String> {
+        GIT_CALLS.with(|c| c.borrow_mut().push(args.join(" ")));
+        Ok(String::new())
+    }
+
+    fn git_calls() -> Vec<String> {
+        GIT_CALLS.with(|c| c.borrow().clone())
+    }
+
+    /// An injected unlink failure (a link held open, a denied delete).
+    fn failing_unlink(_path: &Path, _meta: &std::fs::Metadata) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "injected unlink failure",
+        ))
+    }
+
+    // (F02-21, F04-5) a link that could not be removed stops the destructive cleanup: no forced
+    // `worktree remove`, no prune, no directory removal - the worktree, its link and the link's
+    // target are all left as they were.
     #[test]
-    fn unlink_removes_a_symlink_without_following_it() {
-        let (base, wt, outside) = link_scratch("symlink");
+    fn an_unlink_failure_prevents_the_forced_removal() {
+        let (base, wt, outside) = link_scratch("unlink-fails");
         let link = wt.join("sub").join("node_modules");
-        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        make_dir_link(&link, &outside);
+        let ops = RemovalOps {
+            git: recording_git,
+            unlink: failing_unlink,
+        };
+        let r = remove_worktree_dir(&base, &wt, &ops);
+        let why = r.expect_err("a failed unlink must refuse the removal");
+        assert!(why.contains("could not be removed"), "{why}");
         assert!(
-            link.join("sentinel.txt").exists(),
-            "the symlink does not resolve"
+            git_calls().is_empty(),
+            "no git call after a failed unlink: {:?}",
+            git_calls()
         );
-        assert_eq!(unlink_links_inside(&wt), 1);
-        assert_link_gone_and_sentinel_kept(&base, &wt, &outside, &link);
+        assert!(
+            wt.join("sub").join("own.txt").exists(),
+            "the worktree was left"
+        );
+        assert!(
+            std::fs::symlink_metadata(&link).is_ok(),
+            "the link was left"
+        );
+        assert!(outside.join("sentinel.txt").exists());
+        // the same tree with the real unlink is removed cleanly (git still recorded)
+        let ok = RemovalOps {
+            git: recording_git,
+            unlink: remove_link,
+        };
+        assert_eq!(remove_worktree_dir(&base, &wt, &ok), Ok(()));
+        assert!(
+            git_calls()
+                .iter()
+                .any(|c| c.starts_with("worktree remove --force")),
+            "{:?}",
+            git_calls()
+        );
+        assert!(
+            std::fs::symlink_metadata(&wt).is_err(),
+            "the fallback removed it"
+        );
+        assert!(outside.join("sentinel.txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (F02-21, F03-2) a worktree root that is (now) a link is refused before anything is touched:
+    // nothing is unlinked or deleted through it, git is never called, the doctor wrapper reports it
+    // as not removed.
+    #[test]
+    fn a_root_replaced_by_a_link_is_refused() {
+        let (base, wt, outside) = link_scratch("root-link");
+        let inner = outside.join("inner-link");
+        make_dir_link(&inner, &outside);
+        std::fs::remove_dir_all(&wt).unwrap();
+        make_dir_link(&wt, &outside);
+        let ops = RemovalOps {
+            git: recording_git,
+            unlink: remove_link,
+        };
+        let why = remove_worktree_dir(&base, &wt, &ops).expect_err("a link root is refused");
+        assert!(why.contains("the worktree root is a link"), "{why}");
+        assert!(git_calls().is_empty(), "{:?}", git_calls());
+        assert!(!remove_throwaway_worktree(&base, &wt));
+        assert!(outside.join("sentinel.txt").exists());
+        assert!(
+            std::fs::symlink_metadata(&inner).is_ok(),
+            "a link behind the root link was not touched"
+        );
+        assert!(
+            std::fs::symlink_metadata(&wt).is_ok(),
+            "the root link was left"
+        );
+        // clean up the links themselves, never their target
+        let _ = remove_link(&inner, &std::fs::symlink_metadata(&inner).unwrap());
+        let _ = remove_link(&wt, &std::fs::symlink_metadata(&wt).unwrap());
+        assert!(outside.join("sentinel.txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // The production removal end to end on a real git worktree: a reviewer left a directory link to
+    // an outside sentinel; the guard unlinks it, `git worktree remove --force` removes the worktree,
+    // and the sentinel survives.
+    #[test]
+    fn a_real_worktree_with_a_link_to_an_outside_sentinel_is_removed_safely() {
+        let repo = brief_repo("wt-remove");
+        let outside = repo.parent().unwrap().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("sentinel.txt"), "keep me\n").unwrap();
+        let mut wt = KimiWorktree::create(&repo).unwrap();
+        let path = wt.path.clone();
+        let link = path.join("node_modules");
+        make_dir_link(&link, &outside);
+        assert_eq!(wt.remove(), Ok(()));
+        assert!(
+            std::fs::symlink_metadata(&path).is_err(),
+            "the worktree is gone"
+        );
+        assert!(
+            outside.join("sentinel.txt").exists(),
+            "the sentinel survived"
+        );
+        let list = git_capture(&repo, &["worktree", "list", "--porcelain"]).unwrap();
+        assert!(!list.contains(THROWAWAY_WORKTREE_PREFIX), "{list}");
+        // a second call (the Drop) returns the first outcome without another attempt
+        assert_eq!(wt.remove(), Ok(()));
+        drop(wt);
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 
     /// A scratch git repo with one commit holding `committed.md` (identity set repo-locally).

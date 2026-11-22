@@ -50,6 +50,8 @@ pub mod work;
 
 pub mod finish;
 
+pub mod ci_check;
+
 pub mod setup;
 
 pub mod budget;

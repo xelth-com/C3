@@ -635,6 +635,9 @@ pub fn start_detached_run(
         paths.id8,
         c3_core::spelling::status_cmd(&o.task, collab_for_cmd.as_deref(), &paths.id8),
     );
+    // (0.2.5) the operator's waiting rule, once more where the waiting begins (stderr, like the
+    // compaction hint above: stdout keeps the lines the plugin harness pins).
+    eprintln!("{}", crate::hook::WAITING_NOTICE);
     0
 }
 

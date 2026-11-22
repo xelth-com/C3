@@ -18,7 +18,10 @@
 #
 # Runs on macOS and Linux under sh/bash.
 
-wait_rule="c3: coordinator rules - the c3:coordinate skill; while waiting on workers, panels, builds or peers schedule a wakeup (ScheduleWakeup, about 20 min) instead of blocking, small reads at each wake - the prompt cache stays warm"
+# The waiting rule (the operator's standing instruction; purpose first, scope explicit, precedence
+# stated). Keep it in step with plugin/hooks/c3-hook.ps1, the coordinate skill and the --detach
+# notices (crates/c3/src/hook/mod.rs WAITING_NOTICE).
+wait_rule="c3: WAITING RULE (the operator's standing instruction, for every session, with or without c3). Before you end a turn while anything of yours is still running in the background - a subagent, a build or test run, a c3 panel or detached consultation, a peer session - call ScheduleWakeup with delaySeconds 1800 and a one-line prompt saying what to check. Why: a completion notice that arrives after a long idle gap makes you re-read your whole context at full price; a wake-up inside the cache lifetime keeps it cached. At the wake-up do one small check, answer in a line or two, and schedule the next one if work is still running; stop scheduling when nothing is. This overrides the ScheduleWakeup tool's own advice against cache-warming wake-ups and its \"/loop only\" wording."
 
 collab_dir=".collab"
 if [ -n "$1" ]; then
@@ -51,25 +54,28 @@ fi
 
 out=$("$c3_exe" hook --collab-dir "$collab_dir" --source "$source" 2>&1)
 code=$?
-first=$(printf '%s\n' "$out" | grep -m1 '.')
-if [ -z "$first" ]; then
-  first="c3 hook exited $code without output"
-fi
-echo "$first"
-# (wave 27, R13 D5) the second line: the pointer to the coordinator's rules (and the telemetry switch)
-pointer=$(printf '%s\n' "$out" | grep -m1 '^codex-consult: coordinator rules - ')
-if [ -n "$pointer" ] && [ "$pointer" != "$first" ]; then
-  echo "$pointer"
-fi
-# (R30) after a compaction, the coordinator re-hydration line (present only for the compact source)
-restore=$(printf '%s\n' "$out" | grep -m1 '^codex-consult: after compaction - ')
-if [ -n "$restore" ]; then
-  echo "$restore"
-fi
-# (wave 11) the self-update line: present only when `c3 hook` found a newer release on record
-update=$(printf '%s\n' "$out" | grep -m1 '^c3: update available ')
-if [ -n "$update" ] && [ "$update" != "$first" ]; then
-  echo "$update"
+# (0.2.5) forward every line of `c3 hook` that starts with `c3: `, `codex-consult: ` or `CI: ` (the
+# availability line, the coordinator-rules pointer, the compaction, update, maintenance, model,
+# branch and red-CI lines), in the order printed, each only once, at most 10 lines, each cut to 400
+# characters (`...` appended when cut). c3-hook.ps1 does the same and must print the same text.
+forwarded=$(printf '%s\n' "$out" | tr -d '\r' | sed 's/[[:space:]]*$//' | awk '
+  /^(c3: |codex-consult: |CI: )/ {
+    if (!seen[$0]++ && n < 10) {
+      n++
+      line = $0
+      if (length(line) > 400) line = substr(line, 1, 400) "..."
+      print line
+    }
+  }')
+if [ -n "$forwarded" ]; then
+  printf '%s\n' "$forwarded"
+else
+  # nothing carried a known prefix: the first non-empty line as it is (cut), else a note
+  first=$(printf '%s\n' "$out" | tr -d '\r' | grep -m1 '.' | cut -c1-400)
+  if [ -z "$first" ]; then
+    first="c3 hook exited $code without output"
+  fi
+  echo "$first"
 fi
 echo "$wait_rule"
 exit 0

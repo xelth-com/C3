@@ -668,7 +668,8 @@ pub struct RoutingEligible {
 
 /// `panel.routing.picked[]`: one seat with the rule that filled it. Field order:
 /// `{slot, position, lineage, lab, rule}` (`rule`: `required` | `roster` | `lab-draw` |
-/// `lab-explore` | `rank-draw` | `rank-explore`).
+/// `lab-explore` | `rank-draw` | `rank-explore`; C3 0.2.5 adds the upper-tier seat `tier-draw` |
+/// `tier-explore` | `tier`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RoutingPicked {
     #[serde(default)]

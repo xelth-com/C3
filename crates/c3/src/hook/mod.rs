@@ -23,6 +23,11 @@ use c3_core::one_line;
 
 use crate::providers::{resolve_codex_launcher, short_line, Options};
 
+/// The one sentence of the operator's waiting rule (the SessionStart scripts in `plugin/hooks/`
+/// print the whole rule; the `coordinate` skill states it in its first lines) that `c3 consult
+/// --detach` and `c3 work --detach` print on stderr when they start - where the waiting begins.
+pub const WAITING_NOTICE: &str = "waiting rule (every session, with or without c3): before you end a turn while this runs, call ScheduleWakeup with delaySeconds 1800 and a one-line prompt saying what to check - a wake-up inside the cache lifetime keeps your context cached, a notice after a long idle gap makes you re-read it at full price";
+
 /// The exact message the plugin prints when `codex` is not on PATH.
 const CODEX_MISSING: &str =
     "codex-consult: codex CLI not found on PATH - follow the setup-providers skill before consulting a reviewer";
@@ -74,8 +79,18 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     if let Some(l) = branch_line_within(BRANCH_LINE_DEADLINE) {
         println!("{l}");
     }
+    // (0.2.5, red CI) one line when the latest completed CI run of the default branch failed, read
+    // through `gh`: at most one call per repository and day (the attempt is cached in C3's state
+    // directory), under its own deadline, silent without `gh` / a GitHub remote / a login, with
+    // `C3_CI_CHECK=off` / `"ci_check": false`, and inside a C3 child.
+    if let Some(l) = line_within(CI_LINE_DEADLINE, crate::ci_check::hook_line) {
+        println!("{l}");
+    }
     0
 }
+
+/// The one deadline of the CI line: `gh`'s own wait plus the git calls that precede it.
+const CI_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// (0.2.5, F02-6) The one deadline of the branch line's git calls.
 pub const BRANCH_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);

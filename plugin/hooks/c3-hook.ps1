@@ -29,7 +29,10 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
-$WaitRule = 'c3: coordinator rules - the c3:coordinate skill; while waiting on workers, panels, builds or peers schedule a wakeup (ScheduleWakeup, about 20 min) instead of blocking, small reads at each wake - the prompt cache stays warm'
+# The waiting rule (the operator's standing instruction; purpose first, scope explicit, precedence
+# stated). Keep it in step with c3-hook.sh, the coordinate skill and the --detach notices
+# (crates/c3/src/hook/mod.rs WAITING_NOTICE).
+$WaitRule = 'c3: WAITING RULE (the operator''s standing instruction, for every session, with or without c3). Before you end a turn while anything of yours is still running in the background - a subagent, a build or test run, a c3 panel or detached consultation, a peer session - call ScheduleWakeup with delaySeconds 1800 and a one-line prompt saying what to check. Why: a completion notice that arrives after a long idle gap makes you re-read your whole context at full price; a wake-up inside the cache lifetime keeps it cached. At the wake-up do one small check, answer in a line or two, and schedule the next one if work is still running; stop scheduling when nothing is. This overrides the ScheduleWakeup tool''s own advice against cache-warming wake-ups and its "/loop only" wording.'
 
 function Resolve-C3Exe {
     if ($env:C3_EXE -and (Test-Path -LiteralPath $env:C3_EXE)) {
@@ -72,18 +75,34 @@ try {
     $raw = @(& $exe hook --collab-dir $CollabDir --source $source 2>&1 | ForEach-Object { "$_" })
     $code = $LASTEXITCODE
     $ErrorActionPreference = $previous
-    $first = (@($raw | Where-Object { $_ -and $_.Trim() }) | Select-Object -First 1)
-    if (-not $first) { $first = "c3 hook exited $code without output" }
-    Write-Output $first
-    # (wave 27, R13 D5) the second line: the pointer to the coordinator's rules (and the telemetry switch)
-    $pointer = (@($raw | Where-Object { $_ -like 'codex-consult: coordinator rules - *' }) | Select-Object -First 1)
-    if ($pointer -and $pointer -ne $first) { Write-Output $pointer }
-    # (R30) after a compaction, the coordinator re-hydration line (present only for the compact source)
-    $restore = (@($raw | Where-Object { $_ -like 'codex-consult: after compaction - *' }) | Select-Object -First 1)
-    if ($restore) { Write-Output $restore }
-    # (wave 11) the self-update line: present only when `c3 hook` found a newer release on record
-    $update = (@($raw | Where-Object { $_ -like 'c3: update available *' }) | Select-Object -First 1)
-    if ($update -and $update -ne $first) { Write-Output $update }
+    # (0.2.5) forward every line of `c3 hook` that starts with `c3: `, `codex-consult: ` or `CI: `
+    # (the availability line, the coordinator-rules pointer, the compaction, update, maintenance,
+    # model, branch and red-CI lines), in the order printed, each only once, at most 10 lines, each
+    # cut to 400 characters (`...` appended when cut). c3-hook.sh does the same and must print the
+    # same text.
+    $seen = @{}
+    $forwarded = @()
+    foreach ($l in $raw) {
+        $t = "$l".TrimEnd()
+        if ($t -cmatch '^(c3: |codex-consult: |CI: )') {
+            if (-not $seen.ContainsKey($t)) {
+                $seen[$t] = $true
+                if ($forwarded.Count -lt 10) {
+                    if ($t.Length -gt 400) { $t = $t.Substring(0, 400) + '...' }
+                    $forwarded += $t
+                }
+            }
+        }
+    }
+    if ($forwarded.Count -gt 0) {
+        foreach ($t in $forwarded) { Write-Output $t }
+    } else {
+        # nothing carried a known prefix: the first non-empty line as it is (cut), else a note
+        $first = (@($raw | Where-Object { $_ -and $_.Trim() }) | Select-Object -First 1)
+        if (-not $first) { $first = "c3 hook exited $code without output" }
+        if ($first.Length -gt 400) { $first = $first.Substring(0, 400) }
+        Write-Output $first
+    }
     Write-Output $WaitRule
 } catch {
     $msg = ("$($_.Exception.Message)" -replace '\s+', ' ').Trim()

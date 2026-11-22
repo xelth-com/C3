@@ -126,7 +126,65 @@ swap -> xelth.com/C3 page after the tag.
   P3 applied to main (11 files, clean); full suite on it running (scratchpad `suite-P3.log`). C1 (one
   vendor per panel) started from 23b1455. P4 waits for the P3 commit (it changes
   `maintain::models::published_from`, which P3 reworked).
+- 2026-11-22 17:40: CI for 23b1455 green (45036679436). P3 suite green (40 binaries, 1349 passed, 0 failed,
+  fmt + clippy clean); committed 8e6fd3e, pushed, CI 45039380914. P3 worktree removed (no links), branch
+  deleted. P2 worktree still locked by the harness (left `parked`). C1 branch recorded `work`. P4 started
+  from 8e6fd3e (told to build on P3's source keys, P2's `remove_throwaway_worktree`, A1's staging).
+  Remaining after P4 + C1: B1 (reviewed revision, `--rev`, `--diff`, kimi main-tree false fail), C2
+  (CI / finish red-CI line / hook wait rule / rule text refresh), then debt file update, version 0.2.5,
+  a cheap diff-review of a115422..HEAD, and the acceptance.
+- 2026-11-22 ~18:10, wave C1 reported and APPLIED to main (worktree `agent-a5340700e80b3b489`, 10 files;
+  CHANGELOG conflict resolved, cargo check clean). One seat per lab (best-weighted per lab, then a draw
+  among labs; size capped at the lab count with a warning; reserve refills only unseated labs);
+  `--require` two of one lab -> both seated + warning; `--panel-all` one warning; the routed bare default
+  unchanged; on a weighty purpose with >= 2 seats a weighty entry gets the first seat (`tier-*` rules);
+  lab table: grok -> xai, o<digit> -> openai, last path segment tried - all 17 roster families
+  resolve; plan / summary / `router explain` name the "lab already seated" skip. The rule also applies
+  to roster order (the 2026-11-20 GLM + GLM-flash panel most likely came from the no-ratings roster-order
+  fallback). Plugin-compat mode keeps the old draw. Record marker `panel.routing.ext.c3.seating` only when
+  the rule changed something. Worker's runs: panel 55, router 8, router replay 2, panel_light_required 2,
+  reviewer_protection 8. C2 started from 8e6fd3e. Suite for C1 + P4 together when P4 reports.
+- 2026-11-22 ~18:40: CI for 8e6fd3e green (45039380914). Wave C2 reported (worktree
+  `agent-a3c9b81bf779f7b85`, not applied): CI `--no-fail-fast` on all test steps + git stderr in the
+  kill_record_durable helper; `ci_check.rs` - `c3 finish` prints `CI: the latest run on <default>
+  failed - <title> (run <id>)` (JSON `ci`), the hook at most once a day per repo (cache
+  `<codex home>/c3/ci-check.json`), gh deadline 3 s / line 5 s, `C3_CI_CHECK=off` / `ci_check`; the
+  1800 s waiting rule in both hook scripts, the coordinate skill's first lines and the --detach notices
+  (stderr); `setup/rules.rs` - doctor reports a C3-written 02-delegation.md without BRANCHES AND
+  WORKTREES, `--fix` appends that section (temp + rename, not in a child, a rewritten file only warned).
+  FOUND by the worker and confirmed here: the plugin hook scripts forward only a whitelist of `c3 hook`
+  lines (status, coordinator pointer, compaction, update, now CI), so the maintenance, branch and
+  model-repair lines built since 0.2.4 never reached a plugin session (the actions ran, silently).
+  Follow-up sent to the same worker: forward every `c3: ` / `codex-consult: ` / `CI: ` line (ordered,
+  de-duplicated, <= 10, cut at 400 chars), both scripts byte-identical, with a test.
+- 2026-11-22 ~19:20: the C2 follow-up done (`crates/c3-cli/tests/hook_scripts.rs`, 3 tests, ps1 under
+  PowerShell 5.1 and sh both run, byte-identical; minor: sh cuts non-ASCII by bytes). C2 APPLIED to
+  main on top of C1 (24 files, no conflicts; new files staged); cargo check clean. Waiting for P4, then
+  one full suite for C1 + C2 + P4 and a commit; then B1.
+- 2026-11-22 ~19:50, wave P4 reported and APPLIED (worktree `agent-a196c549549e6146c`, 11 files; CHANGELOG
+  conflict resolved; cargo check clean). Telemetry: only the built-in catalog host (openrouter.ai) and a
+  configured catalog / page declared `"public": true` confer published status, read at send time; a
+  published id counts only for the vendor class its source attributes it to (OpenRouter slug, else the
+  source host's class), never for an unknown vendor; a Claude-shaped id is sent only from CLAUDE_MODELS
+  or that set; `[1m]` stripped case-insensitively; end-to-end tests through `c3 telemetry
+  --backfill-ratings` (11 reviewer cases). kimi removal: every reparse point a link, never descended;
+  each directory re-checked against the root's canonical path; any error / remaining link / linked root
+  -> no `worktree remove`, no prune, no `remove_dir_all`; `remove_throwaway_worktree` returns bool and
+  doctor reports a refusal as not removed. Worker's runs: lib filters 83 + 144, telemetry_parity 9,
+  kimi_engine 12, branches 9, maintain 34. Accepted: trust from the current config, plain ids bound by
+  the source host, unknown OpenRouter slugs never sent, no prune on a refused removal. Debt (minor): a
+  new Claude model stays `other` in telemetry until a release (OpenRouter spells `claude-opus-4.5`
+  with dots); the walk's re-check is by path (only link removal sits in that window). Full suite for
+  C1 + C2 + P4 running (scratchpad `suite-C12P4.log`). B1 brief updated with A1 / P2 / P4 state.
 - 2026-11-22 14:00: the weekly `c3 maintain` pass (due 15:19 today, with codex 0.169 -> 0.171 waiting)
   postponed to 2026-11-24 15:19 (`~/.codex/c3/maintain/state.json` next_due; backup
   `state.json.bak-2026-11-22`) so the Codex update is smoked by A2's sub-agent check, not before it.
   Watch that pass with the new binary - it closes the "first real runs" entry.
+- 2026-11-22 ~21:30, full suite for C1 + C2 + P4 GREEN. Two background runs were stopped by Claude
+  Code's memory-pressure reaper (another session built `movfast`); `maintain`'s one FAILED line in the
+  partial log was the kill, not the code: `maintain` alone 34/34. The rest ran in the foreground, one
+  binary at a time (`-j 2`, `--test-threads=1`): mcp_integration 1, notspooled_parity 21,
+  panel_light_required 2, reviewer_protection 8, snapshot_partb 4, subagent_guard 4, telemetry_parity 9,
+  update 12, wave6_live_diffs 5, wave9_consilium 4, work 29 - all ok. fmt and clippy clean. Committed
+  as one commit (C1 + C2 + P4). Next: B1 alone, then TECH_DEBT, the version bump, a cheap diff-review
+  panel, Astra's acceptance.

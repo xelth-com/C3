@@ -840,7 +840,8 @@ fn throwaway_stale_reason(path: &Path, now: SystemTime) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaleRemoval {
     pub path: String,
-    /// The directory is gone afterwards.
+    /// The removal ran to the end and the directory is gone afterwards (a refused removal - a link
+    /// inside that could not be detached, a root that is a link - is `false`).
     pub removed: bool,
 }
 
@@ -855,10 +856,12 @@ pub fn remove_stale_worktrees(repo_root: &Path) -> Vec<StaleRemoval> {
         .iter()
         .map(|s| {
             let p = Path::new(&s.path);
-            crate::engines::kimi::remove_throwaway_worktree(repo_root, p);
+            // a refused removal (a link inside that could not be detached, a root that is a link)
+            // leaves the directory and reports it as not removed, whatever `exists` would say
+            let ok = crate::engines::kimi::remove_throwaway_worktree(repo_root, p);
             StaleRemoval {
                 path: s.path.clone(),
-                removed: !p.exists(),
+                removed: ok && std::fs::symlink_metadata(p).is_err(),
             }
         })
         .collect()

@@ -58,11 +58,15 @@ pub struct DoctorReport {
     pub snapshot_bytes: u64,
     /// Branches and worktrees (`c3 branches`, cheap scan); `None` outside a git repository.
     pub branches: Option<BranchReport>,
+    /// `.claude/rules/02-delegation.md` against the current template's "BRANCHES AND WORKTREES"
+    /// section ([`crate::setup::rules`]).
+    pub delegation_rule: crate::setup::rules::RuleStatus,
 }
 
 impl DoctorReport {
     /// A clean workspace: no stubs left, `c3 mcp` registered, no eck leftovers, no agent file
-    /// pinning an old model, no unknown branch and no worktree without a recorded state. The
+    /// pinning an old model, no C3-written delegation rule without the branches section, no unknown
+    /// branch and no worktree without a recorded state. The
     /// snapshot folder size and the start folder's branch / uncommitted changes are informational
     /// and do not count.
     pub fn is_clean(&self) -> bool {
@@ -71,6 +75,7 @@ impl DoctorReport {
             && self.eck_core_in.is_empty()
             && self.eck_rule_files.is_empty()
             && self.pinned_agents.is_empty()
+            && !self.delegation_rule.is_finding()
             && self
                 .branches
                 .as_ref()
@@ -387,6 +392,9 @@ pub fn scan(repo_root: &Path) -> DoctorReport {
         pins.sort_by(|a, b| a.file.cmp(&b.file));
         report.pinned_agents = pins;
     }
+
+    // The delegation rule against the template's current sections.
+    report.delegation_rule = crate::setup::rules::scan(repo_root);
 
     // `.eck/snapshots/` size and count.
     let snaps = eck.join("snapshots");

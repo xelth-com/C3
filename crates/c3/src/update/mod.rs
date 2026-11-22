@@ -258,7 +258,7 @@ fn cache_path() -> Option<PathBuf> {
 }
 
 /// The codex home, matching `providers`/`telemetry`: `CODEX_HOME`, else `~/.codex`.
-fn codex_home() -> PathBuf {
+pub(crate) fn codex_home() -> PathBuf {
     if let Ok(h) = std::env::var("CODEX_HOME") {
         if !h.is_empty() {
             return PathBuf::from(h);

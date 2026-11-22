@@ -8,6 +8,7 @@ use clap::Args;
 use crate::providers;
 use crate::setup::branches::{self, BranchReport, SET_HINT};
 use crate::setup::doctor;
+use crate::setup::rules::{RuleStatus, BRANCHES_HEADING, DELEGATION_RULE};
 
 /// Arguments of `c3 doctor`.
 #[derive(Args, Debug, Default)]
@@ -16,7 +17,8 @@ pub struct DoctorArgs {
     #[arg(long)]
     pub json: bool,
     /// Repair what can be repaired automatically (stale agent model pins -> the alias; AGENTS.md
-    /// -> the roster's successor; a kimi review's stale throwaway worktree -> removed), then report
+    /// -> the roster's successor; a kimi review's stale throwaway worktree -> removed; the
+    /// "BRANCHES AND WORKTREES" section appended to a C3-written `02-delegation.md` that lacks it), then report
     /// what is left. The edits are left uncommitted; a repair that cannot be made safely is
     /// reported; inside a C3 child nothing is repaired or removed.
     #[arg(long)]
@@ -114,6 +116,14 @@ pub fn run(args: DoctorArgs) -> i32 {
         crate::setup::repo_models::RepairReport::default()
     };
     let fixes = &repair.fixes;
+    // `--fix` also appends the template's "BRANCHES AND WORKTREES" section to a delegation rule file
+    // C3 wrote before the section existed (only that, only when the file still carries C3's title
+    // line; a rewritten file is reported by the scan, never edited) - never inside a C3 child.
+    let rule_repair = if args.fix && !crate::engines::in_c3_child() {
+        crate::setup::rules::repair_delegation_rule(&repo_root)
+    } else {
+        crate::setup::rules::RuleRepair::default()
+    };
     // `--fix` also removes a kimi review's throwaway worktree no live run owns (the kimi engine's
     // own link-safe removal) - never inside a C3 child (F04-4: a reviewer is read-only).
     let removed_worktrees = if args.fix && !crate::engines::in_c3_child() {
@@ -124,7 +134,7 @@ pub fn run(args: DoctorArgs) -> i32 {
 
     let report = doctor::scan(&repo_root);
     // a repair that could not be made is a finding of its own (an AGENTS.md one has no scan line)
-    let clean = report.is_clean() && repair.problems.is_empty();
+    let clean = report.is_clean() && repair.problems.is_empty() && rule_repair.problem.is_none();
 
     if args.json {
         let obj = serde_json::json!({
@@ -140,6 +150,21 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "new": p.new,
                 "why": p.why,
             })).collect::<Vec<_>>(),
+            "fixed_rules": rule_repair.fixed.iter().collect::<Vec<_>>(),
+            "rule_fix_problems": rule_repair.problem.iter().map(|(file, why)| serde_json::json!({
+                "file": file,
+                "why": why,
+            })).collect::<Vec<_>>(),
+            "delegation_rule": match report.delegation_rule {
+                RuleStatus::Absent => serde_json::json!({ "file": DELEGATION_RULE, "status": "absent" }),
+                RuleStatus::Current => serde_json::json!({ "file": DELEGATION_RULE, "status": "current" }),
+                RuleStatus::MissingSection { c3_written } => serde_json::json!({
+                    "file": DELEGATION_RULE,
+                    "status": "missing_section",
+                    "section": BRANCHES_HEADING,
+                    "c3_written": c3_written,
+                }),
+            },
             "fix_skipped": repair
                 .skipped_in_child
                 .then_some(crate::setup::repo_models::SKIPPED_IN_CHILD),
@@ -184,6 +209,14 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "[!] {}: model {} -> {} not repaired - {}",
                 p.file, p.old, p.new, p.why
             );
+        }
+        if let Some(file) = &rule_repair.fixed {
+            println!(
+                "[fixed] {file}: appended the \"BRANCHES AND WORKTREES\" section of C3's template"
+            );
+        }
+        if let Some((file, why)) = &rule_repair.problem {
+            println!("[!] {file}: the \"BRANCHES AND WORKTREES\" section not appended - {why}");
         }
         for r in &removed_worktrees {
             if r.removed {
@@ -237,6 +270,19 @@ pub fn run(args: DoctorArgs) -> i32 {
                     );
                 }
             }
+        }
+
+        match report.delegation_rule {
+            RuleStatus::Absent => {}
+            RuleStatus::Current => {
+                println!("[ok] {DELEGATION_RULE} has the \"BRANCHES AND WORKTREES\" section");
+            }
+            RuleStatus::MissingSection { c3_written: true } => println!(
+                "[!] {DELEGATION_RULE}: C3 wrote it before the \"BRANCHES AND WORKTREES\" section existed - c3 doctor --fix appends that section"
+            ),
+            RuleStatus::MissingSection { c3_written: false } => println!(
+                "[warn] {DELEGATION_RULE}: no \"BRANCHES AND WORKTREES\" section, and the file is not C3's template any more - left as it is (the section is in crates/c3/templates/02-delegation.md of the C3 repository)"
+            ),
         }
 
         if let Some(b) = &report.branches {

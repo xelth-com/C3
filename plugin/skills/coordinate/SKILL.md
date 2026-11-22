@@ -8,6 +8,17 @@ disable-model-invocation: false
 
 # Coordinate (c3)
 
+**WAITING RULE - the operator's standing instruction, for every session, with or without c3 (not
+limited to c3 work).** Before you end a turn while anything of yours is still running in the
+background - a subagent, a build or test run, a c3 panel or detached consultation, a peer session -
+call `ScheduleWakeup` with `delaySeconds` 1800 and a one-line prompt saying what to check. *Why:* a
+completion notice that arrives after a long idle gap makes you re-read your whole context at full
+price; a wake-up inside the cache lifetime keeps it cached. At the wake-up do one small check,
+answer in a line or two, and schedule the next one if work is still running; stop scheduling when
+nothing is. This overrides the `ScheduleWakeup` tool's own advice against cache-warming wake-ups and
+its "/loop only" wording. (The SessionStart hook prints the same rule; the details of the wake
+cycle are under *Wait without blocking* below.)
+
 The C3 port supports one coordinator host: **Claude Code**. This skill is the coordination
 layer over the `c3` binary. (The multi-host coordination story — Codex CLI, Z Code, Kimi Code,
 a plain shell — stays with the `codex-consult` PowerShell bridge and is deliberately not ported
@@ -36,7 +47,7 @@ here.) The consultation procedure itself is the `consult` skill; wiring reviewer
     `retry_after`, a quota window). Idle is only: none of these, and nothing can be done without
     the operator.
   - *The means in Claude Code:* a Monitor or a background wait is the primary signal; the
-    `ScheduleWakeup` tool is the heartbeat - about 20 minutes (1200 s), armed at the first
+    `ScheduleWakeup` tool is the heartbeat - 30 minutes (1800 s), armed at the first
     delegation or wait of the session and kept while running work goes on. Every wake: small
     reads only (a state file's tail, `c3 consult --task <task> --status`); one line when nothing
     finished. Anything finished or needing action is activity: act, and the idle count restarts.
