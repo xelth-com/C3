@@ -119,6 +119,13 @@ swap -> xelth.com/C3 page after the tag.
   maintain 34, claude_engine 15. Accepted decisions: codex custom-provider smoke with no roster; an
   explicit `C3_MAINTAIN_SMOKE_<ENGINE>` still by label; `ext.c3.reviewers` http entries announced only.
   Debt (minor): smoke consult children lose `CODEX_CONSULT_TEST_*` (scrub_host_markers).
+- 2026-11-22 17:08: P1+P2 suite green (40 binaries, 1331 passed, 0 failed); clippy then flagged my test
+  module mid-file (moved to the end; clippy, fmt clean). Committed 23b1455, pushed, CI 45036679436.
+  P1 worktree removed + branch deleted; P2 worktree reset clean but LOCKED by this session's agent
+  harness (pid 2440 = this Claude Code session) - recorded `parked`, remove once unlocked, no force.
+  P3 applied to main (11 files, clean); full suite on it running (scratchpad `suite-P3.log`). C1 (one
+  vendor per panel) started from 23b1455. P4 waits for the P3 commit (it changes
+  `maintain::models::published_from`, which P3 reworked).
 - 2026-11-22 14:00: the weekly `c3 maintain` pass (due 15:19 today, with codex 0.169 -> 0.171 waiting)
   postponed to 2026-11-24 15:19 (`~/.codex/c3/maintain/state.json` next_due; backup
   `state.json.bak-2026-11-22`) so the Codex update is smoked by A2's sub-agent check, not before it.

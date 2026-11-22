@@ -717,6 +717,7 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
                     &roster,
                     dir,
                     &self_exe,
+                    opts.force,
                     now,
                     &p,
                 );
@@ -794,6 +795,14 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
 /// collected ids, the report (printed once by the next SessionStart hook) and the notes; a dry run
 /// stores nothing.
 fn models_pass(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) -> i32 {
+    // (F02-18) `C3_MAINTAIN_MODELS=off` is authoritative: an explicit `--models` fetches nothing
+    // (no engine, endpoint or public list) and writes nothing, and says why.
+    if models_mode() == ModelsMode::Off {
+        println!(
+            "c3 maintain: the model step is off (C3_MAINTAIN_MODELS=off) - --models fetched nothing; set C3_MAINTAIN_MODELS=announce or swap to run it"
+        );
+        return 0;
+    }
     let mut state = read_state(dir);
     let roster = crate::providers::read_reviewer_roster().unwrap_or_default();
     let self_exe = std::env::current_exe()
@@ -893,7 +902,10 @@ fn maintain_one_engine(
     };
 
     // 1. smoke the installed version first.
-    if let smoke::Smoke::Fail(why) = run_one_smoke(env, self_exe, &target, name, now) {
+    let roster_text = roster_text_of(roster);
+    if let smoke::Smoke::Fail(why) =
+        run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref())
+    {
         let msg = format!("held: smoke fails on the installed version ({why})");
         println!("c3 maintain: {name} {installed_text} {msg}");
         return (
@@ -936,6 +948,7 @@ fn maintain_one_engine(
         &new_text,
         caps,
         &target,
+        roster,
         self_exe,
         dir,
         now,
@@ -966,6 +979,7 @@ fn update_and_verify(
     new_text: &str,
     caps: &engine::Caps,
     target: &smoke::Target,
+    roster: &c3_core::roster::Roster,
     self_exe: &str,
     dir: &Path,
     now: DateTime<Utc>,
@@ -1006,7 +1020,10 @@ fn update_and_verify(
         .unwrap_or_else(|| new_text.to_string());
 
     // 3. smoke the new version.
-    if let smoke::Smoke::Fail(why) = run_one_smoke(env, self_exe, target, name, now) {
+    let roster_text = roster_text_of(roster);
+    if let smoke::Smoke::Fail(why) =
+        run_one_smoke(env, self_exe, target, name, now, roster_text.as_deref())
+    {
         if caps.has_rollback {
             if let Some(res) = engine::do_rollback(env, name, launcher, installed_text, dir) {
                 let cmd_ok = matches!(res, Ok(ref r) if r.ok());
@@ -1061,9 +1078,61 @@ fn update_and_verify(
 /// cleared only when the rollback command succeeds AND the previous version is actually restored. A
 /// failed rollback, a rollback that does not restore the previous version, and the absence of any
 /// rollback path all leave the record in place (resolved = false) so a later due pass smokes it
-/// again - the installed engine still fails its smoke, so the record must not be cleared.
+/// again - the installed engine still fails its smoke, so the record must not be cleared. Then,
+/// instead of sitting on the failing version until the operator steps in, a vendor release NEWER
+/// than it is tried ([`try_newer_release`]), with the record's original `previous` kept as the
+/// rollback target.
 #[allow(clippy::too_many_arguments)]
 fn handle_pending(
+    env: &dyn Env,
+    name: &str,
+    launcher: &str,
+    installed_text: &str,
+    installed: Option<&version::CliVersion>,
+    caps: &engine::Caps,
+    roster: &c3_core::roster::Roster,
+    dir: &Path,
+    self_exe: &str,
+    force: bool,
+    now: DateTime<Utc>,
+    p: &PendingUpdate,
+) -> (String, String, bool) {
+    let outcome = handle_pending_smoke(
+        env,
+        name,
+        launcher,
+        installed_text,
+        installed,
+        caps,
+        roster,
+        dir,
+        self_exe,
+        now,
+        p,
+    );
+    match outcome {
+        PendingOutcome::Done(clause, action, resolved) => (clause, action, resolved),
+        PendingOutcome::StillFailing(clause, action, target) => {
+            match try_newer_release(
+                env, name, launcher, installed, caps, roster, dir, self_exe, force, now, p, &target,
+            ) {
+                Some(next) => next,
+                None => (clause, action, false),
+            }
+        }
+    }
+}
+
+/// What the recovery smoke of a pending update decided: resolved or not (and why), or the installed
+/// version still FAILS its smoke with no working rollback - the case a newer release may fix.
+enum PendingOutcome {
+    Done(String, String, bool),
+    StillFailing(String, String, smoke::Target),
+}
+
+/// The recovery smoke of [`handle_pending`] (the behaviour before the newer-release step).
+#[allow(clippy::too_many_arguments)]
+fn handle_pending_smoke(
     env: &dyn Env,
     name: &str,
     launcher: &str,
@@ -1075,30 +1144,32 @@ fn handle_pending(
     self_exe: &str,
     now: DateTime<Utc>,
     p: &PendingUpdate,
-) -> (String, String, bool) {
+) -> PendingOutcome {
+    use PendingOutcome::{Done, StillFailing};
     let prev = version::parse_cli_version(&p.previous);
     // The installed version is still the previous one: the interrupted update never took. Clear.
     if let (Some(inst), Some(prev)) = (installed, prev.as_ref()) {
         if inst.parts == prev.parts {
             let msg = "pending update cleared (installed version unchanged)".to_string();
             println!("c3 maintain: {name} {installed_text} - {msg}");
-            return (format!("{installed_text} {msg}"), msg, true);
+            return Done(format!("{installed_text} {msg}"), msg, true);
         }
     }
     // Otherwise verify the installed version by a smoke.
     let Some(target) = smoke::pick_target(&smoke_override(name), roster, name, now) else {
         let msg = "pending update unresolved: no quota for a smoke".to_string();
         println!("c3 maintain: {name} {installed_text} - {msg}");
-        return (format!("{installed_text} {msg}"), msg, false); // keep the pending record
+        return Done(format!("{installed_text} {msg}"), msg, false); // keep the pending record
     };
-    match run_one_smoke(env, self_exe, &target, name, now) {
+    let roster_text = roster_text_of(roster);
+    match run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref()) {
         smoke::Smoke::Pass => {
             let msg = format!(
                 "recovered: update to {} verified after an interrupted pass",
                 p.target
             );
             println!("c3 maintain: {name} {installed_text} - {msg}");
-            (format!("{installed_text} {msg}"), msg, true)
+            Done(format!("{installed_text} {msg}"), msg, true)
         }
         smoke::Smoke::Fail(why) => {
             if caps.has_rollback {
@@ -1118,7 +1189,7 @@ fn handle_pending(
                             p.previous
                         );
                         println!("c3 maintain: {name} {installed_text} - {msg}");
-                        return (format!("{installed_text} {msg}"), msg, true);
+                        return Done(format!("{installed_text} {msg}"), msg, true);
                     }
                     // Rollback command failed, or it ran but the previous version is not back: the
                     // installed engine still fails its smoke. Keep the record so a later pass tries
@@ -1131,27 +1202,117 @@ fn handle_pending(
                         "pending update unresolved: rollback failed, still {now_t} ({why})"
                     );
                     println!("c3 maintain: {name} {installed_text} - {msg}");
-                    return (format!("{installed_text} {msg}"), msg, false);
+                    return StillFailing(format!("{installed_text} {msg}"), msg, target);
                 }
             }
             // No rollback path (unsupported, or do_rollback returned None): the engine is stuck on a
             // failing version. Keep the record for another pass; this is not a recovery.
             let msg = format!("pending update unresolved: smoke failed, no rollback path ({why})");
             println!("c3 maintain: {name} {installed_text} - {msg}");
-            (format!("{installed_text} {msg}"), msg, false)
+            StillFailing(format!("{installed_text} {msg}"), msg, target)
         }
     }
 }
 
+/// (TECH_DEBT 2026-11-16) An unresolved pending record no longer freezes its engine on the failing
+/// version: when the vendor offers a release NEWER than the installed (failing) one, that release
+/// is tried - the same cool-down (unless `--force`), in-use re-check, write-before-install record
+/// and post-update smoke as a normal update, with the record's ORIGINAL `previous` kept as the
+/// rollback target (and in the record). `None` when there is nothing to try (no check command, no
+/// newer release, an unparsable previous or installed version, a cool-down hold, the engine in
+/// use, or the record could not be written) - the caller then keeps the unresolved record as it is.
+#[allow(clippy::too_many_arguments)]
+fn try_newer_release(
+    env: &dyn Env,
+    name: &str,
+    launcher: &str,
+    installed: Option<&version::CliVersion>,
+    caps: &engine::Caps,
+    roster: &c3_core::roster::Roster,
+    dir: &Path,
+    self_exe: &str,
+    force: bool,
+    now: DateTime<Utc>,
+    p: &PendingUpdate,
+    target: &smoke::Target,
+) -> Option<(String, String, bool)> {
+    if !caps.has_check {
+        return None;
+    }
+    let failing = installed?;
+    let prev = version::parse_cli_version(&p.previous)?;
+    let latest = engine::check_latest(env, name, launcher);
+    let latest_v = latest.version.clone()?;
+    if &latest_v <= failing {
+        return None;
+    }
+    let new_text = latest_v.text().to_string();
+    let failing_text = failing.text().to_string();
+    if let Some(released) = latest.released {
+        let age = (now - released).num_days();
+        if !force && age < min_age_days() {
+            println!(
+                "c3 maintain: {name} the newer {new_text} is held: released {age} days ago (the pending update on {failing_text} stays unresolved)"
+            );
+            return None;
+        }
+    }
+    if engine_in_use(name, launcher) {
+        println!("c3 maintain: {name} the newer {new_text} is not tried: in use");
+        return None;
+    }
+    // (R2) the record first, keeping the ORIGINAL previous as the rollback target.
+    if let Err(e) = set_pending(
+        dir,
+        PendingUpdate {
+            engine: name.to_string(),
+            previous: p.previous.clone(),
+            target: new_text.clone(),
+            when: rfc3339(now),
+        },
+    ) {
+        println!(
+            "c3 maintain: {name} the newer {new_text} is not tried: could not record the pending update ({e})"
+        );
+        return None;
+    }
+    println!(
+        "c3 maintain: {name} {failing_text} still fails its smoke; trying the newer {new_text} (rollback target {})",
+        p.previous
+    );
+    let (clause, action, resolved) = update_and_verify(
+        env,
+        name,
+        launcher,
+        &p.previous,
+        &prev,
+        &latest_v,
+        &new_text,
+        caps,
+        target,
+        roster,
+        self_exe,
+        dir,
+        now,
+    );
+    Some((
+        format!("{clause} (after {failing_text} failed)"),
+        action,
+        resolved,
+    ))
+}
+
 /// Run one smoke in a fresh scratch repo (under the OS temp dir, random name) with a random token.
 /// The smoke leaves no state behind: the scratch repo is removed afterwards and never lives under
-/// the maintain state directory.
+/// the maintain state directory. `roster_text` is the roster a seat-bound target
+/// ([`smoke::Bind::Entry`]) is taken from.
 fn run_one_smoke(
     env: &dyn Env,
     self_exe: &str,
     target: &smoke::Target,
     engine: &str,
     now: DateTime<Utc>,
+    roster_text: Option<&str>,
 ) -> smoke::Smoke {
     let nonce = now
         .timestamp_nanos_opt()
@@ -1164,9 +1325,18 @@ fn run_one_smoke(
         std::process::id(),
         nonce as u64
     ));
-    let out = smoke::run_smoke(env, self_exe, target, engine, &work, &token);
+    let out = smoke::run_smoke(env, self_exe, target, engine, &work, &token, roster_text);
     let _ = std::fs::remove_dir_all(&work);
     out
+}
+
+/// The roster text an engine smoke's seat is bound to, read at smoke time (`None` when there is no
+/// roster file: a seat-bound smoke then fails instead of re-resolving the label).
+fn roster_text_of(roster: &c3_core::roster::Roster) -> Option<String> {
+    if roster.path.is_empty() {
+        return None;
+    }
+    std::fs::read_to_string(&roster.path).ok()
 }
 
 /// Whether an engine is within a pass's scope: inside the `--engine` filter (empty = all) and not in
@@ -1204,13 +1374,9 @@ fn run_models(
     _dir: &Path,
     opts: &PassOpts,
 ) -> ModelOutcome {
-    let mut mode = models_mode();
-    if opts.models_only && mode == ModelsMode::Off {
-        // an explicit `--models` is the operator's request: it collects and announces even when the
-        // periodic model step is off, but never edits the roster then
-        println!("c3 maintain: C3_MAINTAIN_MODELS=off - --models announces only");
-        mode = ModelsMode::Announce;
-    }
+    // (F02-18) `off` is authoritative for every pass, an explicit `--models` included (which returns
+    // before it gets here): nothing is collected or fetched.
+    let mode = models_mode();
     if mode == ModelsMode::Off {
         return ModelOutcome {
             clauses: Vec::new(),
@@ -1248,8 +1414,16 @@ fn run_models(
         .collect();
     let skip = skip_set();
 
+    let older_found: Vec<models::OlderPair>;
     {
-        let (candidates, rejected) = models::swap_plan(roster, &current, Utc::now().timestamp());
+        let plan = models::plan_swaps(
+            roster,
+            &current,
+            &state.models.older,
+            Utc::now().timestamp(),
+        );
+        older_found = plan.older;
+        let (candidates, rejected) = (plan.candidates, plan.rejected);
         // A public id the version rule alone would take, without the date evidence that it is newer
         // than the seated model: reported in the notes (never smoked, never in the short line).
         for r in &rejected {
@@ -1282,6 +1456,10 @@ fn run_models(
                 Some("protected entry")
             } else if c.on_request {
                 Some("on-request entry")
+            } else if c.engine == "http" {
+                // an `ext.c3.reviewers` http reviewer is not a `reviewers[]` element: the swap
+                // edits only `reviewers[<position>].model` (F02-17), so it is never smoked either
+                Some("an ext.c3.reviewers http entry is announced only")
             } else if mode == ModelsMode::Announce {
                 Some("mode announce")
             } else {
@@ -1316,12 +1494,15 @@ fn run_models(
             // The candidate's smoke obeys the saturation rule pick_target applies: a swap on a plan
             // whose governing window is at 90 %+ is held, the roster untouched. (0.2.4) a protected
             // or on-request seat is never smoked either - its quota is kept / it runs only when named.
-            // The entry must still be present with this exact provider + old model (else the roster
-            // changed under us and the swap is abandoned).
-            let entry = fresh
-                .entries
-                .iter()
-                .find(|e| e.provider == c.provider && e.model == c.old);
+            // (F02-16) The entry is the one at the candidate's POSITION, and it must still be this
+            // exact provider + old model and active (else the roster changed under us and the swap
+            // is abandoned) - never another entry that happens to share the label or the model.
+            let entry = fresh.entries.iter().find(|e| {
+                e.position == c.position
+                    && e.provider == c.provider
+                    && e.model == c.old
+                    && !e.inactive
+            });
             let blocked = match entry {
                 None => Some("roster changed"),
                 Some(e) if e.reserve_percent > 0 => Some("protected entry"),
@@ -1337,18 +1518,23 @@ fn run_models(
                 clauses.push(msg);
                 continue;
             }
+            // (F02-16) Both smoke turns run through exactly that entry - its endpoint, auth, plan
+            // and quota policy, taken from the same snapshot (`basis`) - with only the model
+            // overridden; the swap below edits the same position.
             let target = smoke::Target {
                 provider: c.provider.clone(),
                 model: c.new.clone(),
+                bind: smoke::Bind::Entry(c.position),
             };
             // One smoke per entry and pass: the highest successor only. A failed candidate is tried
             // again on a later pass.
-            match run_one_smoke(env, self_exe, &target, &c.engine, now) {
+            match run_one_smoke(env, self_exe, &target, &c.engine, now, Some(&basis)) {
                 smoke::Smoke::Pass => {
                     let today = now.format("%Y%m%d").to_string();
                     match models::apply_swap(
                         &roster.path,
                         &basis,
+                        c.position,
                         &c.provider,
                         &c.old,
                         &c.new,
@@ -1433,7 +1619,9 @@ fn run_models(
             sources.push(prev.clone());
         }
     }
-    state.models = models::ModelsState { sources };
+    // (F04-3) a candidate a public source dated as not newer stays rejected in later passes
+    let older = models::merge_older(&state.models.older, &older_found);
+    state.models = models::ModelsState { sources, older };
     let findings = format!(
         "{seated} swap(s), {} new id(s), {} new in the family",
         new_ids.len(),
@@ -1487,7 +1675,8 @@ pub fn run_smoke_only(engines: Vec<String>, dry_run: bool) -> i32 {
                     );
                 } else {
                     let seat = format!("{}::{}", t.provider, t.model);
-                    match run_one_smoke(&env, &self_exe, &t, name, now) {
+                    let roster_text = roster_text_of(&roster);
+                    match run_one_smoke(&env, &self_exe, &t, name, now, roster_text.as_deref()) {
                         smoke::Smoke::Pass => {
                             println!("c3 maintain smoke: {name} -> {seat} pass")
                         }

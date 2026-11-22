@@ -565,22 +565,34 @@ its one-line report.
   The smoke is two real turns through `c3 consult` in a throwaway repository; the second must
   return a random token from a file. codex updates through npm, grok through `grok update`, kimi
   through the vendor installer; agy is report-only; muse and claude update themselves and are only
-  recorded. An engine with a live run or process is skipped and retried the next day.
+  recorded. An engine with a live run or process is skipped and retried the next day. A smoke of a
+  roster seat runs through exactly that entry (a one-entry roster), never whatever its provider
+  label would resolve to. An interrupted update whose new version keeps failing its smoke, with no
+  working rollback, is not left frozen: a newer vendor release is tried, the original previous
+  version kept as the rollback target.
 - **Models.** The ids come from the engines' own lists (`grok models`, `agy models`), from each
-  Anthropic-compatible endpoint's `/v1/models` (sent with that endpoint's key), and from public
-  catalogs. A seated id is replaced only by a successor with the same prefix and suffix and a higher
-  version — a higher major included (`qwen3.8-max` -> `qwen4-max`, `glm-5.3` -> `glm-6`; an id
-  without a minor counts as `.0`) — and only after the smoke passed on that entry's own plan; the
-  roster is backed up first (`.bak-maintain-<date>`) and only that entry's `model` is edited. A
-  protected or on-request roster entry is never smoked or edited: its successor is only announced.
+  Anthropic-compatible endpoint's `/v1/models` (sent with that endpoint's key; a list is shared
+  only by entries with the same endpoint, key variable and plan), and from public catalogs. A
+  seated id is replaced only by a successor with the same prefix and suffix and a higher version —
+  a higher major included (`qwen3.8-max` -> `qwen4-max`, `glm-5.3` -> `glm-6`; an id without a
+  minor counts as `.0`) — and only after the smoke passed on that entry's own plan; the roster is
+  backed up first (`.bak-maintain-<date>`) and only that entry's `model` is edited (located by
+  parsing, the result checked to differ in nothing else). A protected or on-request roster entry is
+  never smoked or edited: its successor is only announced.
 - **Public catalogs.** Once a week (inside the pass) or on request (`--models`), C3 reads
-  `https://openrouter.ai/api/v1/models` with a plain GET that carries **no key** (https only,
-  redirects only within the same host, a 15 s timeout, at most 4 MB and 5000 ids). Ids are
+  `https://openrouter.ai/api/v1/models` with a plain GET that carries **no key** (https only; at
+  most 3 redirects, each to the same host and port and without credentials; one 15 s deadline over
+  all of it; the read stopped at 4 MB; at most 5000 ids). Ids are
   `<vendor>/<model>`; a `:variant` (`:free`, `:batch`) is skipped and every id must have the strict
   model-id shape. A catalog id is only a candidate: for any active, unprotected entry — also one
   whose endpoint gives no list, like Alibaba, Xiaomi MiMo or BytePlus — the model part
   (`qwen4-max`) is smoked on the entry's own plan; a failing one is reported ("seen in the catalog,
-  not served by this plan") and tried again on a later pass, one smoke per entry and pass. The pass
+  not served by this plan") and tried again on a later pass, one smoke per entry and pass. Dates
+  decide first: a catalog id needs a date after the seated id's (or, when the catalog does not list
+  the seated id, within 180 days); one dated in the future, or dated not after the seated id by ANY
+  public source, is refused - and once a source dated it older, it stays refused in later passes.
+  An id of the entry's own list needs no date, but is refused the same way when a public source
+  dates both ids. The pass
   also announces "new in the family": a catalog id not seen before with the prefix of a seated id,
   a version not lower and another suffix (seated `gemini-3.8-flash-high`, catalog
   `gemini-4-hydrogen`) — at most 5 per entry, and on a catalog's first collection only ids created
@@ -598,8 +610,8 @@ its one-line report.
   `<codex home>/c3/config.json`, turns the automatic pass off. `C3_MAINTAIN_DAYS` (7) sets the
   interval; `C3_MAINTAIN_MIN_AGE_DAYS` (3) holds a version released more recently than that when
   its date is known; `C3_MAINTAIN_SKIP=kimi,grok` names engines never touched;
-  `C3_MAINTAIN_MODELS` is `swap` (default), `announce` or `off` (`off` fetches nothing; an
-  explicit `--models` then only announces); `C3_MODEL_WEB=off`, or `"model_web": false`, turns
+  `C3_MAINTAIN_MODELS` is `swap` (default), `announce` or `off` (`off` fetches nothing, an
+  explicit `--models` included - it says so and stops); `C3_MODEL_WEB=off`, or `"model_web": false`, turns
   the public catalogs and pages off;
   `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model` names the smoke reviewer of an engine. State lives
   in `<codex home>/c3/maintain/`.

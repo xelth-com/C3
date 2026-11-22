@@ -27,6 +27,7 @@
 #                                 --json-schema) and its text as result.result; other text ->
 #                                 result.result only
 #   FAKE_CLAUDE_RESUME_REPLY=<file>  on a --resume turn (a secondary turn): this reply instead
+#   FAKE_CLAUDE_REPLY_FROM_CWD=<rel>  the reply is that file of the working directory when it exists
 #   FAKE_CLAUDE_PROSE=1           the reply text only, never structured_output (first turn)
 #   FAKE_CLAUDE_IS_ERROR=<text>   result is_error true with that text; exit 1 unless EXIT is set
 #   FAKE_CLAUDE_SUBTYPE=<s>       result.subtype (default success)
@@ -239,6 +240,9 @@ if ($rl) {
 
 # the reply
 $replyFile = $env:FAKE_CLAUDE_REPLY
+# FAKE_CLAUDE_REPLY_FROM_CWD=<relative path>: when that file exists in the working directory, its
+# content is the reply (the `c3 maintain` smoke's token.txt - proof the smoke really ran here)
+if ($env:FAKE_CLAUDE_REPLY_FROM_CWD) { $cwdReply = Join-Path (Get-Location).Path ([string]$env:FAKE_CLAUDE_REPLY_FROM_CWD); if (Test-Path -LiteralPath $cwdReply) { $replyFile = $cwdReply } }
 $fromResume = $false
 if ($resume -and $env:FAKE_CLAUDE_RESUME_REPLY) { $replyFile = $env:FAKE_CLAUDE_RESUME_REPLY; $fromResume = $true }
 $den = [string]$env:FAKE_CLAUDE_DENIALS

@@ -8,14 +8,15 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::env::Env;
+use super::env::{Env, GetPolicy, Redirects, HTTP_BODY_CAP};
 use super::version::{parse_model_id, successor, valid_model_id};
 use super::web::{is_public_source, strip_vendor};
 use c3_core::roster::{Roster, RosterEntry};
 
 /// The model ids collected from one source in a pass. Sources: `grok` / `agy` (the engines' own
-/// lists), `endpoint:<host>` (an endpoint's `/v1/models`, which may be PRIVATE), `web:<host>` (a
-/// public catalog, ids kept as `<vendor>/<model>`) and `page:<name>` (a configured public page).
+/// lists), `endpoint:<canonical endpoint>|<key env name>|<plan>` (an endpoint's authenticated
+/// `/v1/models`, which may be PRIVATE - [`endpoint_source`]), `web:<host>` (a public catalog, ids
+/// kept as `<vendor>/<model>`) and `page:<name>` (a configured public page).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceList {
     pub source: String,
@@ -27,11 +28,51 @@ pub struct SourceList {
     pub created: BTreeMap<String, i64>,
 }
 
-/// The persisted model state: the last-seen id list per source.
+/// The persisted model state: the last-seen id list per source, and the successors a public source
+/// once dated older than the seated id.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ModelsState {
     #[serde(default)]
     pub sources: Vec<SourceList>,
+    /// (F04-3) Every `(seated, candidate)` pair a public source dated as not newer than the seated
+    /// id. Such a candidate stays rejected for that seated id in every later pass, whatever a source
+    /// says then (a catalog that re-stamps an old model later cannot smuggle it in). Persisted; a
+    /// state written before it existed loads with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub older: Vec<OlderPair>,
+}
+
+/// A successor a public source dated as not newer than the seated id (both lower-cased, the
+/// candidate without a vendor part).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OlderPair {
+    pub seated: String,
+    pub candidate: String,
+}
+
+impl OlderPair {
+    pub fn new(seated: &str, candidate: &str) -> Self {
+        OlderPair {
+            seated: seated.to_ascii_lowercase(),
+            candidate: strip_vendor(candidate).to_ascii_lowercase(),
+        }
+    }
+}
+
+/// The most recorded [`OlderPair`]s kept (the newest win).
+pub const MAX_OLDER_PAIRS: usize = 500;
+
+/// `previous` plus the pairs found in this pass, de-duplicated, the newest [`MAX_OLDER_PAIRS`] kept.
+pub fn merge_older(previous: &[OlderPair], found: &[OlderPair]) -> Vec<OlderPair> {
+    let mut out: Vec<OlderPair> = previous.to_vec();
+    for p in found {
+        if !out.contains(p) {
+            out.push(p.clone());
+        }
+    }
+    let excess = out.len().saturating_sub(MAX_OLDER_PAIRS);
+    out.drain(..excess);
+    out
 }
 
 impl ModelsState {
@@ -48,8 +89,8 @@ impl ModelsState {
     }
 }
 
-/// The source an entry's models come from (`grok` / `agy` for those engines, `endpoint:<host>` for
-/// an Anthropic-compatible endpoint entry). `None` when the entry has no known model source.
+/// The source an entry's models come from (`grok` / `agy` for those engines, [`endpoint_source`]
+/// for an Anthropic-compatible endpoint entry). `None` when the entry has no known model source.
 pub fn source_for(e: &RosterEntry) -> Option<String> {
     let engine = if e.engine.is_empty() {
         "codex"
@@ -59,16 +100,48 @@ pub fn source_for(e: &RosterEntry) -> Option<String> {
     match engine {
         "grok" => Some("grok".to_string()),
         "agy" => Some("agy".to_string()),
-        _ => e
-            .endpoint
-            .as_ref()
-            .map(|ep| format!("endpoint:{}", ep.host_name)),
+        _ => e.endpoint.as_ref().map(|ep| endpoint_source(ep, &e.plan)),
     }
 }
 
+/// (F02-15) The source name of an endpoint's authenticated model list:
+/// `endpoint:<scheme>://<host>:<port><path>|<key env name>|<plan>` - the lower-case scheme and host,
+/// the port (the scheme's default when none is written), the path without a trailing slash, the
+/// NAME of the variable that holds the token, and the entry's plan. Two entries share one list (and
+/// its ids are candidates for them) only when all of it agrees - never by host alone, so a model
+/// one endpoint path or credential serves is never offered to, or smoked on, another.
+pub fn endpoint_source(ep: &c3_core::claude::ClaudeEndpoint, plan: &str) -> String {
+    let canonical = match url::Url::parse(ep.base_url.trim()) {
+        Ok(u) => format!(
+            "{}://{}:{}{}",
+            u.scheme().to_ascii_lowercase(),
+            u.host_str().unwrap_or("").to_ascii_lowercase(),
+            u.port_or_known_default().unwrap_or(0),
+            u.path().trim_end_matches('/')
+        ),
+        Err(_) => ep.canonical.clone(),
+    };
+    let plan = if plan.is_empty() {
+        ep.plan.as_str()
+    } else {
+        plan
+    };
+    format!("endpoint:{canonical}|{}|{plan}", ep.env_key)
+}
+
+/// The host-only name an endpoint list was recorded under before [`endpoint_source`]
+/// (`endpoint:<host>`), so the first pass after the change does not announce the whole list as new.
+fn legacy_endpoint_source(source: &str) -> Option<String> {
+    let rest = source.strip_prefix("endpoint:")?;
+    let (_, after) = rest.split_once("://")?;
+    let host = after.split([':', '/', '|']).next()?;
+    (!host.is_empty()).then(|| format!("endpoint:{host}"))
+}
+
 /// Collect the model ids of every source present in `roster`. `grok models` / `agy models` through
-/// the launchers; each distinct Anthropic-compatible endpoint through `GET <base_url>/v1/models`
-/// with its key. Every failure is ignored (an empty list for that source).
+/// the launchers; each distinct endpoint list ([`endpoint_source`]: endpoint, key variable and plan)
+/// through `GET <base_url>/v1/models` with its key. Every failure is ignored (an empty list for that
+/// source).
 pub fn collect(env: &dyn Env, roster: &Roster) -> Vec<SourceList> {
     let mut out: Vec<SourceList> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -153,7 +226,12 @@ fn fetch_endpoint_models(env: &dyn Env, base_url: &str, env_key: &str) -> Vec<St
         ("Authorization", bearer.as_str()),
     ];
     // never follow a redirect: this request carries the API key.
-    match env.http_get(&url, &headers, Duration::from_secs(5), false) {
+    let policy = GetPolicy {
+        timeout: Duration::from_secs(5),
+        redirects: Redirects::Never,
+        cap: HTTP_BODY_CAP,
+    };
+    match env.http_get(&url, &headers, policy) {
         Ok((status, body)) if (200..300).contains(&status) => parse_models_json(&body),
         _ => Vec::new(),
     }
@@ -190,7 +268,13 @@ pub fn new_ids(previous: &ModelsState, current: &[SourceList]) -> Vec<String> {
         if is_public_source(&s.source) {
             continue;
         }
-        let prev = previous.ids_of(&s.source);
+        let prev = if previous.has_source(&s.source) {
+            previous.ids_of(&s.source)
+        } else {
+            legacy_endpoint_source(&s.source)
+                .map(|l| previous.ids_of(&l))
+                .unwrap_or(&[])
+        };
         for id in &s.ids {
             if !prev.contains(id) {
                 out.insert(id.clone());
@@ -233,8 +317,9 @@ pub fn public_candidates(current: &[SourceList]) -> Vec<String> {
     out
 }
 
-/// A public id that the version rule would take for a successor but that lacks the date evidence a
-/// public candidate needs ([`public_verdict`]); reported in the notes, never smoked.
+/// An id that the version rule would take for a successor but that the date gate refused (a public
+/// id without the date evidence it needs - [`public_verdict`] - or an id a public source dates as
+/// not newer - [`own_verdict`]); reported in the notes, never smoked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RejectedCandidate {
     pub provider: String,
@@ -289,18 +374,91 @@ fn seated_created(source: &SourceList, seated: &str, vendor: &str) -> Option<i64
     source.created.get(*pick).copied()
 }
 
-/// Whether a public id may be a swap candidate for `seated`: the smoke cannot tell a newer model
-/// from an older one the plan still serves (`grok-4.20` is a 2025 model, older than `grok-4.7`), so
-/// a catalog id needs DATE evidence. Per occurrence: a page id (no dates) or a catalog entry without
-/// `created` never qualifies; when the seated id is in the same catalog with a date, the candidate
-/// must be created strictly later; when it is not, the candidate must be created within
-/// [`UNANCHORED_MAX_AGE_DAYS`]. Any qualifying occurrence qualifies; otherwise the reason.
-fn public_verdict(
+/// A catalog date later than now by more than this (seconds) is not believed: such a candidate is
+/// rejected (F02-14).
+pub const FUTURE_SLACK_SECS: i64 = 86_400;
+
+/// Why the date gate refused an id, and whether the refusal is NEGATIVE date evidence that the
+/// state records ([`OlderPair`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateRefusal {
+    pub why: &'static str,
+    pub older: bool,
+}
+
+const WHY_OLDER: &str = "older than the seated model by the catalog's date";
+const WHY_FUTURE: &str = "dated in the future by the catalog";
+const WHY_RECORDED: &str = "recorded as older than the seated model in an earlier pass";
+
+/// Whether the state recorded `cand` as older than `seated` in an earlier pass.
+fn recorded_older(older: &[OlderPair], seated: &str, cand: &str) -> bool {
+    let probe = OlderPair::new(seated, cand);
+    older.contains(&probe)
+}
+
+/// The NEGATIVE date evidence against `cand` as a successor of `seated` in the public sources of
+/// `current`: an occurrence dated in the future (beyond [`FUTURE_SLACK_SECS`]), or one dated not
+/// later than the seated id in the same source. With `only_both_dated`, an occurrence counts only
+/// when the same source dates the seated id as well (the gate of an id from the entry's own list).
+/// "Older" wins over "future" (it is the one the state records).
+fn negative_evidence(
     current: &[SourceList],
     seated: &str,
     cand: &str,
     now_unix: i64,
-) -> Result<(), &'static str> {
+    only_both_dated: bool,
+) -> Option<GateRefusal> {
+    let mut found: Option<GateRefusal> = None;
+    for h in public_hits(current, cand) {
+        let Some(c) = h.created else {
+            continue;
+        };
+        let cs = seated_created(h.source, seated, h.vendor);
+        if only_both_dated && cs.is_none() {
+            continue;
+        }
+        if matches!(cs, Some(cs) if c <= cs) {
+            return Some(GateRefusal {
+                why: WHY_OLDER,
+                older: true,
+            });
+        }
+        if c > now_unix + FUTURE_SLACK_SECS {
+            found = Some(GateRefusal {
+                why: WHY_FUTURE,
+                older: false,
+            });
+        }
+    }
+    found
+}
+
+/// Whether a public id may be a swap candidate for `seated`: the smoke cannot tell a newer model
+/// from an older one the plan still serves (`grok-4.20` is a 2025 model, older than `grok-4.7`), so
+/// a catalog id needs DATE evidence, and negative evidence wins (F02-14, F04-3):
+/// * a candidate the state recorded as older than the seated id is refused;
+/// * if ANY public source dates it in the future (beyond [`FUTURE_SLACK_SECS`]) or not later than
+///   the seated id it lists too, it is refused, whatever another source says;
+/// * otherwise one qualifying occurrence qualifies: the seated id in the same catalog with an
+///   earlier date, or - when that catalog does not list the seated id - a date within
+///   [`UNANCHORED_MAX_AGE_DAYS`]. A page id (no dates) or a catalog entry without `created` never
+///   qualifies.
+fn public_verdict(
+    current: &[SourceList],
+    seated: &str,
+    cand: &str,
+    older: &[OlderPair],
+    now_unix: i64,
+) -> Result<(), GateRefusal> {
+    if recorded_older(older, seated, cand) {
+        return Err(GateRefusal {
+            why: WHY_RECORDED,
+            older: false,
+        });
+    }
+    if let Some(neg) = negative_evidence(current, seated, cand, now_unix, false) {
+        return Err(neg);
+    }
     // reasons ranked: the most informative one found is reported
     let mut why: (u8, &'static str) = (0, "not in a public source");
     let mut note = |rank: u8, w: &'static str| {
@@ -318,13 +476,38 @@ fn public_verdict(
             continue;
         };
         match seated_created(h.source, seated, h.vendor) {
-            Some(cs) if c > cs => return Ok(()),
-            Some(_) => note(4, "older than the seated model by the catalog's date"),
+            // (negative evidence was ruled out above: a listed seated id is dated earlier here)
+            Some(_) => return Ok(()),
             None if c >= now_unix - UNANCHORED_MAX_AGE_DAYS * 86_400 => return Ok(()),
             None => note(3, "older than 180 days by the catalog's date"),
         }
     }
-    Err(why.1)
+    Err(GateRefusal {
+        why: why.1,
+        older: false,
+    })
+}
+
+/// (F04-2) The gate of an id from the entry's OWN list (engine / endpoint - what the plan offers):
+/// no date is needed, but a candidate the state recorded as older is refused, and so is one that a
+/// public source dating BOTH ids shows not newer than the seated id (or dates in the future).
+fn own_verdict(
+    current: &[SourceList],
+    seated: &str,
+    cand: &str,
+    older: &[OlderPair],
+    now_unix: i64,
+) -> Result<(), GateRefusal> {
+    if recorded_older(older, seated, cand) {
+        return Err(GateRefusal {
+            why: WHY_RECORDED,
+            older: false,
+        });
+    }
+    match negative_evidence(current, seated, cand, now_unix, true) {
+        Some(neg) => Err(neg),
+        None => Ok(()),
+    }
 }
 
 /// [`swap_plan`]'s candidates only.
@@ -336,23 +519,43 @@ pub fn swap_candidates(
     swap_plan(roster, current, now_unix).0
 }
 
-/// The seated ids with an available successor ([`successor`]: same prefix and suffix, a higher
-/// version - a higher major included), and the public ids rejected for lack of date evidence. The
-/// candidates of an entry are the ids of its own source (if it has one - what the plan offers, no
-/// dates needed) PLUS the public catalog ids with the vendor part stripped that pass
-/// [`public_verdict`]. When the version rule's pick among ALL ids is a public id that fails the
-/// verdict, it is returned as rejected (with the reason) and the best qualifying id, if any, is the
-/// candidate. Entries of inactive plans are never touched (iterated via `active_entries`);
-/// protected and on-request entries ARE returned (flagged) so the pass can announce them, never
-/// smoke them.
+/// [`plan_swaps`] with no recorded history: the candidates and the rejected ids.
 pub fn swap_plan(
     roster: &Roster,
     current: &[SourceList],
     now_unix: i64,
 ) -> (Vec<SwapCandidate>, Vec<RejectedCandidate>) {
+    let p = plan_swaps(roster, current, &[], now_unix);
+    (p.candidates, p.rejected)
+}
+
+/// What [`plan_swaps`] found.
+#[derive(Debug, Clone, Default)]
+pub struct SwapPlan {
+    pub candidates: Vec<SwapCandidate>,
+    pub rejected: Vec<RejectedCandidate>,
+    /// (F04-3) Every `(seated, id)` pair a public source dated as not newer in this pass - the pass
+    /// records them in the state, so the id stays rejected later.
+    pub older: Vec<OlderPair>,
+}
+
+/// The seated ids with an available successor ([`successor`]: same prefix and suffix, a higher
+/// version - a higher major included), and the ids the date gate rejected. The candidates of an
+/// entry are the ids of its own source (if it has one - what the plan offers - through
+/// [`own_verdict`]) PLUS the public catalog ids with the vendor part stripped that pass
+/// [`public_verdict`]; `older` is the history the state recorded. When the version rule's pick
+/// among ALL ids fails its gate, it is returned as rejected (with the reason) and the best
+/// qualifying id, if any, is the candidate. Entries of inactive plans are never touched (iterated
+/// via `active_entries`); protected and on-request entries ARE returned (flagged) so the pass can
+/// announce them, never smoke them.
+pub fn plan_swaps(
+    roster: &Roster,
+    current: &[SourceList],
+    older: &[OlderPair],
+    now_unix: i64,
+) -> SwapPlan {
     let public = public_candidates(current);
-    let mut out = Vec::new();
-    let mut rejected = Vec::new();
+    let mut plan = SwapPlan::default();
     for e in roster.active_entries() {
         if e.model.is_empty() {
             continue;
@@ -366,31 +569,59 @@ pub fn swap_plan(
             .and_then(|source| current.iter().find(|s| s.source == source))
             .map(|s| s.ids.as_slice())
             .unwrap_or(&[]);
-        let others: Vec<&String> = public.iter().filter(|p| !own.contains(p)).collect();
         let mut all: Vec<String> = own.to_vec();
-        all.extend(others.iter().map(|p| (*p).clone()));
-        let mut cands: Vec<String> = own.to_vec();
-        cands.extend(
-            others
+        all.extend(public.iter().filter(|p| !own.contains(p)).cloned());
+        // Only the ids the version rule takes for a successor of the seated id are gated (and can
+        // be recorded as older) - each once.
+        let succ_ids: Vec<String> = all
+            .iter()
+            .filter(|id| successor(&e.model, std::slice::from_ref(*id)).is_some())
+            .cloned()
+            .collect();
+        let verdicts: Vec<Result<(), GateRefusal>> = succ_ids
+            .iter()
+            .map(|id| {
+                if own.contains(id) {
+                    own_verdict(current, &e.model, id, older, now_unix)
+                } else {
+                    public_verdict(current, &e.model, id, older, now_unix)
+                }
+            })
+            .collect();
+        let verdict_of = |id: &str| -> Result<(), GateRefusal> {
+            succ_ids
                 .iter()
-                .filter(|p| public_verdict(current, &e.model, p, now_unix).is_ok())
-                .map(|p| (*p).clone()),
-        );
-        if let Some(raw) = successor(&e.model, &all) {
-            if !own.iter().any(|o| o == raw) {
-                if let Err(why) = public_verdict(current, &e.model, raw, now_unix) {
-                    rejected.push(RejectedCandidate {
-                        provider: e.provider.clone(),
-                        engine: engine.clone(),
-                        old: e.model.clone(),
-                        new: raw.to_string(),
-                        why: why.to_string(),
-                    });
+                .position(|x| x == id)
+                .map(|i| verdicts[i])
+                .unwrap_or(Ok(()))
+        };
+        for (id, v) in succ_ids.iter().zip(&verdicts) {
+            if matches!(v, Err(r) if r.older) {
+                let pair = OlderPair::new(&e.model, id);
+                if !plan.older.contains(&pair) {
+                    plan.older.push(pair);
                 }
             }
         }
+        let cands: Vec<String> = succ_ids
+            .iter()
+            .zip(&verdicts)
+            .filter(|(_, v)| v.is_ok())
+            .map(|(id, _)| id.clone())
+            .collect();
+        if let Some(raw) = successor(&e.model, &all) {
+            if let Err(r) = verdict_of(raw) {
+                plan.rejected.push(RejectedCandidate {
+                    provider: e.provider.clone(),
+                    engine: engine.clone(),
+                    old: e.model.clone(),
+                    new: raw.to_string(),
+                    why: r.why.to_string(),
+                });
+            }
+        }
         if let Some(succ) = successor(&e.model, &cands) {
-            out.push(SwapCandidate {
+            plan.candidates.push(SwapCandidate {
                 position: e.position,
                 provider: e.provider.clone(),
                 engine,
@@ -402,7 +633,7 @@ pub fn swap_plan(
             });
         }
     }
-    (out, rejected)
+    plan
 }
 
 /// A "new in the family" announcement: public ids not seen in the previous pass that share the
@@ -541,8 +772,9 @@ pub fn published_ids() -> &'static std::collections::HashSet<String> {
     })
 }
 
-/// Seat a successor by editing exactly the target entry's `model` in the roster file, keeping the
-/// file's formatting: copy to `<path>.bak-maintain-<yyyymmdd>`, replace that one `model` value,
+/// Seat a successor by editing exactly the `model` of `reviewers[position]` (1-based, the roster
+/// position) in the roster file, keeping the file's formatting: copy to
+/// `<path>.bak-maintain-<yyyymmdd>`, replace that one string value ([`replace_entry_model`]),
 /// re-parse to verify the result still loads, and write it. The backup is left in place; on a
 /// verify failure nothing is written and the backup stands. `today` is `yyyymmdd`.
 ///
@@ -554,6 +786,7 @@ pub fn published_ids() -> &'static std::collections::HashSet<String> {
 pub fn apply_swap(
     roster_path: &str,
     basis: &str,
+    position: usize,
     provider: &str,
     old: &str,
     new: &str,
@@ -573,7 +806,7 @@ pub fn apply_swap(
         return Err("roster changed during the smoke; the swap was not applied".to_string());
     }
     // The edit is computed from the gated snapshot, so it targets exactly that entry.
-    let updated = replace_entry_model(basis, provider, old, new)?;
+    let updated = replace_entry_model(basis, position, provider, old, new)?;
     // Re-parse to verify the edited roster still loads before writing it.
     let home = std::env::var("USERPROFILE")
         .ok()
@@ -611,13 +844,18 @@ fn commit_swap(roster_path: &str, basis: &str, updated: &str, today: &str) -> Re
         .map_err(|e| format!("could not write the roster ({e})"))
 }
 
-/// Replace the `model` value of exactly the entry whose provider is `provider` and whose model is
-/// `old` with `new`, leaving the rest of the file byte-for-byte unchanged. A single `"model":
-/// "old"` occurrence is replaced directly; several are disambiguated by the one whose enclosing
-/// object also names `provider`. Zero matches, or an ambiguity the provider cannot resolve, is an
-/// error (the swap is then skipped, never guessed).
+/// (F02-17) Replace the `model` of `reviewers[position]` (1-based: the roster position of a
+/// plugin-visible entry) with `new`, leaving the rest of the file byte-for-byte unchanged. The
+/// value is located by PARSING ([`reviewer_model_span`]: the top-level `reviewers` member, that
+/// element, its `model` member - never a text search, so an escaped model, an `ext` object holding
+/// the same string, or another entry with the same model cannot be hit). The element must still
+/// name `provider` and `old` (decoded). The whole string literal is replaced by `new` serialised as
+/// JSON, and the result is verified SEMANTICALLY: re-parsed, it must equal the old roster with only
+/// `reviewers[position].model` changed. Any mismatch is an error (the swap is skipped, never
+/// guessed).
 pub fn replace_entry_model(
     text: &str,
+    position: usize,
     provider: &str,
     old: &str,
     new: &str,
@@ -625,124 +863,203 @@ pub fn replace_entry_model(
     if !valid_model_id(new) {
         return Err(format!("the successor id {new:?} is not a valid model id"));
     }
-    let needle_positions = find_model_values(text, old);
-    let chosen = match needle_positions.as_slice() {
-        [] => return Err(format!("the model {old} was not found in the roster")),
-        [only] => *only,
-        many => {
-            let matching: Vec<(usize, usize)> = many
-                .iter()
-                .copied()
-                .filter(|&(vs, _)| object_names_provider(text, vs, provider))
-                .collect();
-            match matching.as_slice() {
-                [one] => *one,
-                _ => {
-                    return Err(format!(
-                        "the model {old} is ambiguous in the roster (provider {provider})"
-                    ))
-                }
-            }
-        }
-    };
-    let (vstart, vend) = chosen;
-    let mut out = String::with_capacity(text.len() + new.len());
+    let idx = position
+        .checked_sub(1)
+        .ok_or_else(|| "roster position 0 does not exist".to_string())?;
+    let before: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| "the roster does not parse".to_string())?;
+    let entry = before
+        .get("reviewers")
+        .and_then(|r| r.as_array())
+        .and_then(|a| a.get(idx))
+        .ok_or_else(|| format!("the roster has no reviewers entry {position}"))?;
+    if entry.get("provider").and_then(|p| p.as_str()) != Some(provider) {
+        return Err(format!(
+            "reviewers entry {position} is no longer provider {provider}"
+        ));
+    }
+    let (vstart, vend) = reviewer_model_span(text, idx)?;
+    let current: String = serde_json::from_str(&text[vstart..vend])
+        .map_err(|_| format!("the model of reviewers entry {position} does not decode"))?;
+    if current != old {
+        return Err(format!(
+            "the model of reviewers entry {position} is no longer {old}"
+        ));
+    }
+    let literal = serde_json::to_string(new).map_err(|e| e.to_string())?;
+    let mut out = String::with_capacity(text.len() + literal.len());
     out.push_str(&text[..vstart]);
-    out.push_str(new);
+    out.push_str(&literal);
     out.push_str(&text[vend..]);
+    // The semantic delta: exactly reviewers[position].model changed, nothing else.
+    let mut expected = before.clone();
+    expected["reviewers"][idx]["model"] = serde_json::Value::String(new.to_string());
+    let after: serde_json::Value = serde_json::from_str(&out)
+        .map_err(|_| "the edited roster does not parse; nothing written".to_string())?;
+    if after != expected {
+        return Err(format!(
+            "the edit would change more than the model of reviewers entry {position}; nothing written"
+        ));
+    }
     Ok(out)
 }
 
-/// The (start, end) byte ranges of the VALUE string of every `"model": "<value>"` whose value is
-/// exactly `value` (the range covers the value text only, inside the quotes).
-fn find_model_values(text: &str, value: &str) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while let Some(rel) = text[i..].find("\"model\"") {
-        let key = i + rel;
-        // skip to the opening quote of the value: past "model", optional ws, ':', optional ws, '"'
-        let mut j = key + "\"model\"".len();
-        while j < bytes.len() && (bytes[j] as char).is_whitespace() {
-            j += 1;
-        }
-        if j < bytes.len() && bytes[j] == b':' {
-            j += 1;
-            while j < bytes.len() && (bytes[j] as char).is_whitespace() {
-                j += 1;
+/// (F02-17) The byte span (quotes included) of the `model` string of `reviewers[idx]` in a roster
+/// text, found by parsing: the top-level object's single `reviewers` member, its element `idx`, that
+/// object's single `model` member, which must be a string. A repeated key on that path is refused
+/// (a parser would take the last one; the edit must never guess).
+fn reviewer_model_span(text: &str, idx: usize) -> Result<(usize, usize), String> {
+    let b = text.as_bytes();
+    let top = json_ws(b, 0);
+    let members = json_object_members(text, top)?;
+    let single =
+        |members: &[(String, (usize, usize))], key: &str| -> Result<(usize, usize), String> {
+            let hits: Vec<(usize, usize)> = members
+                .iter()
+                .filter(|(k, _)| k == key)
+                .map(|(_, s)| *s)
+                .collect();
+            match hits.as_slice() {
+                [one] => Ok(*one),
+                [] => Err(format!("no {key} member")),
+                _ => Err(format!("the {key} member is repeated")),
             }
-            if j < bytes.len() && bytes[j] == b'"' {
-                let vstart = j + 1;
-                // the value ends at the next unescaped quote
-                let mut k = vstart;
-                while k < bytes.len() {
-                    if bytes[k] == b'\\' {
-                        k += 2;
-                        continue;
-                    }
-                    if bytes[k] == b'"' {
-                        break;
-                    }
-                    k += 1;
-                }
-                if k <= bytes.len() && &text[vstart..k] == value {
-                    out.push((vstart, k));
-                }
-            }
-        }
-        i = key + "\"model\"".len();
+        };
+    let reviewers = single(&members, "reviewers")?;
+    let elements = json_array_elements(text, reviewers.0)?;
+    let element = *elements
+        .get(idx)
+        .ok_or_else(|| format!("the roster has no reviewers entry {}", idx + 1))?;
+    let fields = json_object_members(text, element.0)?;
+    let model = single(&fields, "model")?;
+    if b.get(model.0) != Some(&b'"') {
+        return Err(format!(
+            "the model of reviewers entry {} is not a string",
+            idx + 1
+        ));
     }
-    out
+    Ok(model)
 }
 
-/// Whether the JSON object enclosing byte `pos` contains a `"provider": "<provider>"` member.
-fn object_names_provider(text: &str, pos: usize, provider: &str) -> bool {
-    let bytes = text.as_bytes();
-    // scan back to the enclosing '{' (depth-aware)
-    let mut depth = 0i32;
-    let mut start = None;
-    let mut i = pos;
+/// The deepest nesting the roster scanner follows.
+const JSON_MAX_DEPTH: usize = 64;
+
+fn json_ws(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r') {
+        i += 1;
+    }
+    i
+}
+
+/// The end (exclusive) of the JSON string starting at `i` (a `"`).
+fn json_string_end(b: &[u8], i: usize) -> Result<usize, String> {
+    if b.get(i) != Some(&b'"') {
+        return Err("a string was expected".to_string());
+    }
+    let mut k = i + 1;
+    while k < b.len() {
+        match b[k] {
+            b'\\' => k += 2,
+            b'"' => return Ok(k + 1),
+            _ => k += 1,
+        }
+    }
+    Err("an unterminated string".to_string())
+}
+
+/// The end (exclusive) of the JSON value starting at `i`.
+fn json_value_end(text: &str, i: usize, depth: usize) -> Result<usize, String> {
+    let b = text.as_bytes();
+    if depth > JSON_MAX_DEPTH {
+        return Err("the roster nests too deeply".to_string());
+    }
+    match b.get(i) {
+        Some(b'"') => json_string_end(b, i),
+        Some(b'{') => json_object_members_at(text, i, depth).map(|(_, end)| end),
+        Some(b'[') => json_array_elements_at(text, i, depth).map(|(_, end)| end),
+        Some(_) => {
+            let mut k = i;
+            while k < b.len() && !matches!(b[k], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
+            {
+                k += 1;
+            }
+            if k == i {
+                Err("a value was expected".to_string())
+            } else {
+                Ok(k)
+            }
+        }
+        None => Err("the roster ends early".to_string()),
+    }
+}
+
+/// The members (decoded key, value span) of the object starting at `i`.
+fn json_object_members(text: &str, i: usize) -> Result<Members, String> {
+    json_object_members_at(text, i, 0).map(|(m, _)| m)
+}
+
+type Members = Vec<(String, (usize, usize))>;
+
+fn json_object_members_at(text: &str, i: usize, depth: usize) -> Result<(Members, usize), String> {
+    let b = text.as_bytes();
+    if b.get(i) != Some(&b'{') {
+        return Err("an object was expected".to_string());
+    }
+    let mut out = Vec::new();
+    let mut k = json_ws(b, i + 1);
+    if b.get(k) == Some(&b'}') {
+        return Ok((out, k + 1));
+    }
     loop {
-        if i == 0 {
-            break;
+        let ks = k;
+        let ke = json_string_end(b, ks)?;
+        let key: String =
+            serde_json::from_str(&text[ks..ke]).map_err(|_| "a key does not decode".to_string())?;
+        k = json_ws(b, ke);
+        if b.get(k) != Some(&b':') {
+            return Err("a ':' was expected".to_string());
         }
-        i -= 1;
-        match bytes[i] {
-            b'}' => depth += 1,
-            b'{' => {
-                if depth == 0 {
-                    start = Some(i);
-                    break;
-                }
-                depth -= 1;
-            }
-            _ => {}
+        let vs = json_ws(b, k + 1);
+        let ve = json_value_end(text, vs, depth + 1)?;
+        out.push((key, (vs, ve)));
+        k = json_ws(b, ve);
+        match b.get(k) {
+            Some(b',') => k = json_ws(b, k + 1),
+            Some(b'}') => return Ok((out, k + 1)),
+            _ => return Err("a ',' or '}' was expected".to_string()),
         }
     }
-    let Some(start) = start else {
-        return false;
-    };
-    // scan forward to the matching '}'
-    let mut depth = 0i32;
-    let mut end = text.len();
-    let mut j = start;
-    while j < bytes.len() {
-        match bytes[j] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    end = j + 1;
-                    break;
-                }
-            }
-            _ => {}
-        }
-        j += 1;
+}
+
+/// The element spans of the array starting at `i`.
+fn json_array_elements(text: &str, i: usize) -> Result<Vec<(usize, usize)>, String> {
+    json_array_elements_at(text, i, 0).map(|(e, _)| e)
+}
+
+fn json_array_elements_at(
+    text: &str,
+    i: usize,
+    depth: usize,
+) -> Result<(Vec<(usize, usize)>, usize), String> {
+    let b = text.as_bytes();
+    if b.get(i) != Some(&b'[') {
+        return Err("an array was expected".to_string());
     }
-    let slice = &text[start..end];
-    let marker = format!("\"{provider}\"");
-    slice.contains("\"provider\"") && slice.contains(&marker)
+    let mut out = Vec::new();
+    let mut k = json_ws(b, i + 1);
+    if b.get(k) == Some(&b']') {
+        return Ok((out, k + 1));
+    }
+    loop {
+        let ve = json_value_end(text, k, depth + 1)?;
+        out.push((k, ve));
+        k = json_ws(b, ve);
+        match b.get(k) {
+            Some(b',') => k = json_ws(b, k + 1),
+            Some(b']') => return Ok((out, k + 1)),
+            _ => return Err("a ',' or ']' was expected".to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -785,6 +1102,7 @@ mod tests {
         assert!(new_ids(&prev, &cur).is_empty(), "first pass is a baseline");
         let prev = ModelsState {
             sources: vec![sl("grok", &["grok-4.7"])],
+            ..Default::default()
         };
         let cur = vec![
             sl("grok", &["grok-4.7", "grok-5.0"]),
@@ -844,8 +1162,9 @@ mod tests {
         assert_eq!(c[1].new, "gpt-7-astra");
         assert!(c[1].protected);
         // the entry's own list wins the origin when it lists the successor too
+        let own = source_for(&alibaba_endpoint_entry()).unwrap();
         let cur = vec![
-            sl("endpoint:alibaba.example", &["qwen4-max"]),
+            sl(&own, &["qwen4-max"]),
             sl("web:openrouter.ai", &["qwen/qwen4-max"]),
         ];
         let c = swap_candidates(&roster, &cur, now);
@@ -908,12 +1227,218 @@ mod tests {
         let (c, rejected) = swap_plan(&roster, &cur, now);
         assert!(c.is_empty());
         assert_eq!(rejected.len(), 1);
-        // the entry's OWN list keeps today's rule (no dates needed)
+        // the entry's OWN list keeps today's rule (no dates needed) while no public source dates
+        // both ids
         let cur = vec![
             sl("grok", &["grok-4.7", "grok-4.20"]),
             dated("web:openrouter.ai", &[("x-ai/grok-4.7", Some(at(30, now)))]),
         ];
         assert_eq!(swap_candidates(&roster, &cur, now)[0].new, "grok-4.20");
+    }
+
+    /// (F04-2) An id from the entry's OWN list goes through the date gate when a public source
+    /// dates both ids: `grok models` listing `grok-4.20` beside `grok-4.7` no longer seats it when
+    /// the catalog dates it older; a newer own id still wins without a date.
+    #[test]
+    fn an_own_list_id_a_catalog_dates_older_is_not_a_candidate() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
+        let cur = vec![
+            sl("grok", &["grok-4.7", "grok-4.20", "grok-4.8"]),
+            dated(
+                "web:openrouter.ai",
+                &[
+                    ("x-ai/grok-4.7", Some(at(30, now))),
+                    ("x-ai/grok-4.20", Some(at(300, now))),
+                ],
+            ),
+        ];
+        let p = plan_swaps(&roster, &cur, &[], now);
+        assert_eq!(p.candidates.len(), 1, "{:?}", p.candidates);
+        assert_eq!(p.candidates[0].new, "grok-4.8");
+        assert!(!p.candidates[0].from_public);
+        assert_eq!(p.rejected.len(), 1, "{:?}", p.rejected);
+        assert_eq!(p.rejected[0].new, "grok-4.20");
+        assert_eq!(p.rejected[0].why, WHY_OLDER);
+        assert_eq!(p.older, vec![OlderPair::new("grok-4.7", "grok-4.20")]);
+        // only the older own id: no candidate at all
+        let cur = vec![
+            sl("grok", &["grok-4.7", "grok-4.20"]),
+            dated(
+                "web:openrouter.ai",
+                &[
+                    ("x-ai/grok-4.7", Some(at(30, now))),
+                    ("x-ai/grok-4.20", Some(at(300, now))),
+                ],
+            ),
+        ];
+        assert!(plan_swaps(&roster, &cur, &[], now).candidates.is_empty());
+    }
+
+    /// (F02-14) A candidate dated in the future (beyond a day) is rejected, whether the seated id is
+    /// in the catalog or not; a date within the slack is believed.
+    #[test]
+    fn a_future_dated_candidate_is_rejected() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
+        for cur in [
+            vec![dated(
+                "web:openrouter.ai",
+                &[
+                    ("x-ai/grok-4.7", Some(at(30, now))),
+                    ("x-ai/grok-4.8", Some(now + 3 * 86_400)),
+                ],
+            )],
+            vec![dated(
+                "web:openrouter.ai",
+                &[("x-ai/grok-4.8", Some(now + 3 * 86_400))],
+            )],
+        ] {
+            let p = plan_swaps(&roster, &cur, &[], now);
+            assert!(p.candidates.is_empty(), "{:?}", p.candidates);
+            assert_eq!(p.rejected[0].why, WHY_FUTURE);
+            assert!(p.older.is_empty(), "a future date is not recorded as older");
+        }
+        let cur = vec![dated(
+            "web:openrouter.ai",
+            &[
+                ("x-ai/grok-4.7", Some(at(30, now))),
+                ("x-ai/grok-4.8", Some(now + 3_600)),
+            ],
+        )];
+        assert_eq!(swap_candidates(&roster, &cur, now)[0].new, "grok-4.8");
+    }
+
+    /// (F02-14) Negative date evidence wins: one catalog dates the candidate older than the seated
+    /// id, a second catalog lists only the candidate with a recent date (which alone would qualify
+    /// it, unanchored) - it is not a candidate, in either source order.
+    #[test]
+    fn negative_date_evidence_in_any_source_wins() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![alibaba_endpoint_entry()]);
+        let older = dated(
+            "web:openrouter.ai",
+            &[
+                ("qwen/qwen3.8-max", Some(at(10, now))),
+                ("qwen/qwen4-max", Some(at(300, now))),
+            ],
+        );
+        let recent = dated("web:other.example", &[("qwen/qwen4-max", Some(at(2, now)))]);
+        for cur in [
+            vec![older.clone(), recent.clone()],
+            vec![recent.clone(), older.clone()],
+        ] {
+            let p = plan_swaps(&roster, &cur, &[], now);
+            assert!(p.candidates.is_empty(), "{:?}", p.candidates);
+            assert_eq!(p.rejected[0].why, WHY_OLDER);
+            assert_eq!(p.older, vec![OlderPair::new("qwen3.8-max", "qwen4-max")]);
+        }
+        // the recent copy alone qualifies (unanchored, within 180 days)
+        assert_eq!(swap_candidates(&roster, &[recent], now)[0].new, "qwen4-max");
+    }
+
+    /// (F04-3) A candidate once recorded as older stays rejected, even when a later catalog re-dates
+    /// it after the seated id - for a public id and for an own-list id alike; the record is keyed by
+    /// the seated id, so another seated id is not affected.
+    #[test]
+    fn a_candidate_recorded_as_older_stays_rejected() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
+        let recorded = vec![OlderPair::new("grok-4.7", "x-ai/grok-4.20")];
+        let restamped = dated(
+            "web:openrouter.ai",
+            &[
+                ("x-ai/grok-4.7", Some(at(30, now))),
+                ("x-ai/grok-4.20", Some(at(1, now))),
+            ],
+        );
+        let p = plan_swaps(&roster, std::slice::from_ref(&restamped), &recorded, now);
+        assert!(p.candidates.is_empty(), "{:?}", p.candidates);
+        assert_eq!(p.rejected[0].why, WHY_RECORDED);
+        // the same id in the entry's own list
+        let cur = vec![sl("grok", &["grok-4.7", "grok-4.20"])];
+        let p = plan_swaps(&roster, &cur, &recorded, now);
+        assert!(p.candidates.is_empty());
+        assert_eq!(p.rejected[0].why, WHY_RECORDED);
+        // another seated id is judged afresh
+        let roster2 = roster_of(vec![entry("grok", "grok", "grok-4.5")]);
+        assert_eq!(
+            plan_swaps(&roster2, std::slice::from_ref(&restamped), &recorded, now).candidates[0]
+                .new,
+            "grok-4.20"
+        );
+        // the merge keeps old records, adds new ones once, and is bounded
+        let merged = merge_older(
+            &recorded,
+            &[OlderPair::new("a-1", "a-2"), recorded[0].clone()],
+        );
+        assert_eq!(merged.len(), 2);
+        let many: Vec<OlderPair> = (0..MAX_OLDER_PAIRS + 7)
+            .map(|i| OlderPair::new("m-1", &format!("m-{i}")))
+            .collect();
+        let capped = merge_older(&[], &many);
+        assert_eq!(capped.len(), MAX_OLDER_PAIRS);
+        assert_eq!(capped.last(), many.last(), "the newest are kept");
+        // a state with records round-trips; an older state loads with none
+        let st = ModelsState {
+            sources: vec![],
+            older: recorded.clone(),
+        };
+        let back: ModelsState = serde_json::from_str(&serde_json::to_string(&st).unwrap()).unwrap();
+        assert_eq!(back.older, recorded);
+        let old: ModelsState = serde_json::from_str(r#"{"sources":[]}"#).unwrap();
+        assert!(old.older.is_empty());
+    }
+
+    /// (F02-15) An endpoint's authenticated list is keyed by the canonical endpoint (scheme, host,
+    /// port, path) plus the key variable and the plan: two entries on one host with another path or
+    /// another key do not share it, so a successor only one of them lists is never offered to the
+    /// other; the same endpoint written with the explicit default port and a trailing slash does.
+    #[test]
+    fn an_endpoint_list_is_keyed_by_endpoint_key_and_plan_not_host() {
+        let ep = |base: &str, key: &str, plan: &str, model: &str, pos: usize| RosterEntry {
+            position: pos,
+            plan: plan.into(),
+            endpoint: Some(c3_core::claude::ClaudeEndpoint {
+                base_url: base.into(),
+                host_name: "api.example".into(),
+                env_key: key.into(),
+                ..Default::default()
+            }),
+            ..entry(&format!("e{pos}"), "claude", model)
+        };
+        let a = ep("https://api.example/one", "KEY_A", "pa", "glm-5.3", 1);
+        let b = ep("https://api.example/two", "KEY_A", "pa", "glm-5.3-air", 2);
+        let c = ep("https://api.example/one", "KEY_C", "pa", "glm-5.3", 3);
+        let d = ep("https://API.example:443/one/", "KEY_A", "pa", "glm-5.3", 4);
+        let e2 = ep("https://api.example/one", "KEY_A", "pb", "glm-5.3", 5);
+        let sa = source_for(&a).unwrap();
+        assert_eq!(sa, "endpoint:https://api.example:443/one|KEY_A|pa");
+        assert_ne!(sa, source_for(&b).unwrap());
+        assert_ne!(sa, source_for(&c).unwrap());
+        assert_ne!(sa, source_for(&e2).unwrap());
+        assert_eq!(sa, source_for(&d).unwrap());
+        // the first entry's list holds a private successor; only the entries with its key get it
+        let roster = roster_of(vec![a, b, c, d, e2]);
+        let cur = vec![sl(
+            &sa,
+            &["glm-5.3", "glm-5.4", "glm-5.3-air", "glm-5.4-air"],
+        )];
+        let got: Vec<(usize, String)> = swap_candidates(&roster, &cur, 0)
+            .into_iter()
+            .map(|c| (c.position, c.new))
+            .collect();
+        assert_eq!(
+            got,
+            vec![(1, "glm-5.4".to_string()), (4, "glm-5.4".to_string())]
+        );
+        // the first pass after the key change reads the old host-only record (no flood of "new")
+        let prev = ModelsState {
+            sources: vec![sl("endpoint:api.example", &["glm-5.3", "glm-5.4"])],
+            ..Default::default()
+        };
+        let cur = vec![sl(&sa, &["glm-5.3", "glm-5.4", "glm-5.5"])];
+        assert_eq!(new_ids(&prev, &cur), vec!["glm-5.5"]);
     }
 
     #[test]
@@ -958,6 +1483,7 @@ mod tests {
         let now = 1_795_000_000;
         let st = ModelsState {
             sources: vec![dated("web:openrouter.ai", &[("qwen/qwen4-max", Some(now))])],
+            ..Default::default()
         };
         let back: ModelsState = serde_json::from_str(&serde_json::to_string(&st).unwrap()).unwrap();
         assert_eq!(back.sources[0].created.get("qwen/qwen4-max"), Some(&now));
@@ -983,6 +1509,7 @@ mod tests {
         )];
         let prev = ModelsState {
             sources: vec![sl("web:openrouter.ai", &[])],
+            ..Default::default()
         };
         let news = family_news(&roster, &prev, &cur, now);
         let zai: Vec<&FamilyNews> = news.iter().filter(|n| n.provider == "ZAI").collect();
@@ -1029,12 +1556,14 @@ mod tests {
         // a later pass: an id absent from the previous record is new whatever its stamp
         let prev = ModelsState {
             sources: vec![sl("web:openrouter.ai", &["google/gemini-4-hydrogen"])],
+            ..Default::default()
         };
         let news = family_news(&roster, &prev, &cur, now);
         assert_eq!(news[0].ids, vec!["gemini-3.9-pro"]);
         // nothing new -> nothing announced
         let prev = ModelsState {
             sources: cur.clone(),
+            ..Default::default()
         };
         assert!(family_news(&roster, &prev, &cur, now).is_empty());
     }
@@ -1051,6 +1580,7 @@ mod tests {
         let cur = vec![sl("web:openrouter.ai", &refs)];
         let prev = ModelsState {
             sources: vec![sl("web:openrouter.ai", &[])],
+            ..Default::default()
         };
         let news = family_news(&roster, &prev, &cur, 0);
         assert_eq!(news[0].ids.len(), FAMILY_NEWS_PER_ENTRY);
@@ -1063,14 +1593,23 @@ mod tests {
                 sl("web:openrouter.ai", &["qwen/Qwen4-Max"]),
                 sl("page:zai-docs", &["glm-6"]),
                 sl("endpoint:api.z.ai", &["glm-9-secret"]),
+                sl(
+                    "endpoint:https://api.z.ai:443/api/anthropic|ZAI_API_KEY|zai",
+                    &["glm-9-x"],
+                ),
                 sl("grok", &["grok-4.7"]),
             ],
+            ..Default::default()
         };
         let p = published_from(&st);
         assert!(p.contains("qwen/qwen4-max"));
         assert!(p.contains("qwen4-max"));
         assert!(p.contains("glm-6"));
         assert!(!p.contains("glm-9-secret"));
+        assert!(
+            !p.contains("glm-9-x"),
+            "a keyed endpoint list stays private"
+        );
         assert!(!p.contains("grok-4.7"));
     }
 
@@ -1081,36 +1620,80 @@ mod tests {
     { "provider": "grok", "engine": "grok", "model": "grok-4.7", "plan": "supergrok" }
   ]
 }"#;
-        let out = replace_entry_model(text, "grok", "grok-4.7", "grok-4.8").unwrap();
+        let out = replace_entry_model(text, 1, "grok", "grok-4.7", "grok-4.8").unwrap();
         assert!(out.contains("\"model\": \"grok-4.8\""));
         assert_eq!(out, text.replace("grok-4.7", "grok-4.8"));
     }
 
     #[test]
-    fn replace_disambiguates_by_provider_when_model_repeats() {
+    fn replace_targets_the_position_when_model_repeats() {
         let text = r#"{"reviewers":[
           {"provider":"a","model":"m1"},
           {"provider":"b","model":"m1"}
         ]}"#;
-        // same model string in two entries → provider disambiguates
-        let out = replace_entry_model(text, "b", "m1", "m2").unwrap();
+        // same model string in two entries -> the position decides
+        let out = replace_entry_model(text, 2, "b", "m1", "m2").unwrap();
         assert_eq!(out.matches("\"model\":\"m2\"").count(), 1);
         assert!(out.contains("{\"provider\":\"b\",\"model\":\"m2\"}"));
         assert!(out.contains("{\"provider\":\"a\",\"model\":\"m1\"}"));
+        // the position must still name the provider and the old model
+        assert!(replace_entry_model(text, 1, "b", "m1", "m2").is_err());
+        assert!(replace_entry_model(text, 3, "b", "m1", "m2").is_err());
+        assert!(replace_entry_model(text, 0, "a", "m1", "m2").is_err());
     }
 
     #[test]
     fn replace_errors_when_absent() {
         let text = r#"{"reviewers":[{"provider":"a","model":"m1"}]}"#;
-        assert!(replace_entry_model(text, "a", "nope", "x").is_err());
+        assert!(replace_entry_model(text, 1, "a", "nope", "x").is_err());
     }
 
     #[test]
     fn replace_refuses_a_hostile_successor_id() {
         // a quote-bearing successor can never be spliced: refused, the roster text is not consulted
         let text = r#"{"reviewers":[{"provider":"a","model":"m1"}]}"#;
-        assert!(replace_entry_model(text, "a", "m1", "m2\",\"x\":\"y").is_err());
-        assert!(replace_entry_model(text, "a", "m1", "m2\nextra").is_err());
+        assert!(replace_entry_model(text, 1, "a", "m1", "m2\",\"x\":\"y").is_err());
+        assert!(replace_entry_model(text, 1, "a", "m1", "m2\nextra").is_err());
+    }
+
+    /// (F02-17) The writer edits the parsed `reviewers[position].model` string: a JSON-escaped model
+    /// (`m-1` is `m-1`) is found and replaced whole, while an `ext` object holding the same
+    /// decoded id as a plain `"model"` (the old text search's only literal match) is untouched; the
+    /// re-parsed roster differs from the old one in that one field only.
+    #[test]
+    fn replace_edits_the_parsed_entry_model_not_a_literal_elsewhere() {
+        let text = r#"{"roster_version":1,"reviewers":[{"provider":"a","engine":"claude","model":"m-1","ext":{"note":{"model":"m-1"}}}],"ext":{"c3":{"model":"m-1"}}}"#;
+        let out = replace_entry_model(text, 1, "a", "m-1", "m-2").unwrap();
+        assert_eq!(
+            out,
+            r#"{"roster_version":1,"reviewers":[{"provider":"a","engine":"claude","model":"m-2","ext":{"note":{"model":"m-1"}}}],"ext":{"c3":{"model":"m-1"}}}"#
+        );
+        let before: serde_json::Value = serde_json::from_str(text).unwrap();
+        let mut after: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(after["reviewers"][0]["model"], "m-2");
+        assert_eq!(after["reviewers"][0]["ext"]["note"]["model"], "m-1");
+        after["reviewers"][0]["model"] = serde_json::Value::String("m-1".into());
+        assert_eq!(after, before, "nothing else changed");
+        // a repeated model key in the entry is refused (a parser takes the last one; never guess)
+        let dup = r#"{"reviewers":[{"provider":"a","model":"m-1","model":"m-1"}]}"#;
+        assert!(replace_entry_model(dup, 1, "a", "m-1", "m-2").is_err());
+        // a non-string model is refused
+        let num = r#"{"reviewers":[{"provider":"a","model":7}]}"#;
+        assert!(replace_entry_model(num, 1, "a", "7", "m-2").is_err());
+    }
+
+    /// (F02-17) The span scanner walks nested values, strings with escaped quotes and brackets, and
+    /// whitespace, and lands on the right element.
+    #[test]
+    fn the_roster_scanner_finds_the_element_model_span() {
+        let text = "{ \"ext\": {\"x\": [1, {\"model\": \"no\"}], \"s\": \"a\\\"]}\"},\n  \"reviewers\" : [ {\"model\":\"first\"} ,\n {\"provider\":\"p\", \"model\" : \"se\\\"cond\", \"n\": null, \"b\": true} ] }";
+        let (s, e) = reviewer_model_span(text, 1).unwrap();
+        assert_eq!(&text[s..e], "\"se\\\"cond\"");
+        let (s, e) = reviewer_model_span(text, 0).unwrap();
+        assert_eq!(&text[s..e], "\"first\"");
+        assert!(reviewer_model_span(text, 2).is_err());
+        assert!(reviewer_model_span("{\"reviewers\": [ {\"model\": \"x\" ", 0).is_err());
+        assert!(reviewer_model_span("[]", 0).is_err());
     }
 
     #[test]
@@ -1172,15 +1755,20 @@ mod tests {
 
         // unchanged on disk since the snapshot -> the swap lands
         std::fs::write(&path, basis).unwrap();
-        apply_swap(&path_s, basis, "grok", "grok-4.7", "grok-4.8", "20261115").unwrap();
+        apply_swap(
+            &path_s, basis, 1, "grok", "grok-4.7", "grok-4.8", "20261115",
+        )
+        .unwrap();
         assert!(std::fs::read_to_string(&path).unwrap().contains("grok-4.8"));
 
         // the operator PROTECTS the entry mid-smoke: on disk the roster now differs from the basis
         // the gate judged, so a swap computed from that stale basis aborts and writes nothing.
         let protected = r#"{"roster_version":1,"reviewers":[{"provider":"grok","engine":"grok","model":"grok-4.8","plan":"supergrok","ext":{"reserve_percent":15}}]}"#;
         std::fs::write(&path, protected).unwrap();
-        let err =
-            apply_swap(&path_s, basis, "grok", "grok-4.7", "grok-4.9", "20261116").unwrap_err();
+        let err = apply_swap(
+            &path_s, basis, 1, "grok", "grok-4.7", "grok-4.9", "20261116",
+        )
+        .unwrap_err();
         assert!(err.contains("roster changed during the smoke"), "{err}");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
@@ -1209,7 +1797,8 @@ mod tests {
             }],
             ..Default::default()
         };
-        let cur = vec![sl("endpoint:api.z.ai", &["glm-5.3", "glm-5.4"])];
+        let own = source_for(&roster.entries[0]).unwrap();
+        let cur = vec![sl(&own, &["glm-5.3", "glm-5.4"])];
         let c = swap_candidates(&roster, &cur, 0);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].old, "glm-5.3");

@@ -22,7 +22,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 
-use super::env::{Env, RunResult};
+use super::env::{Env, GetPolicy, Redirects, RunResult, HTTP_BODY_CAP};
 use super::version::{parse_cli_version, CliVersion};
 
 /// What a maintenance pass may do with an engine.
@@ -209,8 +209,11 @@ fn check_kimi(env: &dyn Env) -> Latest {
     match env.http_get(
         KIMI_LATEST_URL,
         &[],
-        std::time::Duration::from_secs(5),
-        true,
+        GetPolicy {
+            timeout: std::time::Duration::from_secs(5),
+            redirects: Redirects::Installer,
+            cap: HTTP_BODY_CAP,
+        },
     ) {
         // The marker answers 200 with the bare version and no text content-type, so the body is
         // read as bytes (via http_get) and trimmed before validating it is a version.
@@ -303,7 +306,15 @@ fn run_kimi_installer(
         (KIMI_INSTALL_SH, "kimi-install.sh", "sh")
     };
     let (status, body) = env
-        .http_get(url, &[], std::time::Duration::from_secs(30), true)
+        .http_get(
+            url,
+            &[],
+            GetPolicy {
+                timeout: std::time::Duration::from_secs(30),
+                redirects: Redirects::Installer,
+                cap: HTTP_BODY_CAP,
+            },
+        )
         .map_err(|e| format!("could not download the kimi installer ({e})"))?;
     if !(200..300).contains(&status) {
         return Err(format!("the kimi installer download returned {status}"));
@@ -340,7 +351,6 @@ fn run_kimi_installer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     /// A fake Env whose HTTP GET fails (as a body over the cap, or any download error, makes it) and
     /// which records every command it was asked to run.
@@ -367,8 +377,7 @@ mod tests {
             &self,
             _url: &str,
             _h: &[(&str, &str)],
-            _t: Duration,
-            _f: bool,
+            _p: GetPolicy,
         ) -> Result<(u16, String), String> {
             Err(
                 "the response body exceeded the cap (a truncated download is never used)"

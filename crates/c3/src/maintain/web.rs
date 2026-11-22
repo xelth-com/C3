@@ -1,8 +1,9 @@
 //! The public model sources of the model step: catalogs (a JSON list of models, by default
 //! OpenRouter's `GET https://openrouter.ai/api/v1/models`) and plain pages (a vendor's documentation
 //! page, read with a configured regex). Both are fetched with a plain KEYLESS GET through
-//! [`Env::http_get`] - no credential is ever attached, redirects stay on https and on the same host
-//! (the `env.rs` rule), the body is capped - and both are UNTRUSTED input: they only ever yield
+//! [`Env::http_get`] - no credential is ever attached, redirects stay on https and on the start's
+//! own host and port ([`PUBLIC_GET`]), one deadline covers every hop, the body is capped while it
+//! is read - and both are UNTRUSTED input: they only ever yield
 //! candidate id strings, each of which must pass [`valid_model_id`]. A catalog id never seats
 //! anything by itself; the smoke on the entry's own plan decides.
 //!
@@ -13,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use super::env::Env;
+use super::env::{Env, GetPolicy, Redirects};
 use super::models::SourceList;
 use super::version::valid_model_id;
 
@@ -145,9 +146,8 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
     out
 }
 
-/// A keyless GET of a public source: https only, no header but the client's own User-Agent,
-/// redirects followed only within the `env.rs` rule, the body refused past [`BODY_CAP`]. `None` on
-/// any failure.
+/// A keyless GET of a public source: https only, no header but the client's own generic
+/// User-Agent (`c3/<version>`), under [`PUBLIC_GET`]. `None` on any failure.
 ///
 /// Under `CODEX_CONSULT_TEST_MODE` no request of the real [`SystemEnv`](super::env::SystemEnv)
 /// reaches the network: `C3_MAINTAIN_TEST_HTTP`
@@ -186,8 +186,17 @@ fn keyless_get(env: &dyn Env, url: &str) -> Option<String> {
     get_via_env(env, url)
 }
 
+/// The policy of a public GET (F02-12, F02-13): redirects only to the start's own host and port
+/// with no userinfo, re-validated at every hop (never the kimi installer's mirror pair); ONE 15 s
+/// deadline over every hop; the reader stops at [`BODY_CAP`] + 1 bytes.
+pub const PUBLIC_GET: GetPolicy = GetPolicy {
+    timeout: TIMEOUT,
+    redirects: Redirects::SameOrigin,
+    cap: BODY_CAP,
+};
+
 fn get_via_env(env: &dyn Env, url: &str) -> Option<String> {
-    match env.http_get(url, &[], TIMEOUT, true) {
+    match env.http_get(url, &[], PUBLIC_GET) {
         Ok((status, body)) if (200..300).contains(&status) && body.len() <= BODY_CAP => Some(body),
         _ => None,
     }
@@ -289,7 +298,7 @@ mod tests {
     struct FakeHttp {
         body: String,
         status: u16,
-        seen: std::cell::RefCell<Vec<(String, usize, bool)>>,
+        seen: std::cell::RefCell<Vec<(String, usize, GetPolicy)>>,
     }
     impl Env for FakeHttp {
         fn run(&self, _p: &str, _a: &[&str], _e: &[(&str, &str)], _c: Option<&Path>) -> RunResult {
@@ -299,12 +308,11 @@ mod tests {
             &self,
             url: &str,
             headers: &[(&str, &str)],
-            _t: Duration,
-            follow: bool,
+            policy: GetPolicy,
         ) -> Result<(u16, String), String> {
             self.seen
                 .borrow_mut()
-                .push((url.to_string(), headers.len(), follow));
+                .push((url.to_string(), headers.len(), policy));
             Ok((self.status, self.body.clone()))
         }
     }
@@ -382,6 +390,16 @@ mod tests {
         let seen = env.seen.borrow();
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].1, 0, "no header (no key) is ever attached");
+        // (F02-12, F02-13) the public policy: same origin only, one 15 s deadline, the 4 MiB cap
+        // enforced by the reader
+        assert_eq!(
+            seen[0].2,
+            GetPolicy {
+                timeout: Duration::from_secs(15),
+                redirects: Redirects::SameOrigin,
+                cap: BODY_CAP,
+            }
+        );
         // an http catalog is never fetched; a failing status yields nothing
         drop(seen);
         let env2 = FakeHttp {

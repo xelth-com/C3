@@ -1043,6 +1043,301 @@ fn models_dry_run_edits_nothing() {
     assert!(e.mnt_log().is_empty(), "no engine CLI was run");
 }
 
+/// (F02-18) `C3_MAINTAIN_MODELS=off` is authoritative: an explicit `--models` (dry run or not)
+/// fetches nothing - no public source, no endpoint list, no engine list - writes no state, edits
+/// nothing, and says why.
+#[test]
+fn models_off_is_authoritative_for_an_explicit_models_run() {
+    let e = setup("web-models-off");
+    let m = models_case(
+        &e,
+        &endpoint_roster(false),
+        "alibaba-claude::qwen4-max=pass",
+    );
+    for args in [
+        vec!["maintain", "--models"],
+        vec!["maintain", "--models", "--dry-run"],
+    ] {
+        let mut env = m.env();
+        env.retain(|(k, _)| *k != "C3_MAINTAIN_MODELS");
+        env.push(("C3_MAINTAIN_MODELS", "off"));
+        let o = e.run(&args, &env);
+        let t = text(&o);
+        assert_eq!(o.status.code(), Some(0), "{t}");
+        assert!(
+            t.contains("the model step is off (C3_MAINTAIN_MODELS=off) - --models fetched nothing"),
+            "{t}"
+        );
+        assert!(!m.http_log.exists(), "no public source was requested: {t}");
+        assert!(e.mnt_log().is_empty(), "no engine list was read: {t}");
+        assert!(!t.contains("qwen4-max"), "{t}");
+    }
+    assert!(!e.state_path().exists(), "nothing was written");
+    assert_eq!(m.roster_text(), endpoint_roster(false));
+}
+
+/// (F04-3) A candidate a catalog once dated older than the seated id is recorded in the state and
+/// stays rejected in a later pass, even when the catalog then re-dates it after the seated id.
+#[test]
+fn a_candidate_dated_older_once_stays_rejected_in_a_later_pass() {
+    let e = setup("web-older-recorded");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let older = format!(
+        r#"{{"data":[{{"id":"qwen/qwen3.8-max","created":{}}},{{"id":"qwen/qwen4-max","created":{}}}]}}"#,
+        now - 10 * 86_400,
+        now - 300 * 86_400
+    );
+    let m = models_case_with(
+        &e,
+        &endpoint_roster(false),
+        "alibaba-claude::qwen4-max=pass",
+        &older,
+    );
+    let t = text(&e.run(&["maintain", "--models"], &m.env()));
+    assert!(
+        t.contains("not a candidate (older than the seated model by the catalog's date)"),
+        "{t}"
+    );
+    let state = std::fs::read_to_string(e.state_path()).unwrap();
+    assert!(state.contains("\"older\""), "{state}");
+    assert!(state.contains("\"candidate\": \"qwen4-max\""), "{state}");
+    // the catalog now claims qwen4-max is newer than the seated model
+    let restamped = format!(
+        r#"{{"data":[{{"id":"qwen/qwen3.8-max","created":{}}},{{"id":"qwen/qwen4-max","created":{}}}]}}"#,
+        now - 10 * 86_400,
+        now - 86_400
+    );
+    std::fs::write(e.work.join("catalog.json"), restamped).unwrap();
+    let t = text(&e.run(&["maintain", "--models"], &m.env()));
+    assert!(
+        t.contains("qwen3.8-max -> qwen4-max not a candidate (recorded as older than the seated model in an earlier pass)"),
+        "{t}"
+    );
+    assert!(!t.contains("smoke passed"), "{t}");
+    assert_eq!(
+        m.roster_text(),
+        endpoint_roster(false),
+        "the roster is untouched"
+    );
+}
+
+const FAKE_CLAUDE_PS1: &str = include_str!("fixtures/fake-claude.ps1");
+const FAKE_CLAUDE_CMD: &str = include_str!("fixtures/fake-claude.cmd");
+
+/// (F02-16, RC2) The swap smoke runs through the EXACT roster entry being edited, not whatever its
+/// provider label resolves to. Two entries share the label `alibaba` on two stub endpoints; the
+/// first is on-request (and would be the label's first match). The real two-turn smoke (no script)
+/// runs through the fake claude, which records the endpoint each turn reached: both turns reach the
+/// candidate entry's endpoint, the on-request entry's endpoint receives zero calls, and the swap
+/// edits that same position only.
+#[test]
+fn a_swap_smoke_runs_through_the_exact_roster_entry_not_its_label() {
+    let e = setup("bind-entry");
+    std::fs::write(e.bin.join("fake-claude.ps1"), FAKE_CLAUDE_PS1).unwrap();
+    let reply = e.work.join("reply.txt");
+    std::fs::write(&reply, "OK").unwrap();
+    let argv_log = e.work.join("claude-argv.jsonl");
+    let claude_cfg = e.work.join("claude-config");
+    std::fs::create_dir_all(&claude_cfg).unwrap();
+    // The smoke's `c3 consult` children never see this process's CODEX_CONSULT_TEST_* variables
+    // (scrubbed like host markers), so the fake's drivers cannot travel through the test hook
+    // CODEX_CONSULT_TEST_CHILD_ENV_PASS: the wrapper sets them itself.
+    let claude = e.bin.join("fake-claude.cmd");
+    let wrapper = FAKE_CLAUDE_CMD.replace(
+        "set \"FAKE_CLAUDE_ARGS=%*\"",
+        &format!(
+            "set \"FAKE_CLAUDE_ARGS=%*\"\nset \"FAKE_CLAUDE_ARGV_LOG={}\"\nset \"FAKE_CLAUDE_REPLY={}\"\nset \"FAKE_CLAUDE_REPLY_FROM_CWD=token.txt\"",
+            argv_log.display(),
+            reply.display()
+        ),
+    );
+    assert!(wrapper.contains("FAKE_CLAUDE_REPLY_FROM_CWD"), "{wrapper}");
+    std::fs::write(&claude, crlf(&wrapper)).unwrap();
+    // Two stub endpoints on a closed local port: the endpoint list fetch (the keys are set, so it
+    // is attempted) is refused at once and never leaves the machine.
+    let roster_json = r#"{"roster_version":1,"reviewers":[{"provider":"alibaba","engine":"claude","model":"qwen3.7-max","auth":"endpoint","endpoint":{"base_url":"https://127.0.0.1:9/onrequest/anthropic","env_key":"C3T_KEY_ONREQ"},"ext":{"on_request":true}},{"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://127.0.0.1:9/seat/anthropic","env_key":"C3T_KEY_SEAT"}}]}"#;
+    // no C3_MAINTAIN_TEST_SMOKE: the real two-turn smoke runs
+    let m = models_case(&e, roster_json, "");
+    let s = |p: &Path| p.to_string_lossy().into_owned();
+    let (claude_s, cfg_s) = (s(&claude), s(&claude_cfg));
+    let mut env = m.env();
+    env.extend([
+        ("CODEX_CONSULT_CLAUDE_EXE", claude_s.as_str()),
+        ("CLAUDE_CONFIG_DIR", cfg_s.as_str()),
+        ("C3T_KEY_ONREQ", "tok-onreq"),
+        ("C3T_KEY_SEAT", "tok-seat"),
+    ]);
+    let o = e.run(&["maintain", "--models"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("model alibaba :: qwen3.7-max -> qwen4-max not seated (on-request entry)"),
+        "{t}"
+    );
+    // every claude turn the smoke started, by the endpoint it reached
+    let turns: Vec<serde_json::Value> = std::fs::read_to_string(&argv_log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["kind"] == "turn")
+        .collect();
+    let urls: Vec<String> = turns
+        .iter()
+        .map(|v| v["base_url"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(
+        urls,
+        vec![
+            "https://127.0.0.1:9/seat/anthropic".to_string(),
+            "https://127.0.0.1:9/seat/anthropic".to_string()
+        ],
+        "both smoke turns reached the candidate entry's endpoint: {t}"
+    );
+    assert!(
+        !urls.iter().any(|u| u.contains("onrequest")),
+        "the on-request entry's endpoint received no call"
+    );
+    assert!(
+        turns.iter().all(|v| v["argv"]
+            .as_array()
+            .is_some_and(|a| a.iter().any(|x| x == "qwen4-max"))),
+        "only the model was overridden: {turns:?}"
+    );
+    // the smoke passed (the turn read token.txt) and the swap edited that position only
+    assert!(
+        t.contains("model alibaba :: qwen3.8-max -> qwen4-max, smoke passed"),
+        "{t}"
+    );
+    assert_eq!(
+        m.roster_text(),
+        roster_json.replace("\"qwen3.8-max\"", "\"qwen4-max\""),
+        "only reviewers[2].model changed"
+    );
+    // the smoke's one-entry roster is gone with its scratch repo
+    let leftovers: Vec<String> = std::fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .flatten()
+        .map(|d| d.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with("c3-maintain-smoke-claude-") && n.ends_with(".roster.json"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+// ------------------------------------------------------------------ an unresolved pending update and a newer release
+
+/// (TECH_DEBT 2026-11-16) The no-rollback-path branch: agy has no rollback (and no check), so a
+/// pending record whose installed version fails its smoke stays unresolved, pass after pass, and
+/// nothing is installed.
+#[test]
+fn a_pending_update_without_a_rollback_path_stays_unresolved() {
+    let e = setup("pend-agy");
+    let agy = e.bin.join("fake-mnt-agy.cmd");
+    std::fs::write(&agy, crlf(&FAKE_GROK.replace("=grok", "=agy"))).unwrap();
+    let agy_s = agy.to_string_lossy().into_owned();
+    e.write_pending(
+        r#"[{"engine":"agy","previous":"1.1.0","target":"1.2.0","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let env: Vec<(&str, &str)> = vec![
+        ("CODEX_CONSULT_AGY_EXE", agy_s.as_str()),
+        ("FAKE_AGY_VER", "1.2.0"),
+        ("FAKE_MNT_LOG", e.mnt_log_s()),
+        ("C3_MAINTAIN_SMOKE_AGY", "gemini::gemini-3.8-flash-high"),
+        (
+            "C3_MAINTAIN_TEST_SMOKE",
+            "gemini::gemini-3.8-flash-high=fail",
+        ),
+    ];
+    for _ in 0..2 {
+        let o = e.run(&["maintain", "--run", "--engine", "agy"], &env);
+        let t = text(&o);
+        assert_eq!(o.status.code(), Some(0), "{t}");
+        assert!(
+            t.contains("pending update unresolved: smoke failed, no rollback path"),
+            "{t}"
+        );
+        assert!(!t.contains("recovered"), "{t}");
+        assert!(!t.contains("trying the newer"), "agy has no check: {t}");
+        let pending = e.pending_json();
+        assert!(
+            pending.contains("\"engine\":\"agy\"") && pending.contains("\"previous\":\"1.1.0\""),
+            "the record stays as it was: {pending}"
+        );
+    }
+    assert!(
+        !e.mnt_log().contains("agy :: update"),
+        "nothing was installed: {}",
+        e.mnt_log()
+    );
+}
+
+/// (TECH_DEBT 2026-11-16) An unresolved pending update (the installed 1.0.80 fails its smoke and the
+/// rollback to 1.0.77 does not restore it) no longer freezes the engine: the vendor's newer 1.0.82
+/// is tried, smokes clean, and the record is cleared.
+#[test]
+fn an_unresolved_pending_update_tries_a_newer_release() {
+    let e = setup("pend-newer-ok");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let mut env = e.grok_env("1.0.80", "1.0.82", "grok::grok-4.7=fail-then-pass");
+    env.push(("FAKE_GROK_ROLLBACK_NOOP", "1"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(t.contains("rollback failed, still 1.0.80"), "{t}");
+    assert!(
+        t.contains(
+            "1.0.80 still fails its smoke; trying the newer 1.0.82 (rollback target 1.0.77)"
+        ),
+        "{t}"
+    );
+    assert!(t.contains("1.0.77 -> 1.0.82 ok"), "{t}");
+    assert_eq!(verfile(&e.grok_verfile), "1.0.82");
+    assert_eq!(
+        e.pending_json().trim(),
+        "[]",
+        "resolved: {}",
+        e.pending_json()
+    );
+}
+
+/// (TECH_DEBT 2026-11-16) The newer release fails its smoke too and its rollback does not restore:
+/// the record stays unresolved with the ORIGINAL previous (1.0.77) as the rollback target and the
+/// newer release as the target.
+#[test]
+fn a_newer_release_that_fails_too_keeps_the_original_previous() {
+    let e = setup("pend-newer-fail");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let mut env = e.grok_env("1.0.80", "1.0.82", "grok::grok-4.7=fail");
+    env.push(("FAKE_GROK_ROLLBACK_NOOP", "1"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("trying the newer 1.0.82 (rollback target 1.0.77)"),
+        "{t}"
+    );
+    assert!(
+        t.contains("smoke failed, rollback failed, still 1.0.82"),
+        "{t}"
+    );
+    let pending = e.pending_json();
+    assert!(
+        pending.contains("\"previous\":\"1.0.77\"") && pending.contains("\"target\":\"1.0.82\""),
+        "{pending}"
+    );
+    assert!(
+        e.mnt_log().contains("update --version 1.0.77"),
+        "{}",
+        e.mnt_log()
+    );
+}
+
 // ------------------------------------------------------------------ no spawn under test mode
 
 #[test]

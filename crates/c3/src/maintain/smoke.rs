@@ -8,6 +8,10 @@
 //! `disabled` and no multi-agent tool ([`subagent_switch_check`]) - otherwise it fails, and a
 //! post-update smoke failure rolls the update back.
 //!
+//! (F02-16) A roster seat's smoke is bound to that exact entry ([`Bind::Entry`]): both turns see a
+//! one-entry roster holding it ([`bound_roster`]), so the label can never resolve to another entry
+//! (an on-request or protected one with another endpoint, auth, plan or quota policy).
+//!
 //! The real two-turn path lives in [`run_consult_smoke`]; under `CODEX_CONSULT_TEST_MODE` a test can
 //! script the outcome with `C3_MAINTAIN_TEST_SMOKE=provider::model=pass|fail,...` so the pass
 //! orchestration (update → smoke → rollback) is exercised deterministically without a real model.
@@ -24,11 +28,30 @@ pub enum Smoke {
     Fail(String),
 }
 
-/// A smoke target: the provider label and model id to consult.
+/// A smoke target: the provider label and model id to consult, and what the smoke's consults are
+/// bound to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub provider: String,
     pub model: String,
+    pub bind: Bind,
+}
+
+/// (F02-16) What a smoke's two `c3 consult` turns resolve the reviewer against. A roster seat is
+/// never re-resolved by its provider label (a label can name several entries - an on-request or a
+/// protected one first - with other endpoints, auth, plans and quota policies).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bind {
+    /// Exactly the roster entry at this position: the consults see a one-entry roster holding it
+    /// (the operator's own JSON for that entry, its `model` overridden by [`Target::model`]), so its
+    /// endpoint, auth, plan and quota policy are the ones the turns use ([`bound_roster`]).
+    Entry(usize),
+    /// A codex-config custom provider (not a roster entry): the consults run with no roster, so the
+    /// label cannot resolve to a roster entry of the same name.
+    CodexConfig,
+    /// An explicit `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model`: resolved by its label against the
+    /// operator's roster, exactly like a consultation the operator named by hand.
+    Label,
 }
 
 /// Pick the smoke target for engine `name`. `override_spec` is the `C3_MAINTAIN_SMOKE_<ENGINE>`
@@ -50,6 +73,7 @@ pub fn pick_target(
                 return Some(Target {
                     provider: p.trim().to_string(),
                     model: m.trim().to_string(),
+                    bind: Bind::Label,
                 });
             }
         }
@@ -81,6 +105,7 @@ pub fn pick_target(
             Target {
                 provider: e.provider.clone(),
                 model: e.model.clone(),
+                bind: Bind::Entry(e.position),
             },
             rank,
             headroom,
@@ -137,6 +162,7 @@ pub fn codex_custom_targets() -> Vec<Target> {
                     out.push(Target {
                         provider: provider.clone(),
                         model,
+                        bind: Bind::CodexConfig,
                     });
                 }
             }
@@ -193,8 +219,9 @@ fn plan_headroom(roster: &Roster, e: &RosterEntry, now: DateTime<Utc>) -> (f64, 
 }
 
 /// Run the smoke for a target. `self_exe` is this binary; `work` a scratch directory to build the
-/// throwaway repo in; `token` the random token written into `token.txt`. Under test mode a
-/// `C3_MAINTAIN_TEST_SMOKE` script decides the outcome without a real consult.
+/// throwaway repo in; `token` the random token written into `token.txt`; `roster_text` the roster
+/// a [`Bind::Entry`] target is taken from (for a model swap: the very snapshot the gate judged).
+/// Under test mode a `C3_MAINTAIN_TEST_SMOKE` script decides the outcome without a real consult.
 pub fn run_smoke(
     env: &dyn Env,
     self_exe: &str,
@@ -202,6 +229,7 @@ pub fn run_smoke(
     engine: &str,
     work: &std::path::Path,
     token: &str,
+    roster_text: Option<&str>,
 ) -> Smoke {
     if c3_core::test_hooks::mode_on() {
         if let Some(script) = std::env::var("C3_MAINTAIN_TEST_SMOKE")
@@ -211,7 +239,85 @@ pub fn run_smoke(
             return scripted(&script, target);
         }
     }
-    run_consult_smoke(env, self_exe, target, engine, work, token)
+    run_consult_smoke(env, self_exe, target, engine, work, token, roster_text)
+}
+
+/// (F02-16) The one-entry roster a [`Bind::Entry`] smoke's consults see: the operator's own JSON
+/// object of `reviewers[position]` (1-based) from `roster_text`, its `model` set to `model`, and
+/// nothing else of the roster - no other entry the label could resolve to, no `require`, no
+/// `ext.c3.reviewers`. Refused when the element is gone or no longer names `provider`, when it is
+/// protected (`ext.reserve_percent`) or on-request (`ext.on_request`) - such an entry is never
+/// smoked, not even indirectly - or when the roster's `ext.c3.inactive` names its plan or label.
+pub fn bound_roster(
+    roster_text: &str,
+    position: usize,
+    provider: &str,
+    model: &str,
+) -> Result<String, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(roster_text).map_err(|_| "the roster does not parse".to_string())?;
+    let entry = position
+        .checked_sub(1)
+        .and_then(|i| v.get("reviewers")?.as_array()?.get(i))
+        .and_then(|e| e.as_object())
+        .ok_or_else(|| format!("the roster has no reviewers entry {position}"))?;
+    let str_of = |k: &str| entry.get(k).and_then(|x| x.as_str()).unwrap_or("");
+    if str_of("provider") != provider {
+        return Err(format!(
+            "reviewers entry {position} is no longer provider {provider}"
+        ));
+    }
+    let ext = entry.get("ext");
+    if ext
+        .and_then(|x| x.get("on_request"))
+        .and_then(|b| b.as_bool())
+        == Some(true)
+    {
+        return Err(format!(
+            "reviewers entry {position} runs only on request; it is never smoked"
+        ));
+    }
+    if ext
+        .and_then(|x| x.get("reserve_percent"))
+        .and_then(|n| n.as_i64())
+        .unwrap_or(0)
+        > 0
+    {
+        return Err(format!(
+            "reviewers entry {position} is protected; it is never smoked"
+        ));
+    }
+    let inactive = v
+        .pointer("/ext/c3/inactive")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter().filter_map(|x| x.as_str()).any(|i| {
+                i.trim() == provider || (!str_of("plan").is_empty() && i.trim() == str_of("plan"))
+            })
+        })
+        .unwrap_or(false);
+    if inactive {
+        return Err(format!("reviewers entry {position} is inactive"));
+    }
+    let mut one = entry.clone();
+    one.insert(
+        "model".to_string(),
+        serde_json::Value::String(model.to_string()),
+    );
+    Ok(serde_json::json!({
+        "roster_version": 1,
+        "reviewers": [serde_json::Value::Object(one)],
+    })
+    .to_string())
+}
+
+/// A file removed when dropped (the bound roster of one smoke).
+struct RemoveOnDrop(std::path::PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// Per-seat call counter so a `pass-then-fail` verdict can distinguish the installed-version smoke
@@ -223,10 +329,18 @@ fn call_counts() -> &'static std::sync::Mutex<std::collections::HashMap<String, 
 }
 
 /// The scripted outcome under `C3_MAINTAIN_TEST_SMOKE=provider::model=<verdict>,...` where the
-/// verdict is `pass`, `fail` or `pass-then-fail` (the first smoke of that seat passes, the rest
-/// fail). A seat not listed fails, so a test opts a seat into passing explicitly.
+/// verdict is `pass`, `fail`, `pass-then-fail` (the first smoke of that seat passes, the rest
+/// fail) or `fail-then-pass` (the first fails, the rest pass). A seat not listed fails, so a test
+/// opts a seat into passing explicitly.
 fn scripted(script: &str, target: &Target) -> Smoke {
     let key = format!("{}::{}", target.provider, target.model);
+    let first_call = |key: &str| {
+        let mut g = call_counts().lock().unwrap_or_else(|e| e.into_inner());
+        let n = g.entry(key.to_string()).or_insert(0);
+        let first = *n == 0;
+        *n += 1;
+        first
+    };
     for item in script.split(',') {
         if let Some((seat, verdict)) = item.split_once('=') {
             if seat.trim() != key {
@@ -236,14 +350,17 @@ fn scripted(script: &str, target: &Target) -> Smoke {
             return match verdict.as_str() {
                 "pass" => Smoke::Pass,
                 "pass-then-fail" => {
-                    let mut g = call_counts().lock().unwrap_or_else(|e| e.into_inner());
-                    let n = g.entry(key.clone()).or_insert(0);
-                    let first = *n == 0;
-                    *n += 1;
-                    if first {
+                    if first_call(&key) {
                         Smoke::Pass
                     } else {
                         Smoke::Fail("scripted post-update failure".to_string())
+                    }
+                }
+                "fail-then-pass" => {
+                    if first_call(&key) {
+                        Smoke::Fail("scripted first failure".to_string())
+                    } else {
+                        Smoke::Pass
                     }
                 }
                 _ => Smoke::Fail("scripted failure".to_string()),
@@ -253,7 +370,9 @@ fn scripted(script: &str, target: &Target) -> Smoke {
     Smoke::Fail("no scripted verdict".to_string())
 }
 
-/// The real two-turn smoke through `c3 consult`.
+/// The real two-turn smoke through `c3 consult`. Both turns run under the target's binding
+/// ([`Bind`]): a roster seat through a one-entry roster written beside the scratch repo (outside
+/// it) and named by `CODEX_CONSULT_ROSTER`, a codex-config provider with no roster.
 fn run_consult_smoke(
     env: &dyn Env,
     self_exe: &str,
@@ -261,7 +380,43 @@ fn run_consult_smoke(
     engine: &str,
     work: &std::path::Path,
     token: &str,
+    roster_text: Option<&str>,
 ) -> Smoke {
+    // 0. the binding, before anything is created
+    let mut _bound_file: Option<RemoveOnDrop> = None;
+    let roster_env: Option<String> = match target.bind {
+        Bind::Label => None,
+        Bind::CodexConfig => Some("none".to_string()),
+        Bind::Entry(position) => {
+            let Some(text) = roster_text else {
+                return Smoke::Fail(format!(
+                    "the roster entry {position} could not be read for the smoke"
+                ));
+            };
+            let one = match bound_roster(text, position, &target.provider, &target.model) {
+                Ok(one) => one,
+                Err(why) => return Smoke::Fail(format!("not smoked: {why}")),
+            };
+            let name = format!(
+                "{}.roster.json",
+                work.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "c3-maintain-smoke".to_string())
+            );
+            let path = work.with_file_name(name);
+            if std::fs::write(&path, one).is_err() {
+                return Smoke::Fail("could not write the smoke's roster".to_string());
+            }
+            let s = path.to_string_lossy().into_owned();
+            _bound_file = Some(RemoveOnDrop(path));
+            Some(s)
+        }
+    };
+    let turn_env: Vec<(&str, &str)> = roster_env
+        .as_deref()
+        .map(|r| vec![("CODEX_CONSULT_ROSTER", r)])
+        .unwrap_or_default();
+
     // 1. a throwaway git repo with token.txt
     if std::fs::create_dir_all(work).is_err() {
         return Smoke::Fail("could not create the smoke workdir".to_string());
@@ -300,11 +455,12 @@ fn run_consult_smoke(
         self_exe,
         work,
         &reviewer,
+        &turn_env,
         "new",
         "reply with exactly OK",
     );
     if !turn1.ok() {
-        return Smoke::Fail(format!("turn 1 failed ({})", turn1.fail_reason()));
+        return Smoke::Fail(format!("turn 1 failed ({})", turn_reason(&turn1)));
     }
 
     // Turn 2: must read the file (a tool call) and echo its content; auto-mode forks the thread.
@@ -313,11 +469,12 @@ fn run_consult_smoke(
         self_exe,
         work,
         &reviewer,
+        &turn_env,
         "",
         "Reply with the exact content of the file token.txt in this repository.",
     );
     if !turn2.ok() {
-        return Smoke::Fail(format!("turn 2 failed ({})", turn2.fail_reason()));
+        return Smoke::Fail(format!("turn 2 failed ({})", turn_reason(&turn2)));
     }
 
     // Pass when the reply of turn 2 contains the token (the file was read) — the proxy for a
@@ -420,6 +577,7 @@ fn consult_turn(
     self_exe: &str,
     work: &std::path::Path,
     reviewer: &[String],
+    turn_env: &[(&str, &str)],
     mode: &str,
     prompt: &str,
 ) -> super::env::RunResult {
@@ -438,7 +596,18 @@ fn consult_turn(
     for r in reviewer {
         args.push(r.as_str());
     }
-    env.run(self_exe, &args, &[], Some(work))
+    env.run(self_exe, &args, turn_env, Some(work))
+}
+
+/// Why a consult turn failed: its `codex-consult: ...` outcome line when it printed one (the first
+/// stderr line is often the informational `Roster: ...` line), else the first output line.
+fn turn_reason(r: &super::env::RunResult) -> String {
+    r.combined()
+        .lines()
+        .map(str::trim)
+        .rfind(|l| l.starts_with("codex-consult:"))
+        .map(|l| l.to_string())
+        .unwrap_or_else(|| r.fail_reason())
 }
 
 /// Whether any handoff reply file under the smoke task contains the token.
@@ -709,6 +878,7 @@ mod tests {
         let t = Target {
             provider: "grok".into(),
             model: "grok-4.7".into(),
+            bind: Bind::Entry(1),
         };
         assert_eq!(scripted("grok::grok-4.7=pass", &t), Smoke::Pass);
         assert!(matches!(
@@ -716,5 +886,75 @@ mod tests {
             Smoke::Fail(_)
         ));
         assert!(matches!(scripted("other::x=pass", &t), Smoke::Fail(_)));
+        // fail-then-pass: the first smoke of the seat fails, the next passes
+        let u = Target {
+            provider: "unit-ftp".into(),
+            model: "m-1".into(),
+            bind: Bind::Label,
+        };
+        assert!(matches!(
+            scripted("unit-ftp::m-1=fail-then-pass", &u),
+            Smoke::Fail(_)
+        ));
+        assert_eq!(scripted("unit-ftp::m-1=fail-then-pass", &u), Smoke::Pass);
+    }
+
+    /// (F02-16) A roster seat is bound by its position; an explicit override is a label.
+    #[test]
+    fn a_roster_seat_target_is_bound_to_its_position() {
+        let mut on_req = entry(1, "alibaba", "claude", "qwen3.7-max", "", "unit-nobudget");
+        on_req.on_request = true;
+        let r = roster(vec![
+            on_req,
+            entry(2, "alibaba", "claude", "qwen3.8-max", "", "unit-nobudget"),
+        ]);
+        let t = pick_target("", &r, "claude", now()).unwrap();
+        assert_eq!(t.model, "qwen3.8-max");
+        assert_eq!(t.bind, Bind::Entry(2));
+        let t = pick_target("alibaba::qwen3.7-max", &r, "claude", now()).unwrap();
+        assert_eq!(t.bind, Bind::Label);
+    }
+
+    /// (F02-16) The bound roster holds exactly the entry at that position - the operator's own JSON
+    /// for it, the model overridden - and nothing else a label could resolve to; a protected,
+    /// on-request, inactive, moved or missing entry is refused.
+    #[test]
+    fn the_bound_roster_holds_only_that_entry() {
+        let text = r##"{"roster_version":1,"require":{"framing":["#1"]},"reviewers":[
+            {"provider":"alibaba","engine":"claude","model":"qwen3.7-max","auth":"endpoint","endpoint":{"base_url":"https://a.example/v1","env_key":"KEY_A"},"ext":{"on_request":true}},
+            {"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://b.example/v1","env_key":"KEY_B"},"plan":"alibaba","panel":"weighty"},
+            {"provider":"grok","engine":"grok","model":"grok-4.7","ext":{"reserve_percent":15}}
+        ],"ext":{"c3":{"inactive":["dormant"],"reviewers":[]}}}"##;
+        let one = bound_roster(text, 2, "alibaba", "qwen4-max").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&one).unwrap();
+        let mut expected: serde_json::Value = serde_json::from_str(text).unwrap();
+        let mut e = expected["reviewers"][1].take();
+        e["model"] = serde_json::Value::String("qwen4-max".into());
+        assert_eq!(
+            v,
+            serde_json::json!({"roster_version": 1, "reviewers": [e]}),
+            "only that entry, model overridden"
+        );
+        // and it is a roster the validator accepts, with the entry's own endpoint
+        let r = c3_core::roster::validate_roster("bound.json", &one, None);
+        assert!(r.error.is_empty(), "{}", r.error);
+        assert_eq!(r.entries.len(), 1);
+        assert_eq!(
+            r.entries[0].endpoint.as_ref().unwrap().base_url,
+            "https://b.example/v1"
+        );
+        assert!(bound_roster(text, 1, "alibaba", "qwen4-max")
+            .unwrap_err()
+            .contains("on request"));
+        assert!(bound_roster(text, 3, "grok", "grok-4.8")
+            .unwrap_err()
+            .contains("protected"));
+        assert!(bound_roster(text, 2, "grok", "qwen4-max").is_err());
+        assert!(bound_roster(text, 4, "alibaba", "qwen4-max").is_err());
+        assert!(bound_roster(text, 0, "alibaba", "qwen4-max").is_err());
+        let dormant = text.replace("\"plan\":\"alibaba\"", "\"plan\":\"dormant\"");
+        assert!(bound_roster(&dormant, 2, "alibaba", "qwen4-max")
+            .unwrap_err()
+            .contains("inactive"));
     }
 }

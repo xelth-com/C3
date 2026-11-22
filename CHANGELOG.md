@@ -88,6 +88,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Changed
 
+- **`C3_MAINTAIN_MODELS=off` holds for `c3 maintain --models` too (F02-18).** An explicit `--models`
+  used to turn `off` into `announce` and fetch the engine, endpoint and public lists anyway. With
+  `off` it now fetches nothing, writes nothing and says so; set `announce` or `swap` to run it.
+- **An unresolved pending update no longer freezes its engine.** When the installed version of an
+  interrupted update still fails its smoke and the rollback fails or does not exist, a pass skipped
+  the engine's update check for as long as the record stayed. It now asks the vendor: a release
+  NEWER than the failing version is tried with the same cool-down (unless `--force`), in-use check,
+  write-before-install record and post-update smoke, keeping the record's original `previous` as the
+  rollback target; resolved when it smokes clean, otherwise the record stays with the new target.
+  The no-rollback-path branch (agy) has an integration test now.
 - **OpenAI's GPT-6.2 models are known to telemetry.** The `openai` class's closed model list now
   also holds `gpt-6.1-sol`, `gpt-6.2-astra` and `gpt-6.2-sol` (released 2026-11, listed for
   ChatGPT accounts by Codex). Before this a judge record naming them was sent as `other`. The
@@ -178,10 +188,54 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   still serves it would have passed the smoke and been downgraded. A public candidate now needs
   date evidence: created after the seated id when the catalog lists both, else created within the
   last 180 days; an undated catalog entry or a page id is announced only, never smoked. The
-  entry's own model list keeps the old rule. The catalog dates are kept in the maintain state (an
-  older state loads without them); a rejected id is named with its reason in the full report only;
-  "new in the family" skips an id older than the seated one by date and names each id once per
-  provider.
+  entry's own model list needs no date (but see the date gate below). The catalog dates are kept in
+  the maintain state (an older state loads without them); a rejected id is named with its reason in
+  the full report only; "new in the family" skips an id older than the seated one by date and names
+  each id once per provider.
+- **`c3 maintain`: the successor date gate lets negative evidence win (F02-14, F04-2, F04-3).** A
+  catalog id dated more than a day in the future is refused; if ANY public source dates a candidate
+  not after the seated id it lists too, the candidate is refused whatever another source says (a
+  second catalog's recent, unanchored copy no longer outvotes it); such a pair is recorded in the
+  maintain state (`models.older`, at most 500) and stays refused in every later pass, so a catalog
+  that re-stamps an old model later cannot bring it back. An id from the entry's own list (`grok
+  models`, `agy models`, an endpoint's list) still needs no date, but goes through the same refusals
+  when a public source dates both ids - `grok-4.20` beside `grok-4.7` in `grok models` is no longer
+  smoked when the catalog dates it older. Only ids the version rule takes for a successor are gated.
+- **`c3 maintain`: public catalog and page fetches have their own, tighter policy (F02-12, F02-13,
+  F04-8).** They shared the kimi installer's redirect rule, so a catalog on `code.kimi.ai` could be
+  sent on to `cdn.kimi.ai`, a redirect could change the port or add userinfo, every hop restarted the
+  15 s clock, and the 4 MiB cap was checked only after up to 8 MiB had been read. A public GET now
+  follows at most 3 redirects, each to the start's own host and port with no userinfo (re-checked at
+  every hop; the start URL too), under ONE absolute 15 s deadline that also bounds the body read,
+  and the reader stops at 4 MiB + 1 bytes. The installer keeps its `code.kimi.ai` -> `cdn.kimi.ai`
+  pair (now also port-pinned and userinfo-free); a key-carrying endpoint request still follows no
+  redirect. The User-Agent stays `c3/<version>`.
+- **`c3 maintain`: an endpoint's model list is keyed by the endpoint, its key variable and its plan
+  (F02-15).** The list was recorded as `endpoint:<host>` and the first response won, so two entries
+  on one host with another path or another key shared it, and a model private to one could be offered
+  to - and smoked on - the other without any date check. The source is now `endpoint:<scheme>://
+  <host>:<port><path>|<key variable>|<plan>` and its ids are candidates only for entries with that
+  key. The first pass after the change reads the old host-only record, so the list is not announced
+  again as new.
+- **`c3 maintain`: the smoke and the swap bind to the exact roster entry (F02-16).** The swap smoke
+  ran `c3 consult --provider <label> --model <candidate>`, which resolved the label again: with the
+  candidate model in no entry, the label's FIRST entry was used - possibly an on-request or protected
+  one, with another endpoint, auth, plan and quota policy. Both smoke turns now run against a
+  one-entry roster (`CODEX_CONSULT_ROSTER`, written beside the scratch repository and removed with
+  it) holding exactly the entry at the candidate's position, the operator's own JSON for it with only
+  the model overridden; the position must still be that provider and old model, and a protected,
+  on-request or inactive entry is refused even there. The engine-update smokes bind to their roster
+  seat the same way; a codex-config custom provider's smoke runs with no roster; an explicit
+  `C3_MAINTAIN_SMOKE_<ENGINE>` is still resolved by its label. A failed turn is now reported with the
+  consult's `codex-consult:` outcome line rather than its first stderr line. An `ext.c3.reviewers`
+  http entry is announced only. Tested end to end with two same-label stub endpoints, the on-request
+  one first: both turns reach the candidate's endpoint, the other none.
+- **`c3 maintain`: the roster writer edits the parsed entry and verifies the result (F02-17).** It
+  searched the text for `"model": "<old>"` and accepted a sole match anywhere, so with a JSON-escaped
+  model in the entry it could edit an `ext` object's plain `"model"` instead while reporting a seat.
+  It now locates the string value of `reviewers[<position>].model` by parsing (a repeated key on the
+  path is refused), checks it still decodes to the old model, replaces the whole literal, and
+  verifies that the re-parsed roster equals the old one except that one field.
 
 - **The `kimi` engine's throwaway worktree removal could follow a link.** The reviewer can run
   commands in that worktree; a junction or symlink it left there (e.g. a `node_modules` junction into

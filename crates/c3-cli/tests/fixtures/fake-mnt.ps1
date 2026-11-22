@@ -6,6 +6,7 @@
 #          write FAKE_GROK_LATEST to FAKE_GROK_VERFILE; update --version <v> -> write <v>;
 #          models -> a short list.
 #   codex: --version -> "codex-cli <cur>".
+#   agy:   --version -> "agy <FAKE_AGY_VER>" (the wrapper is written by the test from the grok one).
 #   npm:   view @openai/codex version -> FAKE_NPM_LATEST; view ... time --json -> {latest:date};
 #          ls -g @openai/codex -> "@openai/codex@1.0.0"; install -g @openai/codex@<v> -> write <v>.
 $ErrorActionPreference = 'Stop'
@@ -68,6 +69,11 @@ switch ($role) {
     $vf = [string]$env:FAKE_CODEX_VERFILE
     $cur = if ($vf -and (Test-Path $vf)) { (Get-Content $vf -Raw).Trim() } else { [string]$env:FAKE_CODEX_VER }
     if ($argv -contains '--version') { Out-Line "codex-cli $cur"; exit 0 }
+    exit 0
+  }
+  'agy' {
+    # agy has no update check and no version pin (report-only, no rollback path)
+    if ($argv -contains '--version') { Out-Line ("agy " + [string]$env:FAKE_AGY_VER); exit 0 }
     exit 0
   }
   'npm' {
