@@ -2,9 +2,10 @@
 # the tiny .cmd wrapper that calls this): grok, codex, npm. Never calls a real CLI or model. The
 # "installed version" of grok/codex lives in a file so an `update` is observable by a later
 # `--version`.
-#   grok:  --version -> "grok <cur>"; update --check --json -> {latestVersion,...}; update ->
-#          write FAKE_GROK_LATEST to FAKE_GROK_VERFILE; update --version <v> -> write <v>;
-#          models -> a short list.
+#   grok:  --version -> "grok <cur>"; update --check --json -> {latestVersion,...} (and, with
+#          FAKE_GROK_EDIT_ROSTER, an edit of the roster file); update -> write FAKE_GROK_LATEST to
+#          FAKE_GROK_VERFILE; update --version <v> -> write <v> (a rollback: FAKE_GROK_ROLLBACK_NOOP
+#          / FAKE_GROK_ROLLBACK_TO); models -> a short list.
 #   codex: --version -> "codex-cli <cur>".
 #   agy:   --version -> "agy <FAKE_AGY_VER>" (the wrapper is written by the test from the grok one).
 #   npm:   view @openai/codex version -> FAKE_NPM_LATEST; view ... time --json -> {latest:date};
@@ -33,6 +34,13 @@ switch ($role) {
     # is `grok update --version <v>` and that `--version` flag must NOT be read as the version probe.
     if ($argv.Count -ge 1 -and $argv[0] -eq 'update') {
       if ($argv -contains '--check') {
+        # FAKE_GROK_EDIT_ROSTER: the update check also edits the roster file (FAKE_GROK_EDIT_FROM ->
+        # FAKE_GROK_EDIT_TO), modelling a hand edit between the pass's roster read and its smoke.
+        if ($env:FAKE_GROK_EDIT_ROSTER) {
+          $rp = [string]$env:FAKE_GROK_EDIT_ROSTER
+          $t = [IO.File]::ReadAllText($rp).Replace([string]$env:FAKE_GROK_EDIT_FROM, [string]$env:FAKE_GROK_EDIT_TO)
+          [IO.File]::WriteAllText($rp, $t, $u8)
+        }
         $latest = [string]$env:FAKE_GROK_LATEST
         $avail = if ($latest -ne $cur) { 'true' } else { 'false' }
         Out-Line ('{"currentVersion":"' + $cur + '","latestVersion":"' + $latest + '","updateAvailable":' + $avail + ',"installer":"internal","channel":"stable"}')
@@ -46,6 +54,12 @@ switch ($role) {
         # take"); FAKE_GROK_ROLLBACK_NOOP: a rollback exits 0 without restoring ("rollback failed").
         if ($isForward -and $env:FAKE_GROK_UPDATE_NOOP) { exit 0 }
         if (-not $isForward -and $env:FAKE_GROK_ROLLBACK_NOOP) { exit 0 }
+        # FAKE_GROK_ROLLBACK_TO: a rollback installs THIS version instead and exits non-zero (a failed
+        # rollback, or a concurrent manual update, leaves another version on disk).
+        if (-not $isForward -and $env:FAKE_GROK_ROLLBACK_TO) {
+          if ($vf) { Set-Content -LiteralPath $vf -Value ([string]$env:FAKE_GROK_ROLLBACK_TO) -NoNewline }
+          exit 1
+        }
         if ($vf) { Set-Content -LiteralPath $vf -Value $to -NoNewline }
         # FAKE_GROK_UPDATE_MUTATE_FAIL: a forward update WRITES the new version (mutates the install)
         # but then exits non-zero, modelling an installer that changed the install yet reported failure.

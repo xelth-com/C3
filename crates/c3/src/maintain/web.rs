@@ -80,7 +80,11 @@ pub fn configured_sources() -> (Vec<String>, Vec<Page>) {
     }
 }
 
-/// The source name of a catalog: `web:<host>`.
+/// (F16-1, F17-5) The source name of a catalog: `web:<url>` - its FULL canonical URL, the identity
+/// of the source: the lower-case scheme and host, the port (the scheme's default when none is
+/// written), the path and the query (`web:https://openrouter.ai:443/api/v1/models`). Two catalogs
+/// on one host are two sources, each fetched and recorded under its own name, each trusted only
+/// by its own config entry.
 pub fn catalog_source(url: &str) -> Option<String> {
     let u = url::Url::parse(url).ok()?;
     if u.scheme() != "https" {
@@ -90,7 +94,69 @@ pub fn catalog_source(url: &str) -> Option<String> {
     if host.is_empty() {
         return None;
     }
-    Some(format!("web:{host}"))
+    let query = u.query().map(|q| format!("?{q}")).unwrap_or_default();
+    Some(format!(
+        "web:https://{host}:{}{}{query}",
+        u.port_or_known_default().unwrap_or(443),
+        u.path()
+    ))
+}
+
+/// A source name as it is SHOWN - in a printed line, a report, the hook line, anything a person or
+/// an agent reads. A catalog's name ([`catalog_source`]) is the full URL, and its query may hold a
+/// token (an operator may write `?key=...` although the GET is keyless), so it is shown without
+/// the query: `web:` + scheme, host, the port only when it is not 443, and the path, with
+/// ` (query not shown)` appended when a query was dropped. Every other source name (a legacy
+/// `web:<host>`, `page:<name>`, an engine list) is shown as it is. The stored key - `state.json`,
+/// trust, comparison - stays the full URL.
+pub fn catalog_source_display(source: &str) -> String {
+    let Some(rest) = source.strip_prefix("web:").filter(|r| r.contains("://")) else {
+        return source.to_string();
+    };
+    const NOTE: &str = " (query not shown)";
+    match url::Url::parse(rest) {
+        Ok(u) => {
+            let port = match u.port_or_known_default() {
+                Some(443) | None => String::new(),
+                Some(p) => format!(":{p}"),
+            };
+            let dropped = u.query().is_some_and(|q| !q.is_empty());
+            format!(
+                "web:{}://{}{port}{}{}",
+                u.scheme(),
+                u.host_str().unwrap_or(""),
+                u.path(),
+                if dropped { NOTE } else { "" }
+            )
+        }
+        // not a URL (never written by this build): cut at the query by text
+        Err(_) => {
+            let shown = rest.split(['?', '#']).next().unwrap_or("");
+            let dropped = rest.contains('?');
+            format!("web:{shown}{}", if dropped { NOTE } else { "" })
+        }
+    }
+}
+
+/// (F16-1, F17-5) Whether a source name is a catalog record of an older build, keyed by its host
+/// alone (`web:<host>`): read without error, but never trusted for telemetry - which of the host's
+/// URLs its ids came from is unknown - and replaced once a catalog of that host is fetched again.
+pub fn is_legacy_catalog_source(source: &str) -> bool {
+    source
+        .strip_prefix("web:")
+        .is_some_and(|rest| !rest.contains("://"))
+}
+
+/// The host of a catalog source name, of either form (`web:<url>` or the legacy `web:<host>`).
+pub fn catalog_source_host(source: &str) -> Option<String> {
+    let rest = source.strip_prefix("web:")?;
+    if !rest.contains("://") {
+        return Some(rest.to_ascii_lowercase());
+    }
+    url::Url::parse(rest)
+        .ok()?
+        .host_str()
+        .map(|h| h.to_ascii_lowercase())
 }
 
 /// Whether a source name is a public one (a catalog or a page) - fetched keyless, its ids feed
@@ -103,7 +169,7 @@ pub fn is_public_source(source: &str) -> bool {
 /// attributes an id WITHOUT a `<vendor>/` part to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustedSource {
-    /// The source name (`web:<host>` / `page:<name>`).
+    /// The source name (`web:<url>` / `page:<name>`).
     pub source: String,
     /// The vendor class of the source's own host (a vendor's documentation page on `docs.z.ai` is
     /// `zai`) - the attribution of its plain ids; `None` (any other host, and OpenRouter, whose ids
@@ -112,10 +178,13 @@ pub struct TrustedSource {
 }
 
 /// (F02-19) The public sources whose ids are PUBLISHED names telemetry may send: the catalog
-/// hosts shipped in the code ([`DEFAULT_CATALOGS`] - OpenRouter), always; a configured catalog or
+/// URLs shipped in the code ([`DEFAULT_CATALOGS`] - OpenRouter), always; a configured catalog or
 /// page only when its config entry says `"public": true` explicitly. Separate from what is fetched:
 /// a configured source feeds successor candidates either way, but it may be an internal one, and a
-/// name it lists is no proof that the name is no private endpoint's secret.
+/// name it lists is no proof that the name is no private endpoint's secret. (F16-1, F17-5) Trust
+/// is per catalog URL ([`catalog_source`]), never per host: another URL on a trusted host - the
+/// built-in catalog's included - is trusted only by its own entry, and a legacy host-keyed record
+/// ([`is_legacy_catalog_source`]) matches no trusted source.
 pub fn trusted_sources(cfg: Option<&crate::c3config::C3Config>) -> Vec<TrustedSource> {
     let mut out: Vec<TrustedSource> = Vec::new();
     let mut add = |source: String, url: &str| {
@@ -150,17 +219,20 @@ pub fn strip_vendor(id: &str) -> &str {
     id.split_once('/').map(|(_, m)| m).unwrap_or(id)
 }
 
-/// Collect every configured public source. A source that fails (network, status, cap, parse) is
-/// left out; a source with no valid id is left out.
+/// Collect every configured public source: (F16-1, F17-5) every distinct catalog URL under its own
+/// name ([`catalog_source`]), every page under its label. A source that fails (network, status,
+/// cap, parse) is left out; a source with no valid id is left out.
 pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<SourceList> {
     let mut out: Vec<SourceList> = Vec::new();
+    let mut fetched: Vec<String> = Vec::new();
     for url in catalogs {
         let Some(source) = catalog_source(url) else {
             continue;
         };
-        if out.iter().any(|s| s.source == source) {
+        if fetched.contains(&source) {
             continue;
         }
+        fetched.push(source.clone());
         let Some(body) = keyless_get(env, url) else {
             continue;
         };
@@ -193,8 +265,10 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
     out
 }
 
-/// A keyless GET of a public source: https only, no header but the client's own generic
-/// User-Agent (`c3/<version>`), under [`PUBLIC_GET`]. `None` on any failure.
+/// A keyless GET of a public source: https only, (F15-1) on a host NAME - an IP literal or
+/// `localhost` is never requested, in test mode either - no header but the client's own generic
+/// User-Agent (`c3/<version>`), under [`PUBLIC_GET`] (which also discards an answer from a local or
+/// private address). `None` on any failure.
 ///
 /// Under `CODEX_CONSULT_TEST_MODE` no request of the real [`SystemEnv`](super::env::SystemEnv)
 /// reaches the network: `C3_MAINTAIN_TEST_HTTP`
@@ -202,7 +276,7 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
 /// is appended to `C3_MAINTAIN_TEST_HTTP_LOG` when set - so the integration tests can both feed a
 /// catalog and prove that a switched-off pass fetched nothing.
 fn keyless_get(env: &dyn Env, url: &str) -> Option<String> {
-    if !url.starts_with("https://") {
+    if !url.starts_with("https://") || !super::env::is_named_public_host(url) {
         return None;
     }
     if env.is_system() && c3_core::test_hooks::mode_on() {
@@ -235,7 +309,9 @@ fn keyless_get(env: &dyn Env, url: &str) -> Option<String> {
 
 /// The policy of a public GET (F02-12, F02-13): redirects only to the start's own host and port
 /// with no userinfo, re-validated at every hop (never the kimi installer's mirror pair); ONE 15 s
-/// deadline over every hop; the reader stops at [`BODY_CAP`] + 1 bytes.
+/// deadline over every hop, its name lookup, connect and body read (F14-1); the reader stops at
+/// [`BODY_CAP`] + 1 bytes; (F15-1) never an IP literal or `localhost`, never an answer from a local
+/// or private address ([`GetPolicy::public_only`]).
 pub const PUBLIC_GET: GetPolicy = GetPolicy {
     timeout: TIMEOUT,
     redirects: Redirects::SameOrigin,
@@ -420,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn a_catalog_is_fetched_keyless_and_recorded_by_host() {
+    fn a_catalog_is_fetched_keyless_and_recorded_by_its_url() {
         let env = FakeHttp {
             body: r#"{"data":[{"id":"qwen/qwen4-max","created":1}]}"#.into(),
             status: 200,
@@ -432,7 +508,7 @@ mod tests {
             &[],
         );
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].source, "web:openrouter.ai");
+        assert_eq!(out[0].source, "web:https://openrouter.ai:443/api/v1/models");
         assert_eq!(out[0].ids, vec!["qwen/qwen4-max"]);
         let seen = env.seen.borrow();
         assert_eq!(seen.len(), 1);
@@ -457,6 +533,210 @@ mod tests {
         assert!(collect(&env2, &["http://example.com/models".to_string()], &[]).is_empty());
         assert!(env2.seen.borrow().is_empty());
         assert!(collect(&env2, &["https://example.com/models".to_string()], &[]).is_empty());
+    }
+
+    /// A fake that answers per URL (an unmapped URL is a 404) and records what was asked.
+    struct MapHttp {
+        bodies: Vec<(&'static str, String)>,
+        seen: std::cell::RefCell<Vec<String>>,
+    }
+    impl Env for MapHttp {
+        fn run(&self, _p: &str, _a: &[&str], _e: &[(&str, &str)], _c: Option<&Path>) -> RunResult {
+            RunResult::default()
+        }
+        fn http_get(
+            &self,
+            url: &str,
+            _headers: &[(&str, &str)],
+            _policy: GetPolicy,
+        ) -> Result<(u16, String), String> {
+            self.seen.borrow_mut().push(url.to_string());
+            Ok(self
+                .bodies
+                .iter()
+                .find(|(u, _)| *u == url)
+                .map(|(_, b)| (200, b.clone()))
+                .unwrap_or((404, String::new())))
+        }
+    }
+
+    /// (F16-1, F17-5) A catalog's identity is its full URL: scheme, host, port, path and query.
+    #[test]
+    fn the_catalog_source_name_is_the_canonical_url() {
+        assert_eq!(
+            catalog_source("https://Models.Example/v1/models?tier=pub").as_deref(),
+            Some("web:https://models.example:443/v1/models?tier=pub")
+        );
+        assert_eq!(
+            catalog_source("https://models.example:443/v1/models"),
+            catalog_source("https://MODELS.example/v1/models")
+        );
+        for (a, b) in [
+            ("https://m.example/a", "https://m.example/b"),
+            ("https://m.example/a", "https://m.example:8443/a"),
+            ("https://m.example/a", "https://m.example/a?x=1"),
+        ] {
+            assert_ne!(catalog_source(a), catalog_source(b), "{a} / {b}");
+        }
+        assert!(catalog_source("http://m.example/a").is_none());
+        assert!(is_legacy_catalog_source("web:openrouter.ai"));
+        assert!(!is_legacy_catalog_source(
+            "web:https://openrouter.ai:443/api/v1/models"
+        ));
+        assert!(!is_legacy_catalog_source("page:zai-docs"));
+        assert_eq!(
+            catalog_source_host("web:https://openrouter.ai:443/api/v1/models").as_deref(),
+            Some("openrouter.ai")
+        );
+        assert_eq!(
+            catalog_source_host("web:OpenRouter.ai").as_deref(),
+            Some("openrouter.ai")
+        );
+    }
+
+    /// A catalog's name is SHOWN without its query (which may hold a token): scheme, host, the port
+    /// only when it is not 443, the path, and ` (query not shown)` when a query was dropped; every
+    /// other source name is shown as it is.
+    #[test]
+    fn a_catalog_source_is_shown_without_its_query() {
+        let shown = |url: &str| catalog_source_display(&catalog_source(url).unwrap());
+        assert_eq!(
+            shown("https://openrouter.ai/api/v1/models"),
+            "web:https://openrouter.ai/api/v1/models"
+        );
+        let s = shown("https://models.example/v1/models?key=sk-SECRET-1&tier=pub");
+        assert_eq!(s, "web:https://models.example/v1/models (query not shown)");
+        assert!(!s.contains("SECRET") && !s.contains("key="), "{s}");
+        assert_eq!(
+            shown("https://models.example:8443/v1/models?token=abc"),
+            "web:https://models.example:8443/v1/models (query not shown)"
+        );
+        assert_eq!(
+            shown("https://models.example:443/m"),
+            "web:https://models.example/m"
+        );
+        // an empty query drops nothing
+        assert_eq!(
+            shown("https://models.example/m?"),
+            "web:https://models.example/m"
+        );
+        // the stored key keeps the full URL
+        assert_eq!(
+            catalog_source("https://models.example/v1/models?key=sk-SECRET-1").as_deref(),
+            Some("web:https://models.example:443/v1/models?key=sk-SECRET-1")
+        );
+        // other names as they are; a key that does not parse is cut at the query by text
+        for name in ["web:openrouter.ai", "page:zai-docs", "grok"] {
+            assert_eq!(catalog_source_display(name), name);
+        }
+        assert_eq!(
+            catalog_source_display("web:https://[bad/x?key=SECRET"),
+            "web:https://[bad/x (query not shown)"
+        );
+    }
+
+    /// (F16-1, F17-5) Two catalogs on one host, the private one listed FIRST: both are fetched,
+    /// each recorded under its own URL, and only the URL declared `"public": true` is trusted - the
+    /// private catalog's id is never a published name (it used to be the only one fetched for the
+    /// host, and the host was trusted because its other URL was public).
+    #[test]
+    fn two_catalogs_on_one_host_are_two_sources_and_only_the_declared_one_is_trusted() {
+        let private = "https://models.example/private/v1/models";
+        let public = "https://models.example/public/v1/models";
+        let env = MapHttp {
+            bodies: vec![
+                (
+                    private,
+                    r#"{"data":[{"id":"z-ai/glm-9-private"}]}"#.to_string(),
+                ),
+                (
+                    public,
+                    r#"{"data":[{"id":"z-ai/glm-9-public"}]}"#.to_string(),
+                ),
+            ],
+            seen: Default::default(),
+        };
+        let out = collect(&env, &[private.to_string(), public.to_string()], &[]);
+        assert_eq!(
+            *env.seen.borrow(),
+            vec![private, public],
+            "both are fetched"
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(
+            out[0].source,
+            "web:https://models.example:443/private/v1/models"
+        );
+        assert_eq!(out[0].ids, vec!["z-ai/glm-9-private"]);
+        assert_eq!(
+            out[1].source,
+            "web:https://models.example:443/public/v1/models"
+        );
+        let cfg = crate::c3config::C3Config {
+            model_catalogs: Some(vec![
+                crate::c3config::ModelCatalogConfig {
+                    url: private.into(),
+                    public: false,
+                },
+                crate::c3config::ModelCatalogConfig {
+                    url: public.into(),
+                    public: true,
+                },
+            ]),
+            ..Default::default()
+        };
+        let trusted = trusted_sources(Some(&cfg));
+        assert!(trusted.iter().any(|t| t.source == out[1].source));
+        assert!(!trusted.iter().any(|t| t.source == out[0].source));
+        let state = crate::maintain::models::ModelsState {
+            sources: out,
+            ..Default::default()
+        };
+        let published = crate::maintain::models::published_from(&state, &trusted);
+        assert!(published.contains(&("zai".to_string(), "glm-9-public".to_string())));
+        assert!(
+            !published.iter().any(|(_, m)| m == "glm-9-private"),
+            "{published:?}"
+        );
+        // another URL on the BUILT-IN catalog's host is not trusted by the built-in entry
+        let builtin = trusted_sources(None);
+        assert_eq!(builtin.len(), 1);
+        assert_eq!(
+            builtin[0].source,
+            "web:https://openrouter.ai:443/api/v1/models"
+        );
+        assert_ne!(
+            catalog_source("https://openrouter.ai/api/v1/models?private=1"),
+            Some(builtin[0].source.clone())
+        );
+    }
+
+    /// (F15-1) A catalog or page on an IP literal or `localhost` is never requested.
+    #[test]
+    fn a_public_source_on_an_ip_literal_or_localhost_is_never_fetched() {
+        let env = MapHttp {
+            bodies: Vec::new(),
+            seen: Default::default(),
+        };
+        let page = |url: &str| Page {
+            name: format!("p-{}", url.len()),
+            url: url.into(),
+            pattern: regex::Regex::new(r"(m-\d+)").unwrap(),
+        };
+        let out = collect(
+            &env,
+            &[
+                "https://127.0.0.1/models".to_string(),
+                "https://[::1]/models".to_string(),
+                "https://LocalHost./models".to_string(),
+            ],
+            &[
+                page("https://192.168.1.10/models"),
+                page("https://localhost/m"),
+            ],
+        );
+        assert!(out.is_empty());
+        assert!(env.seen.borrow().is_empty(), "{:?}", env.seen.borrow());
     }
 
     #[test]

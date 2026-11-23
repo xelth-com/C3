@@ -1454,8 +1454,19 @@ fn diff_hands_the_reviewer_a_patch_and_a_named_range_without_it_is_warned() {
     let ty = text(&y);
     assert_eq!(y.status.code(), Some(0), "{ty}");
     assert!(!ty.contains("the brief names the git range"), "{ty}");
-    let patch_rel = ".collab/t/handoffs/01-claude-review.patch";
-    let patch = std::fs::read(e.repo.join(patch_rel)).expect("the patch was written");
+    // (R5, F19-3) the patch is named by its content: `<brief stem>.<sha8>.patch`
+    let l = e.last();
+    let patch_rel = l["diff"]["patch"].as_str().unwrap_or("").to_string();
+    let patch = std::fs::read(e.repo.join(&patch_rel)).expect("the patch was written");
+    assert_eq!(
+        patch_rel,
+        format!(
+            ".collab/t/handoffs/01-claude-review.{}.patch",
+            &c3_core::sha256_hex(&patch)[..8]
+        )
+    );
+    // (R5, F18-3) the bridge's own patch is not a tree change: a clean run records a clean check
+    assert_eq!(l["tree_check"]["outcome"], "clean", "{l}");
     let ptext = String::from_utf8_lossy(&patch);
     assert!(
         ptext.contains("diff --git a/new.txt b/new.txt") && ptext.contains("+brand new"),
@@ -1469,11 +1480,27 @@ fn diff_hands_the_reviewer_a_patch_and_a_named_range_without_it_is_warned() {
         )),
         "{stdin}"
     );
-    let l = e.last();
     assert_eq!(l["diff"]["range"], "HEAD~1..HEAD", "{l}");
-    assert_eq!(l["diff"]["patch"], patch_rel);
+    assert_eq!(l["diff"]["patch"], patch_rel.as_str());
     assert_eq!(l["diff"]["sha256"], c3_core::sha256_hex(&patch).as_str());
     assert_eq!(l["diff"]["files"], 2);
+    assert_eq!(l["diff"]["redactions"], 0);
+
+    // (R5, F18-3) an ISOLATED run (a claude diff-review reads a frozen worktree of HEAD) with
+    // --diff records a clean tree check too; the same range reuses the same patch file (F19-3)
+    let accept = e.work.join("accept.json");
+    std::fs::write(&accept, ACCEPT).unwrap();
+    let mut review = base.to_vec();
+    review[5] = "diff-review";
+    review.extend_from_slice(&["--diff", "HEAD~1..HEAD"]);
+    let w = e.consult(&review, &[("FAKE_CLAUDE_REPLY", &accept.to_string_lossy())]);
+    let tw = text(&w);
+    assert_eq!(w.status.code(), Some(0), "{tw}");
+    let lw = e.last();
+    assert_eq!(lw["worktree"]["reason"], "frozen-head", "{lw}");
+    assert_eq!(lw["tree_check"]["outcome"], "clean", "{lw}");
+    assert_eq!(lw["diff"]["patch"], patch_rel.as_str(), "{lw}");
+    assert!(!tw.contains("the live collab directory changed"), "{tw}");
 
     // a range git does not know is refused before anything starts
     let mut bad = base.to_vec();

@@ -97,6 +97,7 @@ pub mod presets {
 pub const FINAL_OUTPUT_CONTRACT: &str = "FINAL OUTPUT CONTRACT: your ENTIRE final message must be exactly one bare JSON object (schema_version \"1\") - no code fence, no text before or after it. The Markdown answer lives only inside its reply_markdown string; each defect goes in findings[]. A prose final message cannot be ingested, however good the answer is.";
 
 /// One open finding as it appears in the prompt's snapshot.
+#[derive(Debug, Clone, Default)]
 pub struct OpenFinding {
     pub id: String,
     pub status: String,
@@ -108,6 +109,7 @@ pub struct OpenFinding {
 }
 
 /// A measured range for the range line.
+#[derive(Debug, Clone, Default)]
 pub struct Range {
     pub spec: String,
     /// The `<a>..<b>` / `<a>...<b>` human text.
@@ -131,6 +133,11 @@ pub struct PromptInputs<'a> {
     /// brief and the range; empty without `--diff`.
     pub diff_line: &'a str,
     pub open_findings: &'a [OpenFinding],
+    /// (0.2.5 R5, F18-1 / F19-6) How many open findings of the task are NOT listed because they
+    /// were recorded against another revision than the one under review (`--rev`); `0` otherwise.
+    /// With `open_findings` empty and this > 0, one sentence says so and the reply format asks for
+    /// an empty `prior_findings`.
+    pub withheld_findings: usize,
     /// `output-schema` | `native` | `prompt-only`.
     pub schema_transport: &'a str,
     /// The reply schema text, inlined only when the transport is prompt-only.
@@ -170,6 +177,79 @@ pub struct PromptInputs<'a> {
     /// note before it reads and end the turn on it; this tells it to write the answer exactly once,
     /// last, so a placeholder is never taken as the final reply.
     pub grok_answer_once: bool,
+}
+
+/// (0.2.5 R5) The prompt's inputs, owned: the orchestrator assembles the prompt from them when it
+/// plans the run and again once the run's throwaway worktree and `--diff` patch exist - the patch's
+/// content-named path and redaction count, what was staged and which links the checkout lost are
+/// known only then; nothing else changes.
+#[derive(Debug, Clone, Default)]
+pub struct PromptPlan {
+    pub raw: bool,
+    pub purpose: String,
+    pub prompt: String,
+    pub brief_ref: String,
+    pub brief_text: String,
+    pub range: Option<Range>,
+    pub diff_line: String,
+    pub open_findings: Vec<OpenFinding>,
+    pub withheld_findings: usize,
+    pub schema_transport: String,
+    pub schema_text: String,
+    pub max_words: u32,
+    pub consult_id: String,
+    pub tools_line: String,
+    pub isolation_line: String,
+    pub role_line: String,
+    pub context_line: String,
+    pub prev_reply_line: String,
+    pub reread_line: String,
+    pub tool_reading_required: bool,
+    pub reading_duty: bool,
+    pub grok_answer_once: bool,
+}
+
+impl PromptPlan {
+    /// The borrowed inputs of [`assemble`].
+    pub fn inputs(&self) -> PromptInputs<'_> {
+        PromptInputs {
+            raw: self.raw,
+            purpose: &self.purpose,
+            prompt: &self.prompt,
+            brief_ref: &self.brief_ref,
+            brief_text: &self.brief_text,
+            range: self.range.as_ref(),
+            diff_line: &self.diff_line,
+            open_findings: &self.open_findings,
+            withheld_findings: self.withheld_findings,
+            schema_transport: &self.schema_transport,
+            schema_text: &self.schema_text,
+            max_words: self.max_words,
+            consult_id: &self.consult_id,
+            tools_line: &self.tools_line,
+            isolation_line: &self.isolation_line,
+            role_line: &self.role_line,
+            context_line: &self.context_line,
+            prev_reply_line: &self.prev_reply_line,
+            reread_line: &self.reread_line,
+            tool_reading_required: self.tool_reading_required,
+            reading_duty: self.reading_duty,
+            grok_answer_once: self.grok_answer_once,
+        }
+    }
+
+    /// The prompt text.
+    pub fn assemble(&self) -> String {
+        assemble(&self.inputs())
+    }
+}
+
+/// (0.2.5 R5, F18-1 / F19-6) The one sentence of a prompt whose task's open findings are not listed
+/// because they were recorded against another revision than the one under review.
+pub fn withheld_findings_line(n: usize) -> String {
+    format!(
+        "{n} open finding(s) of this task were recorded against another revision than the one under review, so they are not listed here and are not re-checked in this consultation."
+    )
 }
 
 /// (C3) The mandatory tool-reading sentence appended to a reviewing-purpose prompt for an engine
@@ -287,6 +367,8 @@ pub fn assemble(inp: &PromptInputs) -> String {
         }
         if !inp.open_findings.is_empty() {
             parts.push(render_open_findings(inp.open_findings));
+        } else if inp.withheld_findings > 0 {
+            parts.push(withheld_findings_line(inp.withheld_findings));
         }
         parts.push(schema_block(inp));
         if inp.schema_transport == "prompt-only" {
@@ -395,6 +477,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         range: None,
         diff_line: "",
         open_findings: if has_open { &one } else { &[] },
+        withheld_findings: 0,
         schema_transport: if prompt_only {
             "prompt-only"
         } else {
@@ -417,7 +500,9 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
 }
 
 fn schema_block(inp: &PromptInputs) -> String {
-    let prior_line = if inp.open_findings.is_empty() {
+    let prior_line = if inp.open_findings.is_empty() && inp.withheld_findings > 0 {
+        "- prior_findings: an empty array (no earlier findings are listed for the revision under review)."
+    } else if inp.open_findings.is_empty() {
         "- prior_findings: an empty array (no earlier findings are open in this task)."
     } else {
         "- prior_findings: one entry {id, status, note} per id listed above; status fixed | still-open | not-checked | unknown-id."
@@ -466,6 +551,7 @@ mod tests {
             range: None,
             diff_line: "",
             open_findings: &[],
+            withheld_findings: 0,
             schema_transport: "output-schema",
             schema_text: "",
             max_words: 700,
@@ -521,6 +607,36 @@ mod tests {
         let ask_at = p.find("\r\n\r\nx\r\n\r\n").map(|n| n + 4).unwrap_or(0);
         let brief_at = p.find("Read the brief at").unwrap();
         assert!(ask_at < role_at && role_at < brief_at);
+    }
+
+    // (R5, F18-1 / F19-6) a review of another revision lists no prior findings: one sentence says
+    // how many were recorded against another revision, and the reply format asks for an empty
+    // prior_findings; the owned plan assembles the same text as the borrowed inputs.
+    #[test]
+    fn withheld_findings_are_named_in_one_sentence_and_not_listed() {
+        let mut i = base();
+        i.withheld_findings = 34;
+        let p = assemble(&i);
+        assert!(
+            p.contains("34 open finding(s) of this task were recorded against another revision than the one under review, so they are not listed here"),
+            "{p}"
+        );
+        assert!(p.contains(
+            "- prior_findings: an empty array (no earlier findings are listed for the revision under review)."
+        ));
+        assert!(!p.contains("Findings from earlier consultations"));
+        assert!(!assemble(&base()).contains("open finding(s) of this task"));
+        let plan = PromptPlan {
+            purpose: "framing".into(),
+            prompt: "x".into(),
+            brief_ref: ".collab/t/handoffs/01.md".into(),
+            withheld_findings: 34,
+            schema_transport: "output-schema".into(),
+            max_words: 700,
+            consult_id: "abc-123".into(),
+            ..Default::default()
+        };
+        assert_eq!(plan.assemble(), p);
     }
 
     #[test]

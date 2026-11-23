@@ -342,3 +342,58 @@ swap -> xelth.com/C3 page after the tag.
   c3-cli kimi_engine 18, claude_engine 18; on R2 alone branches 14, init_doctor 15, update 12. The
   remaining c3-cli binaries are left to CI (local background runs get reaped under memory
   pressure).
+- 2026-11-23 03:15: R1 + R2 committed as 99e2da7 (secret gate: the saved part-4 patch allowed after
+  review - its one hit is the same fixture line of `panel/plan.rs`), pushed, CI run 45093260152
+  watched. Their 30 findings set to `implemented`. R1's worktree removed; R2's is locked by the
+  harness - recorded `parked`. Launched from 99e2da7: wave R3 (worktree `agent-a0df9cb5a58b0d27e`)
+  and wave R5 (worktree `agent-acc7c7565a4b2f142`; the agy denial-retry prompt added as item 12).
+  Queue: R4 when one of them reports (brief names R2's `run_registered` / `ScanChildren`), then S1
+  (`.c3` folder) after R4 and R5 are applied, then a review of R1-R5 + S1, the version, Astra.
+- 2026-11-23 ~03:10 CET, CI for 99e2da7 (run 45093260152): Linux green on both jobs; the Windows
+  job sat in its Test step for 36 minutes (normal: 15) until I cancelled it; GitHub kept NO log of
+  the cancelled job (BlobNotFound), so the hanging test is unknown. Attempt 2 started 02:52 CET and
+  is watched with a cap. Locally on the combined tree, each with a hard time limit: compat_wave2b
+  20, subagent_guard 4, grok_engine 18 green, no hang; maintain 30 passed / 6 failed - all six say
+  `grok skipped: in use`: another session's reviewer runs a real `grok.exe` on this machine and the
+  maintain tests' in-use probe reads the real process table (environmental; debt: make the probe
+  injectable in test mode). `timeout-minutes` added to both CI jobs (45 / 30), uncommitted - goes
+  with the next commit.
+- 2026-11-23 03:12 CET: CI for 99e2da7 GREEN on all three jobs at attempt 2 (Windows 19 min 20 s).
+  So the 36-minute hang of attempt 1 is intermittent, test unknown (no log kept). Second
+  intermittent Windows incident after the cancellation inside `work` (08ae5d5, attempt 1). Debt:
+  split the Windows test step per crate (the API shows the running step even when the log is
+  lost), so a hang can be located; the job timeout (45 min) now bounds it.
+- 2026-11-23 ~03:45 CET, wave R3 reported (10 items, none was fixed at HEAD) and APPLIED to main's
+  working tree (clean apply, `patches/r3.patch`): no IP-literal / localhost catalog host, a private
+  peer's answer discarded before the body, also refused at name lookup; one deadline (per-hop
+  connect = time left, body in 8 KiB chunks); `older` pairs of seated models never evicted;
+  `Target.seated` + `bound_roster` refuses a changed entry; the smoke's own scratch directory with
+  exclusive create; protection fields through `validate_roster`; a stamp later than now + 600 s
+  never qualifies; pending recovery re-reads the installed version; MODELS=off returns before the
+  lock; catalog source = full URL (`web:https://host:port/path?query`), trust per URL, legacy host
+  records read but never trusted. Follow-up sent to the same worker: a printed source name must not
+  carry the query string (it can hold a token) - one display function. When it reports: reverse
+  `patches/r3.patch`, apply the new full patch, verify (maintain lib tests, c3-cli maintain and
+  telemetry_parity - with no real grok.exe running), commit together with the ci.yml timeouts.
+  Wave R4 launched from 99e2da7 (worktree `agent-a7d4436e8f37ebda0`); R5 still running.
+- 2026-11-23 ~04:40 CET: the R3 follow-up done (`catalog_source_display`: no query string in the
+  one printed line, the stored key keeps the full URL; maintain 38 green in the worker's run). Its
+  final patch re-applied to main (note: `git apply --3way` stages its result - before re-applying a
+  corrected patch, reverse the old one AND `git reset -q`). On main with R3: clippy clean, c3 lib
+  809 passed.
+- 2026-11-23 ~04:45 CET, wave R5 reported (12 items; F19-4 and F20-5 confirmed fixed at HEAD) and
+  APPLIED on top of R3 (`patches/r5.patch`, no conflict): under `--rev` the http engine gets the
+  same throwaway worktree and its pack is built from it, the patch is part of the pack; every
+  `--diff` patch goes through `pack::redact` (ledger `redactions`); patch file
+  `<stem>.<sha8>.patch`, never overwritten; under `--rev` the Reviewed line, the ledger and new
+  findings name the revision read, `live_head` beside it, and when it is not the live HEAD the open
+  findings are withheld (one sentence, `prior_findings_withheld`); `GIT_OPTIONAL_LOCKS=0` on every
+  live-repo call; the collab snapshot is taken after the patch is written; staging never reads
+  through a link; links leading out of the worktree are unlinked right after the checkout; the
+  worktree check uses `--ignored`; `check_rev_value` / `parse_diff_spec` shared by CLI and MCP, git
+  gets values after `--end-of-options` (git >= 2.30); the agy denial-retry prompt has the role
+  sentence. Accepted: record switch for `--rev` runs only; extra ledger keys `live_tree_sha256`,
+  `prior_findings_withheld`; a pack drops a root `.git` file. Not covered by a test: the live-tree
+  agy half of the own-patch item; an end-to-end http run (`--base-url` must be https).
+  Verifying R3 + R5 together on main (fmt, clippy clean; lib tests running), then one commit with
+  the ci.yml timeouts.

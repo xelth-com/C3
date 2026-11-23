@@ -3,8 +3,9 @@
 //! a real CLI, the network or a model. Every external command of a pass goes through [`Env::run`],
 //! every model-list HTTP read through [`Env::http_get`].
 
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The result of running a CLI: the exit code (`None` on a signal / spawn failure) and the captured
 /// output. `ok()` is "exited 0".
@@ -158,34 +159,154 @@ impl Env for SystemEnv {
         policy: GetPolicy,
     ) -> Result<(u16, String), String> {
         // Redirects are followed by hand, never by ureq ([`fetch`] re-validates every hop against
-        // the policy), and the deadline is absolute: each hop gets only what is left of it, and
-        // ureq applies a request's timeout to its body read as well.
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(policy.timeout)
-            .redirects(0)
-            .build();
+        // the policy), and the deadline is absolute: each hop gets only what is left of it - its
+        // name lookup and connect included ([`hop_agent`]) - ureq applies a request's timeout to
+        // its body read as well, and [`fetch`] checks the deadline between the body's chunks.
         let ua = format!("c3/{}", env!("CARGO_PKG_VERSION"));
+        let public_only = policy.public_only();
         fetch(url, policy, |current, remaining| {
+            let agent = hop_agent(remaining, public_only);
             let mut req = agent.get(current).timeout(remaining).set("User-Agent", &ua);
             for (k, v) in headers {
                 req = req.set(k, v);
             }
             match req.call() {
                 Ok(resp) => {
+                    // (F15-1) the address the connection was actually made to: a public source's
+                    // answer from a local or private address is discarded before it is read
+                    let peer = Some(resp.remote_addr().ip());
                     let status = resp.status();
                     if policy.redirects != Redirects::Never
                         && matches!(status, 301 | 302 | 303 | 307 | 308)
                     {
-                        return Ok(Hop::Redirect(
-                            resp.header("location").unwrap_or("").to_string(),
+                        return Ok((
+                            Hop::Redirect(resp.header("location").unwrap_or("").to_string()),
+                            peer,
                         ));
                     }
-                    Ok(Hop::Body(status, resp.into_reader()))
+                    Ok((Hop::Body(status, resp.into_reader()), peer))
                 }
-                Err(ureq::Error::Status(code, _)) => Ok(Hop::Status(code)),
+                Err(ureq::Error::Status(code, resp)) => {
+                    Ok((Hop::Status(code), Some(resp.remote_addr().ip())))
+                }
                 Err(e) => Err(c3_core::one_line(&e.to_string())),
             }
         })
+    }
+}
+
+/// (F14-1) The client of ONE hop of a GET: its connect phase gets only `remaining` (ureq's connect
+/// timeout takes precedence over the request's own, so it must not be the whole window), and the
+/// name lookup - which ureq cannot interrupt - runs under the same deadline ([`resolve_within`]).
+/// (F15-1) For a public source the lookup also refuses a name that resolves to a local or private
+/// address, so no connection is made to it.
+fn hop_agent(remaining: Duration, public_only: bool) -> ureq::Agent {
+    let deadline = Instant::now() + remaining;
+    ureq::AgentBuilder::new()
+        .timeout_connect(remaining)
+        .redirects(0)
+        .resolver(move |netloc: &str| {
+            resolve_within(netloc, deadline, public_only, |name: String| {
+                use std::net::ToSocketAddrs as _;
+                name.to_socket_addrs().map(|it| it.collect())
+            })
+        })
+        .build()
+}
+
+/// (F14-1, F15-1) Resolve `netloc` (`host:port`) with `lookup` on its own thread, waiting at most
+/// until `deadline` (a stalled lookup ends with a timeout instead of outliving the fetch's one
+/// deadline; the thread is left to finish on its own). With `public_only`, a name of which ANY
+/// address is local or private ([`is_public_address`]) is refused.
+fn resolve_within<F>(
+    netloc: &str,
+    deadline: Instant,
+    public_only: bool,
+    lookup: F,
+) -> std::io::Result<Vec<SocketAddr>>
+where
+    F: FnOnce(String) -> std::io::Result<Vec<SocketAddr>> + Send + 'static,
+{
+    use std::io::{Error, ErrorKind};
+    let left = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|d| !d.is_zero())
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::TimedOut,
+                "the deadline passed before the name lookup",
+            )
+        })?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let name = netloc.to_string();
+    std::thread::Builder::new()
+        .name("c3-maintain-dns".to_string())
+        .spawn(move || {
+            let _ = tx.send(lookup(name));
+        })?;
+    let addrs = match rx.recv_timeout(left) {
+        Ok(r) => r?,
+        Err(_) => {
+            return Err(Error::new(
+                ErrorKind::TimedOut,
+                "the name lookup did not finish within the deadline",
+            ))
+        }
+    };
+    if public_only {
+        if let Some(bad) = addrs.iter().find(|a| !is_public_address(a.ip())) {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                format!(
+                    "the name resolves to a local or private address ({}); a public source is never fetched from it",
+                    bad.ip()
+                ),
+            ));
+        }
+    }
+    Ok(addrs)
+}
+
+/// (F15-1) Whether `ip` is a public address a catalog or page may be read from: not loopback,
+/// private (RFC 1918 / unique local `fc00::/7`), link-local (`169.254/16`, `fe80::/10`),
+/// unspecified or multicast. An IPv4-mapped IPv6 address is judged as its IPv4 address.
+pub(crate) fn is_public_address(ip: IpAddr) -> bool {
+    let ip = match ip {
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(v6)),
+        v4 => v4,
+    };
+    match ip {
+        IpAddr::V4(a) => {
+            !(a.is_loopback()
+                || a.is_private()
+                || a.is_link_local()
+                || a.is_unspecified()
+                || a.is_multicast())
+        }
+        IpAddr::V6(a) => {
+            let s0 = a.segments()[0];
+            !(a.is_loopback()
+                || a.is_unspecified()
+                || a.is_multicast()
+                || (s0 & 0xfe00) == 0xfc00
+                || (s0 & 0xffc0) == 0xfe80)
+        }
+    }
+}
+
+/// (F15-1) Whether a public catalog or page URL names its host by a NAME: not an IP literal (any
+/// form the URL parser reads as one, `https://2130706433/` included) and not `localhost` (any case,
+/// trailing dots included). Checked at config validation and again at fetch.
+pub fn is_named_public_host(url: &str) -> bool {
+    match url::Url::parse(url).ok().as_ref().and_then(|u| u.host()) {
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.');
+            !d.is_empty() && !d.eq_ignore_ascii_case("localhost")
+        }
+        _ => false,
     }
 }
 
@@ -215,6 +336,16 @@ pub struct GetPolicy {
     pub cap: usize,
 }
 
+impl GetPolicy {
+    /// (F15-1) Whether this GET reads a public catalog or page (the [`Redirects::SameOrigin`]
+    /// policy): its host must be a name ([`is_named_public_host`]), the name must resolve to public
+    /// addresses only, and a response whose peer address is not public ([`is_public_address`]) is
+    /// discarded before its body is read - at every hop.
+    pub fn public_only(&self) -> bool {
+        self.redirects == Redirects::SameOrigin
+    }
+}
+
 /// One answer of a hop in [`fetch`]: a redirect to follow (its `location`), a body to read, or an
 /// error status (no body).
 pub(crate) enum Hop<R> {
@@ -224,43 +355,61 @@ pub(crate) enum Hop<R> {
 }
 
 /// The redirect loop of a GET over an injected transport `hop(url, remaining)` (production: one
-/// ureq request whose timeout is `remaining`). The start URL and every redirect target are
-/// validated by the policy ([`check_start`], [`redirect_target`]), at most [`MAX_REDIRECTS`]
-/// redirects are followed, the deadline is absolute across all hops, and the body is read through
-/// [`read_capped`] with the policy's cap.
+/// ureq request whose timeout is `remaining`) that answers a [`Hop`] and the peer address it came
+/// from (`None`: unknown). The start URL and every redirect target are validated by the policy
+/// ([`check_start`], [`redirect_target`]), at most [`MAX_REDIRECTS`] redirects are followed, the
+/// deadline is absolute across all hops AND the body read (checked between its chunks), and the
+/// body is read through [`read_capped`] with the policy's cap. (F15-1) Under a public policy every
+/// answer whose peer is not a known public address is refused before anything of it is used.
 pub(crate) fn fetch<R: std::io::Read>(
     url: &str,
     policy: GetPolicy,
-    mut hop: impl FnMut(&str, Duration) -> Result<Hop<R>, String>,
+    mut hop: impl FnMut(&str, Duration) -> Result<(Hop<R>, Option<IpAddr>), String>,
 ) -> Result<(u16, String), String> {
-    check_start(url)?;
-    let deadline = std::time::Instant::now() + policy.timeout;
+    check_start(url, policy)?;
+    let deadline = Instant::now() + policy.timeout;
+    let late = || {
+        format!(
+            "the request did not finish within {} ms (one deadline over every redirect and the body read)",
+            policy.timeout.as_millis()
+        )
+    };
     let mut current = url.to_string();
     let mut hops = 0;
     loop {
         let remaining = deadline
-            .checked_duration_since(std::time::Instant::now())
+            .checked_duration_since(Instant::now())
             .filter(|d| !d.is_zero())
-            .ok_or_else(|| {
-                format!(
-                    "the request did not finish within {} ms (one deadline over every redirect)",
-                    policy.timeout.as_millis()
-                )
-            })?;
-        match hop(&current, remaining)? {
+            .ok_or_else(late)?;
+        let (answer, peer) = match hop(&current, remaining) {
+            Ok(a) => a,
+            // (F14-1) a name lookup or connect cut off at the deadline is the deadline's error
+            Err(e) if Instant::now() >= deadline => return Err(format!("{} ({e})", late())),
+            Err(e) => return Err(e),
+        };
+        if policy.public_only() {
+            check_peer(peer)?;
+        }
+        match answer {
             Hop::Redirect(location) => {
                 hops += 1;
                 if hops > MAX_REDIRECTS {
                     return Err("too many redirects".to_string());
                 }
                 current = redirect_target(url, &current, &location, policy.redirects)?;
+                if policy.public_only() && !is_named_public_host(&current) {
+                    return Err(
+                        "refused a redirect to an IP address or localhost (a public source)"
+                            .to_string(),
+                    );
+                }
             }
             Hop::Body(status, reader) => {
                 // Read the body as bytes and lossily decode: the kimi `latest` marker answers with
                 // no text content-type. A body that reaches the cap is an ERROR, never a truncated
                 // prefix: the kimi installer is run after it is fetched, so a cut-off script must
                 // never be written or executed.
-                let buf = read_capped(reader, policy.cap)?;
+                let buf = read_capped(reader, policy.cap, Some(deadline), &late)?;
                 return Ok((status, String::from_utf8_lossy(&buf).into_owned()));
             }
             Hop::Status(code) => return Ok((code, String::new())),
@@ -268,8 +417,24 @@ pub(crate) fn fetch<R: std::io::Read>(
     }
 }
 
-/// The start URL of a GET: https, with a host, without userinfo.
-fn check_start(url: &str) -> Result<(), String> {
+/// (F15-1) The peer check of a public GET's answer: a known public address passes; a local or
+/// private one, or an unknown one, is refused.
+fn check_peer(peer: Option<IpAddr>) -> Result<(), String> {
+    match peer {
+        Some(ip) if is_public_address(ip) => Ok(()),
+        Some(ip) => Err(format!(
+            "refused: the answer came from a local or private address ({ip}); a public source is never read from one"
+        )),
+        None => Err(
+            "refused: the answer's peer address is unknown (a public source is read only from a public address)"
+                .to_string(),
+        ),
+    }
+}
+
+/// The start URL of a GET: https, with a host, without userinfo; (F15-1) for a public source a
+/// host NAME, never an IP literal or `localhost`.
+fn check_start(url: &str, policy: GetPolicy) -> Result<(), String> {
     if !url.starts_with("https://") {
         return Err("only https is allowed".to_string());
     }
@@ -279,6 +444,9 @@ fn check_start(url: &str) -> Result<(), String> {
     }
     if !u.username().is_empty() || u.password().is_some() {
         return Err("a url with credentials is never requested".to_string());
+    }
+    if policy.public_only() && !is_named_public_host(url) {
+        return Err("a public source is never fetched from an IP address or localhost".to_string());
     }
     Ok(())
 }
@@ -321,17 +489,42 @@ pub fn is_secret_env(name: &str) -> bool {
         || n.starts_with("ANTHROPIC_")
 }
 
-/// Read a response body, refusing a body that reaches `cap` (a truncated download is never used).
-fn read_capped<R: std::io::Read>(r: R, cap: usize) -> Result<Vec<u8>, String> {
-    use std::io::Read as _;
+/// The size of one read of a response body.
+const BODY_CHUNK: usize = 8 * 1024;
+
+/// Read a response body in chunks, refusing a body that reaches `cap` (the reader stops after
+/// `cap + 1` bytes; a truncated download is never used). (F14-1) `deadline` is checked between the
+/// chunks, so a body that trickles in ends with `late()` at the deadline instead of after it.
+fn read_capped<R: std::io::Read>(
+    mut r: R,
+    cap: usize,
+    deadline: Option<Instant>,
+    late: &dyn Fn() -> String,
+) -> Result<Vec<u8>, String> {
     let mut buf: Vec<u8> = Vec::new();
-    r.take(cap as u64 + 1)
-        .read_to_end(&mut buf)
-        .map_err(|e| c3_core::one_line(&e.to_string()))?;
-    if buf.len() > cap {
-        return Err(format!(
-            "the response body exceeded the {cap}-byte cap (a truncated download is never used)"
-        ));
+    let mut chunk = [0u8; BODY_CHUNK];
+    loop {
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            return Err(late());
+        }
+        let want = (cap + 1 - buf.len()).min(BODY_CHUNK);
+        let n = match r.read(&mut chunk[..want]) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                if deadline.is_some_and(|d| Instant::now() >= d) {
+                    return Err(late());
+                }
+                return Err(c3_core::one_line(&e.to_string()));
+            }
+        };
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.len() > cap {
+            return Err(format!(
+                "the response body exceeded the {cap}-byte cap (a truncated download is never used)"
+            ));
+        }
     }
     Ok(buf)
 }
@@ -400,7 +593,18 @@ pub(crate) fn redirect_target(
 
 #[cfg(test)]
 mod tests {
-    use super::{fetch, is_secret_env, read_capped, redirect_target, GetPolicy, Hop, Redirects};
+    use super::{
+        fetch, hop_agent, is_named_public_host, is_public_address, is_secret_env, read_capped,
+        redirect_target, resolve_within, GetPolicy, Hop, Redirects,
+    };
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    /// A public peer address for the fake transports (a public source's answer must come from one).
+    const PUB: Option<IpAddr> = Some(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)));
+
+    fn no_late() -> String {
+        "late".to_string()
+    }
 
     #[test]
     fn the_secret_env_filter() {
@@ -433,12 +637,25 @@ mod tests {
     #[test]
     fn a_body_that_reaches_the_cap_is_an_error() {
         let under = vec![b'x'; 90];
-        assert_eq!(read_capped(under.as_slice(), 100).unwrap().len(), 90);
+        assert_eq!(
+            read_capped(under.as_slice(), 100, None, &no_late)
+                .unwrap()
+                .len(),
+            90
+        );
         let over = vec![b'x'; 120];
-        assert!(read_capped(over.as_slice(), 100).is_err());
+        assert!(read_capped(over.as_slice(), 100, None, &no_late).is_err());
         // exactly at the cap is accepted; one past it is not
-        assert!(read_capped(vec![b'x'; 100].as_slice(), 100).is_ok());
-        assert!(read_capped(vec![b'x'; 101].as_slice(), 100).is_err());
+        assert!(read_capped(vec![b'x'; 100].as_slice(), 100, None, &no_late).is_ok());
+        assert!(read_capped(vec![b'x'; 101].as_slice(), 100, None, &no_late).is_err());
+        // a body larger than one chunk is read whole
+        let big = vec![b'y'; 3 * 8 * 1024 + 5];
+        assert_eq!(
+            read_capped(big.as_slice(), 1 << 20, None, &no_late)
+                .unwrap()
+                .len(),
+            big.len()
+        );
     }
 
     /// The installer policy from a single hop (start == from).
@@ -561,14 +778,14 @@ mod tests {
             policy(5_000, Redirects::SameOrigin, 100),
             |u, _| {
                 asked.push(u.to_string());
-                Ok(Hop::Status(500))
+                Ok((Hop::Status(500), PUB))
             },
         );
         assert!(r.is_err() && asked.is_empty(), "{r:?} {asked:?}");
         assert!(fetch::<&[u8]>(
             "http://catalog.example/m",
             policy(5_000, Redirects::SameOrigin, 100),
-            |_, _| Ok(Hop::Status(500))
+            |_, _| Ok((Hop::Status(500), PUB))
         )
         .is_err());
 
@@ -579,10 +796,13 @@ mod tests {
             policy(5_000, Redirects::SameOrigin, 100),
             |u, _| {
                 asked.push(u.to_string());
-                Ok(match asked.len() {
-                    1 => Hop::Redirect("/m2".into()),
-                    _ => Hop::Redirect("https://x:y@catalog.example/m3".into()),
-                })
+                Ok((
+                    match asked.len() {
+                        1 => Hop::Redirect("/m2".into()),
+                        _ => Hop::Redirect("https://x:y@catalog.example/m3".into()),
+                    },
+                    PUB,
+                ))
             },
         );
         assert!(r.unwrap_err().contains("credentials"));
@@ -598,7 +818,7 @@ mod tests {
             policy(5_000, Redirects::SameOrigin, 100),
             |_, _| {
                 n += 1;
-                Ok(Hop::Redirect(format!("/m{n}")))
+                Ok((Hop::Redirect(format!("/m{n}")), PUB))
             },
         );
         assert_eq!(r.unwrap_err(), "too many redirects");
@@ -609,14 +829,14 @@ mod tests {
         let r = fetch(
             "https://catalog.example/m",
             policy(5_000, Redirects::SameOrigin, 100),
-            |_, _| Ok(Hop::Body(200, body.as_slice())),
+            |_, _| Ok((Hop::Body(200, body.as_slice()), PUB)),
         );
         assert_eq!(r.unwrap().1.len(), 100);
         let body = vec![b'x'; 101];
         assert!(fetch(
             "https://catalog.example/m",
             policy(5_000, Redirects::SameOrigin, 100),
-            |_, _| Ok(Hop::Body(200, body.as_slice())),
+            |_, _| Ok((Hop::Body(200, body.as_slice()), PUB)),
         )
         .is_err());
     }
@@ -633,7 +853,7 @@ mod tests {
             |_, remaining| {
                 given.push(remaining);
                 std::thread::sleep(std::time::Duration::from_millis(120));
-                Ok(Hop::Redirect("/again".into()))
+                Ok((Hop::Redirect("/again".into()), PUB))
             },
         );
         let elapsed = start.elapsed();
@@ -648,6 +868,278 @@ mod tests {
         assert!(
             elapsed < std::time::Duration::from_millis(1_000),
             "the chain ended at the deadline: {elapsed:?}"
+        );
+    }
+
+    /// A body that never ends, one byte every `pause`.
+    struct Trickle {
+        pause: std::time::Duration,
+    }
+    impl std::io::Read for Trickle {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(self.pause);
+            buf[0] = b'x';
+            Ok(1)
+        }
+    }
+
+    /// A body that must never be read.
+    struct Untouchable;
+    impl std::io::Read for Untouchable {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            panic!("the body of a refused answer was read");
+        }
+    }
+
+    /// (F14-1) A trickling body ends with the deadline's error at the deadline: the body is read in
+    /// chunks and the one deadline is checked between them (the reviewer's 1-byte/s body).
+    #[test]
+    fn a_trickling_body_ends_at_the_deadline() {
+        let start = std::time::Instant::now();
+        let r = fetch(
+            "https://catalog.example/m",
+            policy(250, Redirects::SameOrigin, 1 << 20),
+            |_, _| {
+                Ok((
+                    Hop::Body(
+                        200,
+                        Trickle {
+                            pause: std::time::Duration::from_millis(20),
+                        },
+                    ),
+                    PUB,
+                ))
+            },
+        );
+        let elapsed = start.elapsed();
+        let err = r.unwrap_err();
+        assert!(err.contains("did not finish within 250 ms"), "{err}");
+        assert!(err.contains("the body read"), "{err}");
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_000),
+            "the body read ended at the deadline: {elapsed:?}"
+        );
+        // the same under an installer / endpoint policy (the deadline is not a public-only rule)
+        let r = fetch(
+            "https://code.kimi.ai/latest",
+            policy(150, Redirects::Installer, 1 << 20),
+            |_, _| {
+                Ok((
+                    Hop::Body(
+                        200,
+                        Trickle {
+                            pause: std::time::Duration::from_millis(20),
+                        },
+                    ),
+                    None,
+                ))
+            },
+        );
+        assert!(r.unwrap_err().contains("did not finish within 150 ms"));
+    }
+
+    /// (F14-1) The connect phase of a hop gets only the time that remains (ureq's connect timeout
+    /// wins over the request's own, so the hop's client carries `remaining`, not the whole window),
+    /// and a hop whose transport fails at the deadline reports the deadline's error.
+    #[test]
+    fn the_connect_phase_gets_only_the_remaining_time() {
+        let agent = format!(
+            "{:?}",
+            hop_agent(std::time::Duration::from_millis(1234), true)
+        );
+        assert!(agent.contains("timeout_connect: Some(1.234s)"), "{agent}");
+        let r = fetch::<&[u8]>(
+            "https://catalog.example/m",
+            policy(150, Redirects::SameOrigin, 100),
+            |_, remaining| {
+                // a stalled connect: the transport gives up exactly when its time is gone
+                std::thread::sleep(remaining);
+                Err("timed out connecting".to_string())
+            },
+        );
+        let err = r.unwrap_err();
+        assert!(
+            err.contains("did not finish within 150 ms") && err.contains("timed out connecting"),
+            "{err}"
+        );
+    }
+
+    /// (F14-1) The name lookup runs under the same deadline: a stalled lookup ends with a timeout
+    /// at the deadline. (F15-1) For a public source, a name of which any address is local or
+    /// private is refused before a connection is made.
+    #[test]
+    fn the_name_lookup_is_bounded_and_refuses_a_private_address_for_a_public_source() {
+        let start = std::time::Instant::now();
+        let deadline = start + std::time::Duration::from_millis(150);
+        let r = resolve_within("slow.example:443", deadline, false, |_| {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            Ok(Vec::new())
+        });
+        assert_eq!(r.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < std::time::Duration::from_millis(1_500));
+
+        let mixed = || {
+            Ok(vec![
+                "93.184.216.34:443".parse::<SocketAddr>().unwrap(),
+                "127.0.0.1:443".parse::<SocketAddr>().unwrap(),
+            ])
+        };
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let err = resolve_within("rebind.example:443", far, true, move |_| mixed()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains("127.0.0.1"), "{err}");
+        // not a public source: the same answer is used as it is
+        assert_eq!(
+            resolve_within("rebind.example:443", far, false, move |_| mixed())
+                .unwrap()
+                .len(),
+            2
+        );
+        // a public answer passes
+        let ok = resolve_within("catalog.example:443", far, true, |_| {
+            Ok(vec!["93.184.216.34:443".parse::<SocketAddr>().unwrap()])
+        });
+        assert_eq!(ok.unwrap().len(), 1);
+    }
+
+    /// (F15-1) The address classes a public source is never read from.
+    #[test]
+    fn the_address_classes_of_a_public_source() {
+        for a in [
+            "127.0.0.1",
+            "127.8.9.10",
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.1",
+            "169.254.169.254",
+            "0.0.0.0",
+            "224.0.0.1",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "ff02::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(!is_public_address(a.parse().unwrap()), "{a} is not public");
+        }
+        for a in [
+            "93.184.216.34",
+            "8.8.8.8",
+            "172.32.0.1",
+            "2606:4700::1111",
+            "::ffff:93.184.216.34",
+        ] {
+            assert!(is_public_address(a.parse().unwrap()), "{a} is public");
+        }
+    }
+
+    /// (F15-1) A public source's URL names its host: an IP literal (any form) or `localhost` (any
+    /// case, trailing dot) is refused before anything is requested; an installer or endpoint request
+    /// is not judged by this rule.
+    #[test]
+    fn a_public_source_on_an_ip_literal_or_localhost_is_never_requested() {
+        for url in [
+            "https://127.0.0.1/m",
+            "https://10.0.0.7/m",
+            "https://[::1]/m",
+            "https://[fe80::1]/m",
+            "https://2130706433/m",
+            "https://0x7f.1/m",
+            "https://localhost/m",
+            "https://LOCALHOST./m",
+            "https://localhost:8443/m",
+            "https://93.184.216.34/m",
+        ] {
+            assert!(!is_named_public_host(url), "{url}");
+            let mut asked = 0;
+            let r = fetch::<&[u8]>(url, policy(5_000, Redirects::SameOrigin, 100), |_, _| {
+                asked += 1;
+                Ok((Hop::Status(200), PUB))
+            });
+            assert!(r.is_err() && asked == 0, "{url}: {r:?}");
+        }
+        for url in [
+            "https://openrouter.ai/api/v1/models",
+            "https://catalog.example./m",
+            "https://localhost.example/m",
+        ] {
+            assert!(is_named_public_host(url), "{url}");
+        }
+        // the installer policy keeps its own rules
+        assert!(fetch::<&[u8]>(
+            "https://127.0.0.1/latest",
+            policy(5_000, Redirects::Installer, 100),
+            |_, _| Ok((Hop::Status(404), None))
+        )
+        .is_ok());
+    }
+
+    /// (F15-1) After the connection is made, a public source's answer whose peer is local or
+    /// private - or unknown - is discarded before its body is read, at every hop (the DNS-rebinding
+    /// case: a public name that answers from 127.0.0.1); the next hop is never requested.
+    #[test]
+    fn a_public_answer_from_a_private_peer_is_discarded_before_its_body_is_read() {
+        let lo = Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let r = fetch(
+            "https://catalog.example/m",
+            policy(5_000, Redirects::SameOrigin, 100),
+            |_, _| Ok((Hop::Body(200, Untouchable), lo)),
+        );
+        let err = r.unwrap_err();
+        assert!(
+            err.contains("local or private address (127.0.0.1)"),
+            "{err}"
+        );
+        // a redirect from a private peer is not followed
+        let mut asked: Vec<String> = Vec::new();
+        let r = fetch(
+            "https://catalog.example/m",
+            policy(5_000, Redirects::SameOrigin, 100),
+            |u, _| {
+                asked.push(u.to_string());
+                Ok(match asked.len() {
+                    1 => (Hop::Redirect("/m2".into()), PUB),
+                    _ => (
+                        Hop::Body(200, Untouchable),
+                        Some("10.0.0.5".parse().unwrap()),
+                    ),
+                })
+            },
+        );
+        assert!(r.unwrap_err().contains("(10.0.0.5)"));
+        assert_eq!(asked.len(), 2, "the second hop is checked too");
+        let mut asked = 0;
+        let r = fetch::<Untouchable>(
+            "https://catalog.example/m",
+            policy(5_000, Redirects::SameOrigin, 100),
+            |_, _| {
+                asked += 1;
+                Ok((Hop::Redirect("/m2".into()), lo))
+            },
+        );
+        assert!(r.is_err() && asked == 1, "{r:?}");
+        // an unknown peer is refused for a public source; an installer GET does not need one
+        assert!(fetch(
+            "https://catalog.example/m",
+            policy(5_000, Redirects::SameOrigin, 100),
+            |_, _| Ok((Hop::Body(200, Untouchable), None))
+        )
+        .unwrap_err()
+        .contains("unknown"));
+        let body = b"ok".to_vec();
+        assert_eq!(
+            fetch(
+                "https://code.kimi.ai/latest",
+                policy(5_000, Redirects::Installer, 100),
+                |_, _| Ok((Hop::Body(200, body.as_slice()), lo))
+            )
+            .unwrap()
+            .1,
+            "ok"
         );
     }
 }

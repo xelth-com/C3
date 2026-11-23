@@ -15,8 +15,9 @@ use c3_core::roster::{Roster, RosterEntry};
 
 /// The model ids collected from one source in a pass. Sources: `grok` / `agy` (the engines' own
 /// lists), `endpoint:<canonical endpoint>|<key env name>|<plan>` (an endpoint's authenticated
-/// `/v1/models`, which may be PRIVATE - [`endpoint_source`]), `web:<host>` (a public catalog, ids
-/// kept as `<vendor>/<model>`) and `page:<name>` (a configured public page).
+/// `/v1/models`, which may be PRIVATE - [`endpoint_source`]), `web:<canonical url>` (a public
+/// catalog, ids kept as `<vendor>/<model>` - [`super::web::catalog_source`]; an older build wrote
+/// `web:<host>`) and `page:<name>` (a configured public page).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceList {
     pub source: String,
@@ -36,8 +37,9 @@ pub struct ModelsState {
     pub sources: Vec<SourceList>,
     /// (F04-3) Every `(seated, candidate)` pair a public source dated as not newer than the seated
     /// id. Such a candidate stays rejected for that seated id in every later pass, whatever a source
-    /// says then (a catalog that re-stamps an old model later cannot smuggle it in). Persisted; a
-    /// state written before it existed loads with none.
+    /// says then (a catalog that re-stamps an old model later cannot smuggle it in); (F15-2,
+    /// F14-2) the cap never evicts a pair whose seated id is still an active roster model
+    /// ([`merge_older`]). Persisted; a state written before it existed loads with none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub older: Vec<OlderPair>,
 }
@@ -59,19 +61,35 @@ impl OlderPair {
     }
 }
 
-/// The most recorded [`OlderPair`]s kept (the newest win).
+/// The most recorded [`OlderPair`]s kept - except the protected ones ([`merge_older`]).
 pub const MAX_OLDER_PAIRS: usize = 500;
 
-/// `previous` plus the pairs found in this pass, de-duplicated, the newest [`MAX_OLDER_PAIRS`] kept.
-pub fn merge_older(previous: &[OlderPair], found: &[OlderPair]) -> Vec<OlderPair> {
+/// `previous` plus the pairs found in this pass, de-duplicated, in the order they were first
+/// recorded. (F15-2, F14-2) Over [`MAX_OLDER_PAIRS`], the oldest pairs are evicted - but never a
+/// pair whose seated id is still an active roster model (`seated`, compared case-insensitively):
+/// its refusal is what keeps a re-stamped older model out of that seat. The cap applies to the
+/// other pairs, oldest first; when the protected pairs alone exceed it, they are all kept.
+pub fn merge_older(
+    previous: &[OlderPair],
+    found: &[OlderPair],
+    seated: &[String],
+) -> Vec<OlderPair> {
     let mut out: Vec<OlderPair> = previous.to_vec();
     for p in found {
         if !out.contains(p) {
             out.push(p.clone());
         }
     }
-    let excess = out.len().saturating_sub(MAX_OLDER_PAIRS);
-    out.drain(..excess);
+    let protected = |p: &OlderPair| seated.iter().any(|s| s.eq_ignore_ascii_case(&p.seated));
+    let mut excess = out.len().saturating_sub(MAX_OLDER_PAIRS);
+    out.retain(|p| {
+        if excess > 0 && !protected(p) {
+            excess -= 1;
+            false
+        } else {
+            true
+        }
+    });
     out
 }
 
@@ -378,6 +396,13 @@ fn seated_created(source: &SourceList, seated: &str, vendor: &str) -> Option<i64
 /// rejected (F02-14).
 pub const FUTURE_SLACK_SECS: i64 = 86_400;
 
+/// (F14-5) The clock skew a qualifying `created` stamp may have: a stamp later than now plus this
+/// (seconds) is no evidence - the candidate is announced only, in every branch of the date gate,
+/// anchored or not.
+pub const FUTURE_SKEW_SECS: i64 = 600;
+
+const WHY_NOT_YET: &str = "dated in the future by the catalog - announce only";
+
 /// Why the date gate refused an id, and whether the refusal is NEGATIVE date evidence that the
 /// state records ([`OlderPair`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -456,8 +481,9 @@ fn negative_evidence(
 ///   the seated id it lists too, it is refused, whatever another source says;
 /// * otherwise one qualifying occurrence qualifies: the seated id in the same catalog with an
 ///   earlier date, or - when that catalog does not list the seated id - a date within
-///   [`UNANCHORED_MAX_AGE_DAYS`]. A page id (no dates) or a catalog entry without `created` never
-///   qualifies.
+///   [`UNANCHORED_MAX_AGE_DAYS`]. A page id (no dates), a catalog entry without `created`, and
+///   (F14-5) an occurrence dated later than now plus [`FUTURE_SKEW_SECS`] never qualify, anchored
+///   or not (beyond [`FUTURE_SLACK_SECS`] such a date is negative evidence as well).
 fn public_verdict(
     current: &[SourceList],
     seated: &str,
@@ -490,6 +516,11 @@ fn public_verdict(
             note(2, "no date in the catalog - announce only");
             continue;
         };
+        // (F14-5) a stamp in the future is no evidence, whether the seated id is listed or not
+        if c > now_unix + FUTURE_SKEW_SECS {
+            note(4, WHY_NOT_YET);
+            continue;
+        }
         match seated_created(h.source, seated, h.vendor) {
             // (negative evidence was ruled out above: a listed seated id is dated earlier here)
             Some(_) => return Ok(()),
@@ -769,7 +800,10 @@ pub type Published = std::collections::HashSet<(String, String)>;
 /// source, which may be private), bound to a vendor class: a `<vendor>/<model>` id to the class of
 /// its OpenRouter vendor slug (`qwen/qwen4-max` -> `(alibaba, qwen4-max)`; an unknown slug binds
 /// nowhere), a plain id to the class of the source's own host ([`super::web::TrustedSource`]), or
-/// nowhere. Lower-cased. Empty when there is no state.
+/// nowhere. Lower-cased. Empty when there is no state. (F16-1, F17-5) A source matches by its full
+/// name - a catalog by its exact URL - so an id counts only when the URL it was read from is
+/// trusted itself; a legacy host-keyed record of an older build matches nothing until a fetch
+/// rewrites it.
 pub fn published_from(state: &ModelsState, trusted: &[super::web::TrustedSource]) -> Published {
     let mut out = Published::new();
     for s in state.sources.iter().filter(|s| is_public_source(&s.source)) {
@@ -1314,7 +1348,8 @@ mod tests {
     }
 
     /// (F02-14) A candidate dated in the future (beyond a day) is rejected, whether the seated id is
-    /// in the catalog or not; a date within the slack is believed.
+    /// in the catalog or not; (F14-5) a date within the day is no evidence either (announced only),
+    /// only a stamp within ten minutes of now is believed.
     #[test]
     fn a_future_dated_candidate_is_rejected() {
         let now = 1_795_000_000;
@@ -1341,10 +1376,58 @@ mod tests {
             "web:openrouter.ai",
             &[
                 ("x-ai/grok-4.7", Some(at(30, now))),
-                ("x-ai/grok-4.8", Some(now + 3_600)),
+                ("x-ai/grok-4.8", Some(now + 300)),
             ],
         )];
         assert_eq!(swap_candidates(&roster, &cur, now)[0].new, "grok-4.8");
+    }
+
+    /// (F14-5) A `created` stamp later than now plus ten minutes never qualifies a candidate, in
+    /// every branch: anchored (the seated id dated earlier in the same catalog) and unanchored (the
+    /// seated id absent) - the reviewer's +23 h case included. It is announced only, never recorded
+    /// as older.
+    #[test]
+    fn a_candidate_dated_in_the_future_is_not_evidence_in_any_branch() {
+        let now = 1_795_000_000;
+        let grok = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
+        let alibaba = roster_of(vec![alibaba_endpoint_entry()]);
+        for ahead in [FUTURE_SKEW_SECS + 1, 3_600, 23 * 3_600] {
+            let anchored = vec![dated(
+                "web:openrouter.ai",
+                &[
+                    ("x-ai/grok-4.7", Some(at(30, now))),
+                    ("x-ai/grok-4.8", Some(now + ahead)),
+                ],
+            )];
+            let unanchored = vec![dated(
+                "web:openrouter.ai",
+                &[("qwen/qwen4-max", Some(now + ahead))],
+            )];
+            for (roster, cur) in [(&grok, &anchored), (&alibaba, &unanchored)] {
+                let p = plan_swaps(roster, cur, &[], now);
+                assert!(p.candidates.is_empty(), "+{ahead}s: {:?}", p.candidates);
+                assert_eq!(p.rejected[0].why, WHY_NOT_YET, "+{ahead}s");
+                assert!(p.older.is_empty());
+            }
+        }
+        // within the skew it is evidence, anchored or not
+        let unanchored = vec![dated(
+            "web:openrouter.ai",
+            &[("qwen/qwen4-max", Some(now + FUTURE_SKEW_SECS))],
+        )];
+        assert_eq!(
+            swap_candidates(&alibaba, &unanchored, now)[0].new,
+            "qwen4-max"
+        );
+        // a future copy is no evidence, but it does not veto a qualifying copy in another catalog
+        let cur = vec![
+            dated(
+                "web:other.example",
+                &[("qwen/qwen4-max", Some(now + 3_600))],
+            ),
+            dated("web:openrouter.ai", &[("qwen/qwen4-max", Some(at(2, now)))]),
+        ];
+        assert_eq!(swap_candidates(&alibaba, &cur, now)[0].new, "qwen4-max");
     }
 
     /// (F02-14) Negative date evidence wins: one catalog dates the candidate older than the seated
@@ -1409,12 +1492,13 @@ mod tests {
         let merged = merge_older(
             &recorded,
             &[OlderPair::new("a-1", "a-2"), recorded[0].clone()],
+            &[],
         );
         assert_eq!(merged.len(), 2);
         let many: Vec<OlderPair> = (0..MAX_OLDER_PAIRS + 7)
             .map(|i| OlderPair::new("m-1", &format!("m-{i}")))
             .collect();
-        let capped = merge_older(&[], &many);
+        let capped = merge_older(&[], &many, &[]);
         assert_eq!(capped.len(), MAX_OLDER_PAIRS);
         assert_eq!(capped.last(), many.last(), "the newest are kept");
         // a state with records round-trips; an older state loads with none
@@ -1426,6 +1510,63 @@ mod tests {
         assert_eq!(back.older, recorded);
         let old: ModelsState = serde_json::from_str(r#"{"sources":[]}"#).unwrap();
         assert!(old.older.is_empty());
+    }
+
+    /// (F15-2, F14-2) The reviewers' check: the refusal of a pair whose seated id is still in the
+    /// roster survives the cap - 500 other pairs recorded after it, and more found in this pass -
+    /// so a later catalog that re-dates the evicted candidate newer still cannot make it a
+    /// candidate. The cap applies to the other pairs, oldest first; when the protected pairs alone
+    /// exceed it, they are all kept.
+    #[test]
+    fn an_older_refusal_survives_the_cap_while_its_seated_model_is_in_the_roster() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
+        let seated: Vec<String> = roster
+            .active_entries()
+            .map(|e| e.model.to_ascii_lowercase())
+            .collect();
+        // the protected refusal is the OLDEST record, then 500 others
+        let mut previous = vec![OlderPair::new("GROK-4.7", "x-ai/grok-4.20")];
+        previous
+            .extend((0..MAX_OLDER_PAIRS).map(|i| OlderPair::new("gone-1", &format!("gone-{i}"))));
+        let found: Vec<OlderPair> = (0..3)
+            .map(|i| OlderPair::new("gone-2", &format!("new-{i}")))
+            .collect();
+        let merged = merge_older(&previous, &found, &seated);
+        assert_eq!(merged.len(), MAX_OLDER_PAIRS);
+        assert_eq!(merged[0], OlderPair::new("grok-4.7", "grok-4.20"), "kept");
+        assert!(
+            !merged.contains(&OlderPair::new("gone-1", "gone-0"))
+                && !merged.contains(&OlderPair::new("gone-1", "gone-3")),
+            "the oldest other pairs went first"
+        );
+        assert!(merged.contains(&OlderPair::new("gone-1", "gone-4")));
+        assert!(
+            found.iter().all(|p| merged.contains(p)),
+            "the new pairs are kept"
+        );
+        // the re-stamped candidate is still refused
+        let restamped = dated(
+            "web:openrouter.ai",
+            &[
+                ("x-ai/grok-4.7", Some(at(30, now))),
+                ("x-ai/grok-4.20", Some(at(1, now))),
+            ],
+        );
+        let p = plan_swaps(&roster, std::slice::from_ref(&restamped), &merged, now);
+        assert!(p.candidates.is_empty(), "{:?}", p.candidates);
+        assert_eq!(p.rejected[0].why, WHY_RECORDED);
+        // without the protection (the seat left the roster) the oldest pair is evicted as before
+        let unprotected = merge_older(&previous, &found, &[]);
+        assert!(!unprotected.contains(&OlderPair::new("grok-4.7", "grok-4.20")));
+        // the protected pairs alone exceed the cap: all of them are kept, every other pair goes
+        let mut many: Vec<OlderPair> = (0..MAX_OLDER_PAIRS + 5)
+            .map(|i| OlderPair::new("grok-4.7", &format!("grok-4.{}", 100 + i)))
+            .collect();
+        many.push(OlderPair::new("gone-9", "gone-10"));
+        let kept = merge_older(&many, &[], &seated);
+        assert_eq!(kept.len(), MAX_OLDER_PAIRS + 5);
+        assert!(kept.iter().all(|p| p.seated == "grok-4.7"));
     }
 
     /// (F02-15) An endpoint's authenticated list is keyed by the canonical endpoint (scheme, host,
@@ -1628,7 +1769,10 @@ mod tests {
     fn published_names_come_from_public_sources_only() {
         let st = ModelsState {
             sources: vec![
-                sl("web:openrouter.ai", &["qwen/Qwen4-Max"]),
+                sl(
+                    "web:https://openrouter.ai:443/api/v1/models",
+                    &["qwen/Qwen4-Max"],
+                ),
                 sl("page:zai-docs", &["glm-6"]),
                 sl("endpoint:api.z.ai", &["glm-9-secret"]),
                 sl(
@@ -1677,6 +1821,53 @@ mod tests {
             &crate::maintain::web::trusted_sources(Some(&cfg))
         )
         .is_empty());
+    }
+
+    /// (F16-1, F17-5) A state file of an older build keys a catalog by its host (`web:<host>`): it
+    /// loads without error, and its ids are NOT published - which of the host's URLs they came from
+    /// is unknown - not even for the built-in catalog's host, until a fetch rewrites the record
+    /// under the catalog's URL.
+    #[test]
+    fn a_legacy_host_keyed_catalog_record_is_read_but_not_trusted() {
+        let old: ModelsState = serde_json::from_str(
+            r#"{"sources":[{"source":"web:openrouter.ai","ids":["qwen/qwen4-max"],"created":{"qwen/qwen4-max":1}},
+                {"source":"web:pub.example.com","ids":["z-ai/glm-9-trusted"]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.sources.len(), 2);
+        let cfg = crate::c3config::C3Config {
+            model_catalogs: Some(vec![crate::c3config::ModelCatalogConfig {
+                url: "https://pub.example.com/v1/models".into(),
+                public: true,
+            }]),
+            ..Default::default()
+        };
+        for trusted in [
+            crate::maintain::web::trusted_sources(None),
+            crate::maintain::web::trusted_sources(Some(&cfg)),
+        ] {
+            assert!(published_from(&old, &trusted).is_empty());
+        }
+        // the same ids under their URL are published
+        let rewritten = ModelsState {
+            sources: vec![
+                sl(
+                    "web:https://openrouter.ai:443/api/v1/models",
+                    &["qwen/qwen4-max"],
+                ),
+                sl(
+                    "web:https://pub.example.com:443/v1/models",
+                    &["z-ai/glm-9-trusted"],
+                ),
+            ],
+            ..Default::default()
+        };
+        let p = published_from(
+            &rewritten,
+            &crate::maintain::web::trusted_sources(Some(&cfg)),
+        );
+        assert!(p.contains(&("alibaba".to_string(), "qwen4-max".to_string())));
+        assert!(p.contains(&("zai".to_string(), "glm-9-trusted".to_string())));
     }
 
     #[test]

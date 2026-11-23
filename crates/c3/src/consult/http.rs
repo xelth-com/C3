@@ -183,21 +183,112 @@ fn billing_precheck(seat: &Seat) -> Result<(), String> {
     Ok(())
 }
 
-/// Build the reviewer pack from the brief and the bound artifacts (the focus files). The http
-/// reviewer receives only this pack (DESIGN §3 invariant 2); it needs a brief and at least one
-/// artifact to review.
-fn build_pack(
-    ctx: &Context,
-    budget: usize,
-) -> Result<(ReviewerPack, Vec<reviewer::PeerPackStat>), String> {
-    let brief = match &ctx.brief_path {
-        Some(p) => p.clone(),
+/// (0.2.5 R5) What an http pack is built from.
+struct PackSource {
+    /// The tree whose files the pack shows: the live repository, or under `--rev` the run's
+    /// throwaway worktree of that revision.
+    root: PathBuf,
+    /// The brief file (under `--rev`, the copy staged into the worktree when it was staged).
+    brief: PathBuf,
+    /// The index connection (`None` under `--rev`: the index describes the live tree).
+    conn: Option<String>,
+    extras: reviewer::PackExtras,
+}
+
+/// The plain inputs of [`pack_source_of`] (a [`Context`]'s, or a test's).
+struct PackSourceInputs<'a> {
+    repo_root: &'a std::path::Path,
+    collab_root: &'a std::path::Path,
+    brief_path: Option<&'a std::path::Path>,
+    brief_ref: &'a str,
+    isolation: Option<&'a crate::consult::reviewed::IsolationPlan>,
+    /// The run's throwaway worktree, once made.
+    tree: Option<&'a std::path::Path>,
+    diff: Option<&'a crate::consult::reviewed::DiffPlan>,
+    priors_withheld: Option<usize>,
+}
+
+/// (0.2.5 R5, F19-1 / F20-1) Where an http seat's pack comes from: under `--rev` the run's
+/// throwaway worktree of that revision - its files, the brief as staged there, no index (it
+/// describes the live tree) - and NEVER the live tree (no worktree made is a refusal: nothing is
+/// sent); otherwise the live repository with its index. A written `--diff` patch is a bound part of
+/// the pack; a review of another revision than the live HEAD shows a note in place of the open
+/// findings.
+fn pack_source_of(i: &PackSourceInputs) -> Result<PackSource, String> {
+    let brief_live = match i.brief_path {
+        Some(p) => p.to_path_buf(),
         None => {
             return Err(
                 "the http engine builds a reviewer pack: it needs -Brief <path> (the ask a pack is built around).".to_string(),
             )
         }
     };
+    let (root, brief, conn) = match (i.isolation, i.tree) {
+        (Some(_), Some(t)) => {
+            let staged = (!i.brief_ref.is_empty()
+                && crate::engines::worktree::stageable_rel(i.brief_ref))
+            .then(|| t.join(i.brief_ref))
+            .filter(|p| p.is_file());
+            (t.to_path_buf(), staged.unwrap_or(brief_live), None)
+        }
+        (Some(plan), None) => {
+            return Err(format!(
+                "the http reviewer's pack is built from a throwaway worktree of {}, and none was made; nothing was sent",
+                plan.label()
+            ))
+        }
+        (None, _) => {
+            // Mirror the `c3 pack` CLI: default the index connection to the embedded store
+            // `c3 index` builds, so a pack uses it automatically when present; an absent store, a
+            // held lock or an empty index falls back to the lexical neighbourhood (the http engine
+            // works identically with no index).
+            let conn = format!(
+                "surrealkv:{}",
+                i.collab_root
+                    .join(".c3")
+                    .join("index")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            );
+            (i.repo_root.to_path_buf(), brief_live, Some(conn))
+        }
+    };
+    let extras = reviewer::PackExtras {
+        patch: i.diff.filter(|d| d.written()).map(|d| reviewer::PackPatch {
+            rel: d.rel.clone(),
+            path: d.path.clone(),
+            range: d.range.clone(),
+        }),
+        findings_note: i
+            .priors_withheld
+            .map(crate::consult::prompt::withheld_findings_line),
+    };
+    Ok(PackSource {
+        root,
+        brief,
+        conn,
+        extras,
+    })
+}
+
+/// Build the reviewer pack from the brief and the bound artifacts (the focus files). The http
+/// reviewer receives only this pack (DESIGN §3 invariant 2); it needs a brief and at least one
+/// artifact to review. (R5) Under `--rev` it is built from the run's throwaway worktree, and a
+/// `--diff` patch is part of it ([`pack_source_of`]).
+fn build_pack(
+    ctx: &Context,
+    budget: usize,
+) -> Result<(ReviewerPack, Vec<reviewer::PeerPackStat>), String> {
+    let src = pack_source_of(&PackSourceInputs {
+        repo_root: &ctx.repo_root,
+        collab_root: &ctx.collab_root,
+        brief_path: ctx.brief_path.as_deref(),
+        brief_ref: &ctx.brief_ref,
+        isolation: ctx.isolation.as_ref(),
+        tree: ctx.review_tree.as_ref().map(|t| t.path()),
+        diff: ctx.diff.as_ref(),
+        priors_withheld: ctx.priors_withheld,
+    })?;
     // The bound artifacts are the focus files. The raw `--artifact` values are the focus globs
     // (the same repo-relative form `c3 pack --focus` matches against `discover`'s output);
     // `ArtifactHash.path`/`.full` are the absolute/canonical paths kept for the ledger and drift
@@ -214,28 +305,16 @@ fn build_pack(
             "the http engine builds a reviewer pack: it needs at least one -Artifact <path> (the file(s) to review, shown in full).".to_string(),
         );
     }
-    // Mirror the `c3 pack` CLI: default the index connection to the embedded store `c3 index`
-    // builds, so a pack uses it automatically when present; an absent store, a held lock or an
-    // empty index falls back to the lexical neighbourhood (the http engine works identically with
-    // no index).
-    let conn = Some(format!(
-        "surrealkv:{}",
-        ctx.collab_root
-            .join(".c3")
-            .join("index")
-            .to_string_lossy()
-            .replace('\\', "/")
-    ));
     let opts = PackOpts {
-        repo_root: ctx.repo_root.clone(),
+        repo_root: src.root.clone(),
         collab_root: ctx.collab_root.clone(),
-        brief,
+        brief: src.brief.clone(),
         focus,
         budget,
         task: Some(ctx.task.as_str().to_string()),
         out: pack_stem(ctx).with_extension("pack.md"),
         max_file_size: 2 * 1024 * 1024,
-        conn,
+        conn: src.conn.clone(),
     };
     // (M11) federation peers requested by `--peer`/`--peers all`. `resolve_pack_peers` gates them
     // (`use_in_packs: true` AND named), refusing an unusable peer by name; with no peers requested
@@ -250,7 +329,7 @@ fn build_pack(
         names: ctx.o.peer.clone(),
     };
     let peers = reviewer::resolve_pack_peers(&ctx.repo_root, &selection)?;
-    reviewer::build_with_peers(&opts, &peers)
+    reviewer::build_with_extras(&opts, &peers, &src.extras)
 }
 
 /// The handoff stem (`handoffs/NN-http-<reply>`); `.pack.md` / `.pack.json` are appended by the
@@ -556,10 +635,15 @@ pub(crate) fn render_dry_run(ctx: &Context) {
     // Build the engine (config + a placeholder pack is fine for the key status and the plan; the
     // real pack below fills the size line). The key value is never printed.
     let budget = resolve_pack_budget(ctx, &seat);
+    // (R5, F19-1) under `--rev` the pack is built from the run's throwaway worktree, which a dry run
+    // does not make: it is not measured here (and never built from the live tree)
     let (plan_pack, plan_stats): (Result<ReviewerPack, String>, Vec<reviewer::PeerPackStat>) =
-        match build_pack(ctx, budget) {
-            Ok((p, s)) => (Ok(p), s),
-            Err(e) => (Err(e), Vec::new()),
+        match &ctx.isolation {
+            Some(_) => (Ok(empty_pack()), Vec::new()),
+            None => match build_pack(ctx, budget) {
+                Ok((p, s)) => (Ok(p), s),
+                Err(e) => (Err(e), Vec::new()),
+            },
         };
     let eng = HttpEngine {
         config: seat.config.clone(),
@@ -571,15 +655,20 @@ pub(crate) fn render_dry_run(ctx: &Context) {
     };
     println!("key         : {}", eng.key_status());
 
-    match &plan_pack {
-        Ok(p) => println!(
+    match (&plan_pack, &ctx.isolation) {
+        (Ok(_), Some(iso)) => println!(
+            "pack        : built when the run starts, from a throwaway worktree of {} (not measured in a dry run; budget {} tokens)",
+            if iso.sha.is_empty() { "HEAD".to_string() } else { format!("revision {}", iso.sha) },
+            budget
+        ),
+        (Ok(p), None) => println!(
             "pack        : {} tokens, {} focus file(s), {} periphery file(s) (budget {} tokens)",
             p.tokens,
             p.focus_files.len(),
             p.periphery_shown,
             budget
         ),
-        Err(e) => println!("pack        : a real run is refused - {e}"),
+        (Err(e), _) => println!("pack        : a real run is refused - {e}"),
     }
     // (M11) one line per federation peer brought into the pack, right after the pack line.
     for stat in &plan_stats {
@@ -589,6 +678,8 @@ pub(crate) fn render_dry_run(ctx: &Context) {
     // the pack (the user message) plus the reply-schema system message.
     if let Err(e) = billing_precheck(&seat) {
         println!("billing     : a real run is refused - {e}");
+    } else if ctx.isolation.is_some() {
+        println!("billing     : per token - the pack's size is known when the run builds it");
     } else if let Ok(p) = &plan_pack {
         let schema_tokens = reviewer::system_prompt().chars().count() / 4;
         println!(
@@ -1056,6 +1147,149 @@ mod tests {
         assert!(secondary.is_none(), "no retry when --no-continue");
         std::env::remove_var("C3_SEAT_NOCONT");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // (R5, F19-1 blocker, F20-1, the reviewers' RC1) under `--rev` the http pack is built from the
+    // run's throwaway worktree of that revision - the revision's file, never the live tree's (an
+    // uncommitted secret included) - and never from the live tree when no worktree was made; the
+    // `--diff` patch is a bound part of the pack (refused when it does not fit the budget); a review
+    // of another revision shows a note in place of the open findings.
+    #[test]
+    fn an_http_pack_under_rev_is_built_from_the_revision_with_the_patch() {
+        use crate::engines::worktree::git_capture;
+        let base =
+            std::env::temp_dir().join(format!("c3-http-rev-{}", uuid::Uuid::new_v4().simple()));
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        for a in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@e.com"],
+            vec!["config", "user.name", "T"],
+        ] {
+            git_capture(&repo, &a).unwrap();
+        }
+        std::fs::write(repo.join("store.rs"), "pub fn old_revision_marker() {}\n").unwrap();
+        git_capture(&repo, &["add", "-A"]).unwrap();
+        git_capture(&repo, &["commit", "-q", "-m", "old"]).unwrap();
+        let old = git_capture(&repo, &["rev-parse", "HEAD"]).unwrap();
+        std::fs::write(repo.join("store.rs"), "pub fn live_head_marker() {}\n").unwrap();
+        git_capture(&repo, &["commit", "-q", "-am", "new"]).unwrap();
+        // an uncommitted live edit holding a secret: it must not leave the machine
+        std::fs::write(
+            repo.join("store.rs"),
+            "pub fn live_uncommitted_marker() {}\n",
+        )
+        .unwrap();
+        let handoffs = repo.join(".collab/t/handoffs");
+        std::fs::create_dir_all(&handoffs).unwrap();
+        let brief = handoffs.join("01-claude-review.md");
+        std::fs::write(&brief, "# Review\n1. Check store.rs.\n").unwrap();
+        let brief_ref = ".collab/t/handoffs/01-claude-review.md";
+        let plan =
+            crate::consult::reviewed::plan_isolation(&repo, "http", "diff-review", &old, false)
+                .unwrap()
+                .expect("the http engine gets the --rev worktree");
+        let tree = crate::consult::reviewed::setup_review_tree(
+            &plan,
+            &crate::consult::reviewed::StageInputs {
+                repo_root: &repo,
+                collab_root: &repo.join(".collab"),
+                task: "t",
+                brief_ref,
+                brief_path: Some(&brief),
+                engine: "http",
+            },
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        let mut diff = crate::consult::reviewed::plan_diff(
+            &repo,
+            &handoffs,
+            Some(&brief),
+            2,
+            "claude",
+            "HEAD~1..HEAD",
+        );
+        crate::consult::reviewed::write_patch(&mut diff, &repo, &repo.join(".collab")).unwrap();
+        let collab = repo.join(".collab");
+        let base_inputs = PackSourceInputs {
+            repo_root: &repo,
+            collab_root: &collab,
+            brief_path: Some(&brief),
+            brief_ref,
+            isolation: Some(&plan),
+            tree: Some(tree.path()),
+            diff: Some(&diff),
+            priors_withheld: Some(3),
+        };
+        let build = |src: &PackSource, budget: usize| {
+            reviewer::build_with_extras(
+                &PackOpts {
+                    repo_root: src.root.clone(),
+                    collab_root: repo.join(".collab"),
+                    brief: src.brief.clone(),
+                    focus: vec!["store.rs".into()],
+                    budget,
+                    task: Some("t".into()),
+                    out: handoffs.join("02-http-reply.pack.md"),
+                    max_file_size: 2 * 1024 * 1024,
+                    conn: src.conn.clone(),
+                },
+                &[],
+                &src.extras,
+            )
+            .map(|(p, _)| p)
+        };
+        let src = pack_source_of(&base_inputs).unwrap();
+        assert_eq!(src.root, tree.path(), "the worktree, not the live tree");
+        assert!(src.conn.is_none(), "the live tree's index is not used");
+        assert!(
+            src.brief.starts_with(tree.path()),
+            "{}",
+            src.brief.display()
+        );
+        let pack = build(&src, 0).unwrap();
+        let focus = pack
+            .content
+            .split("## Patch under review")
+            .next()
+            .unwrap_or_default();
+        assert!(focus.contains("old_revision_marker"), "{}", pack.content);
+        assert!(
+            !focus.contains("live_head_marker"),
+            "the focus file is the revision's: {}",
+            pack.content
+        );
+        assert!(
+            !pack.content.contains("live_uncommitted_marker"),
+            "the live tree reached the pack"
+        );
+        assert!(
+            pack.content
+                .contains(&format!("## Patch under review (`{}`)", diff.rel))
+                && pack.content.contains("+pub fn live_head_marker() {}"),
+            "the patch is part of the pack: {}",
+            pack.content
+        );
+        assert!(
+            pack.content
+                .contains("3 open finding(s) of this task were recorded against another revision"),
+            "{}",
+            pack.content
+        );
+        assert!(!pack.content.contains("No `findings.json` found"));
+        // a patch that does not fit the budget refuses the pack: nothing is sent
+        let err = build(&src, 10).unwrap_err();
+        assert!(err.contains("does not fit the pack budget"), "{err}");
+        // no worktree made under --rev: refused, never the live tree
+        let no_tree = PackSourceInputs {
+            tree: None,
+            diff: None,
+            ..base_inputs
+        };
+        let err = pack_source_of(&no_tree).err().expect("refused");
+        assert!(err.contains("none was made; nothing was sent"), "{err}");
+        drop(tree);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

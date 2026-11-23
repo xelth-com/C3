@@ -61,6 +61,49 @@ pub(crate) fn read_insist_other_prompt(consult_id: &str) -> String {
     )
 }
 
+/// The inputs of [`denial_retry_prompt`].
+pub(crate) struct DenialPrompt<'a> {
+    pub raw: bool,
+    pub purpose: &'a str,
+    pub has_open: bool,
+    pub prompt_only: bool,
+    /// `the tool <name>` / `a tool`.
+    pub tool_text: &'a str,
+    /// `(headless print mode ...)`.
+    pub perm_text: &'a str,
+    pub consult_id: &'a str,
+}
+
+/// The agy denial-retry prompt (F11): the auto-denied tool is named and must not be called again,
+/// the answer comes from what was read - with the reply format on a structured run. (R5, R1
+/// leftover) It carries the reviewer-is-not-a-coordinator instruction of every review prompt
+/// ([`prompt::REVIEWER_NOT_COORDINATOR`]) like the other secondary prompts: a follow-up turn reads
+/// the same instruction files.
+pub(crate) fn denial_retry_prompt(p: &DenialPrompt) -> String {
+    let (tool_text, perm_text) = (p.tool_text, p.perm_text);
+    let mut parts: Vec<String> = Vec::new();
+    if !p.raw {
+        parts.push(prompt::FINAL_OUTPUT_CONTRACT.to_string());
+        parts.push(format!(
+            "Your previous turn produced no output: {tool_text} was auto-denied {perm_text}. Do NOT call it again; answer from what you have read, as the JSON object."
+        ));
+        parts.push(prompt::schema_lines(p.purpose, p.has_open, true));
+        if p.prompt_only {
+            parts.push(format!(
+                "JSON Schema of the reply:\r\n{}",
+                schema_text_crlf()
+            ));
+        }
+    } else {
+        parts.push(format!(
+            "Your previous turn produced no output: {tool_text} was auto-denied {perm_text}. Do NOT call it again; answer from what you have read."
+        ));
+    }
+    parts.push(prompt::REVIEWER_NOT_COORDINATOR.to_string());
+    parts.push(format!("Consultation id: {}", p.consult_id));
+    parts.join("\r\n\r\n")
+}
+
 /// (F11-10) The timeout / stall continuation prompt: the main turn's contract (structured runs),
 /// why the previous turn stopped, the schema again for a prompt-only transport, the
 /// reviewer-is-not-a-coordinator instruction ([`prompt::REVIEWER_NOT_COORDINATOR`]) and the
@@ -1254,30 +1297,15 @@ pub(super) fn run_engine_denial_retry(args: DenialRetry) {
             detail.permission
         )
     };
-    let mut parts: Vec<String> = Vec::new();
-    if !ctx.r.raw {
-        parts.push(prompt::FINAL_OUTPUT_CONTRACT.to_string());
-        parts.push(format!(
-            "Your previous turn produced no output: {tool_text} was auto-denied {perm_text}. Do NOT call it again; answer from what you have read, as the JSON object."
-        ));
-        parts.push(prompt::schema_lines(
-            &ctx.o.purpose,
-            ctx.open_findings_count > 0,
-            true,
-        ));
-        if ctx.transport.transport == "prompt-only" {
-            parts.push(format!(
-                "JSON Schema of the reply:\r\n{}",
-                schema_text_crlf()
-            ));
-        }
-    } else {
-        parts.push(format!(
-            "Your previous turn produced no output: {tool_text} was auto-denied {perm_text}. Do NOT call it again; answer from what you have read."
-        ));
-    }
-    parts.push(format!("Consultation id: {}", ctx.consult_id));
-    let retry_prompt = parts.join("\r\n\r\n");
+    let retry_prompt = denial_retry_prompt(&DenialPrompt {
+        raw: ctx.r.raw,
+        purpose: &ctx.o.purpose,
+        has_open: ctx.open_findings_count > 0,
+        prompt_only: ctx.transport.transport == "prompt-only",
+        tool_text: &tool_text,
+        perm_text: &perm_text,
+        consult_id: &ctx.consult_id,
+    });
 
     let thread_id = thread.clone();
     let timeout = ctx.r.timeout_sec.min(300);

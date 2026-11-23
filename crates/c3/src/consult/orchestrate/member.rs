@@ -710,10 +710,24 @@ mod member_tests {
     #[test]
     fn the_secondary_prompts_carry_the_role_constraint() {
         let s = crate::consult::prompt::REVIEWER_NOT_COORDINATOR;
+        // (R5) the agy denial retry too, structured and raw
+        let denial = |raw: bool| {
+            super::secondary::denial_retry_prompt(&super::secondary::DenialPrompt {
+                raw,
+                purpose: "diff-review",
+                has_open: false,
+                prompt_only: true,
+                tool_text: "the tool run_command",
+                perm_text: "(headless print mode cannot grant its permission)",
+                consult_id: "id-1",
+            })
+        };
         for p in [
             super::secondary::format_repair_prompt("id-1"),
             super::secondary::read_insist_prompt("id-1", 1),
             super::secondary::read_insist_other_prompt("id-1"),
+            denial(false),
+            denial(true),
         ] {
             assert!(p.contains(s), "{p}");
             assert!(p.ends_with("Consultation id: id-1"), "{p}");

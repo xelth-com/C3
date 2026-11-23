@@ -270,12 +270,10 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         ));
     }
     // (B1) -Rev / -Diff: the syntax here (one token, never read as an option); whether git knows
-    // the revision is checked in `orchestrate::build_context`, before anything starts.
-    if !o.rev.is_empty() && !super::reviewed::rev_token_ok(&o.rev) {
-        return Err(format!(
-            "-Rev '{}' must be one revision (a commit, a branch or a tag; no spaces, not starting with '-').",
-            o.rev
-        ));
+    // the revision is checked in `orchestrate::build_context`, before anything starts. (R5, F19-5)
+    // The same functions check the MCP tool's `rev` / `diff` before it starts anything.
+    if !o.rev.is_empty() {
+        super::reviewed::check_rev_value(&o.rev)?;
     }
     if !o.diff.is_empty() {
         super::reviewed::parse_diff_spec(&o.diff)?;

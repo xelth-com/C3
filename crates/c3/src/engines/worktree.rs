@@ -24,11 +24,20 @@ use std::path::{Path, PathBuf};
 /// by an older build does not change.
 pub const THROWAWAY_WORKTREE_PREFIX: &str = "c3-kimi-wt-";
 
-/// Run a git subcommand in `repo`, returning trimmed stdout or an error.
+/// (0.2.5 R5, F18-2 / F20-2) A git command run in `repo` that takes no OPTIONAL lock
+/// (`GIT_OPTIONAL_LOCKS=0`, the environment form of `--no-optional-locks`): setting up or checking a
+/// review worktree never refreshes, rewrites or locks the live repository's index (a parallel
+/// session's `git add` is never refused for a review's `index.lock`).
+pub(crate) fn git_cmd(repo: &Path) -> std::process::Command {
+    let mut c = std::process::Command::new("git");
+    c.arg("-C").arg(repo).env("GIT_OPTIONAL_LOCKS", "0");
+    c
+}
+
+/// Run a git subcommand in `repo` ([`git_cmd`]: no optional lock), returning trimmed stdout or an
+/// error.
 pub(crate) fn git_capture(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    let out = git_cmd(repo)
         .args(args)
         .output()
         .map_err(|e| format!("git {}: {e}", args.join(" ")))?;
@@ -42,12 +51,17 @@ pub(crate) fn git_capture(repo: &Path, args: &[&str]) -> Result<String, String> 
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// The full sha of the commit `rev` names in `repo` (`git rev-parse --verify <rev>^{commit}`). A
-/// revision that starts with `-` is refused (it would be read as an option).
+/// The full sha of the commit `rev` names in `repo` (`git rev-parse --verify --end-of-options
+/// <rev>^{commit}`). A revision that starts with `-` or holds a blank or a control character is
+/// refused; (R5, F19-5) and the value is passed after `--end-of-options` anyway, so git never reads
+/// it as an option.
 pub fn resolve_commit(repo: &Path, rev: &str) -> Result<String, String> {
     let rev = rev.trim();
-    if rev.is_empty() || rev.starts_with('-') || rev.chars().any(char::is_whitespace) {
-        return Err(format!("'{rev}' is not a revision"));
+    if rev.is_empty()
+        || rev.starts_with('-')
+        || rev.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(format!("'{}' is not a revision", rev.escape_debug()));
     }
     let sha = git_capture(
         repo,
@@ -55,6 +69,7 @@ pub fn resolve_commit(repo: &Path, rev: &str) -> Result<String, String> {
             "rev-parse",
             "--verify",
             "--quiet",
+            "--end-of-options",
             &format!("{rev}^{{commit}}"),
         ],
     )
@@ -80,6 +95,9 @@ pub struct ThrowawayWorktree {
     sha: String,
     /// The live tree had uncommitted changes when the worktree was made.
     main_dirty: bool,
+    /// (R5, F18-6) The worktree-relative paths of the links the checkout left whose target lies
+    /// outside the worktree (or cannot be resolved), removed right after the checkout.
+    outside_links: Vec<String>,
     /// The outcome of the one removal attempt (`None`: not tried yet).
     removal: Option<Result<(), String>>,
 }
@@ -98,7 +116,9 @@ impl ThrowawayWorktree {
         record_owner: fn(&Path) -> Result<(), String>,
     ) -> Result<ThrowawayWorktree, String> {
         let sha = resolve_commit(repo, rev)?;
-        let main_dirty = !git_capture(repo, &["status", "--porcelain"])?.is_empty();
+        // (R5, F18-2) the live repository's index is only read: no optional lock, no refresh
+        let main_dirty =
+            !git_capture(repo, &["--no-optional-locks", "status", "--porcelain"])?.is_empty();
         let run_id = uuid::Uuid::new_v4().simple().to_string();
         let path = std::env::temp_dir().join(format!("{THROWAWAY_WORKTREE_PREFIX}{run_id}"));
         let path_s = path.to_string_lossy().to_string();
@@ -119,13 +139,39 @@ impl ThrowawayWorktree {
                 "its owner record could not be written ({why}); {removal}"
             ));
         }
+        // (R5, F18-6) right after the checkout: a link the revision carries whose target lies
+        // outside the worktree is removed (never followed, never descended), so a reviewer cannot
+        // read or write the live checkout - or anything else - through it. A link that cannot be
+        // removed makes the worktree unusable: it is removed again and the run fails as one whose
+        // worktree could not be made.
+        let outside_links = match unlink_outside_links(&path, remove_link) {
+            Ok(v) => v,
+            Err(why) => {
+                let removal = match remove_worktree_dir(repo, &path, &REAL_REMOVAL) {
+                    Ok(()) => "the worktree was removed".to_string(),
+                    Err(e) => format!(
+                        "the worktree was left in place ({e}); `c3 doctor` reports it for removal by hand"
+                    ),
+                };
+                return Err(format!(
+                    "a link of the checked-out revision that leads outside the worktree could not be removed ({why}); {removal}"
+                ));
+            }
+        };
         Ok(ThrowawayWorktree {
             repo: repo.to_path_buf(),
             path,
             sha,
             main_dirty,
+            outside_links,
             removal: None,
         })
+    }
+
+    /// (R5, F18-6) The worktree-relative paths of the links removed right after the checkout
+    /// because their target lay outside the worktree (ordinal-sorted).
+    pub fn outside_links(&self) -> &[String] {
+        &self.outside_links
     }
 
     /// The worktree's directory (the reviewer's working directory).
@@ -142,6 +188,18 @@ impl ThrowawayWorktree {
     /// `of HEAD <sha>` (with a note when the live tree was dirty at launch: the reviewer saw the
     /// committed HEAD only), or, for `--rev <rev>`, `of revision <sha> (--rev <rev>)`.
     pub fn isolation_line(&self, rev_given: Option<&str>) -> String {
+        let mut l = self.isolation_line_base(rev_given);
+        // (R5, F18-6) what the checkout carried that the reviewer could not follow
+        if !self.outside_links.is_empty() {
+            l.push_str(&format!(
+                " {} link(s) of the checked-out revision that led outside the worktree were removed right after the checkout.",
+                self.outside_links.len()
+            ));
+        }
+        l
+    }
+
+    fn isolation_line_base(&self, rev_given: Option<&str>) -> String {
         match rev_given {
             Some(rev) => format!(
                 "Isolation: the reviewer ran in a throwaway git worktree `{}` of revision {} (--rev {rev}; removed after the run).",
@@ -236,16 +294,18 @@ impl ThrowawayWorktree {
         Ok(())
     }
 
-    /// Copy the directory `src` (recursively; links are never followed or copied, a file `skip`
-    /// names is left out) into the worktree at the repo-relative path `rel`. Returns how many files
-    /// were copied.
+    /// Copy the directory `src` (recursively; a file `skip` names is left out) into the worktree at
+    /// the repo-relative path `rel`. (R5, F18-5) Nothing is ever read through a link: an entry that
+    /// is a link (a symlink, a junction, any reparse point - read without following it) is neither
+    /// followed nor copied, only counted. Returns how many files were copied and how many links
+    /// were skipped.
     pub fn stage_dir(
         &self,
         src: &Path,
         rel: &str,
         skip: &dyn Fn(&Path) -> bool,
-    ) -> Result<usize, String> {
-        let mut n = 0usize;
+    ) -> Result<StagedDir, String> {
+        let mut staged = StagedDir::default();
         let mut stack: Vec<(PathBuf, String)> = vec![(src.to_path_buf(), rel.to_string())];
         while let Some((dir, dir_rel)) = stack.pop() {
             let rd = std::fs::read_dir(&dir)
@@ -257,6 +317,7 @@ impl ThrowawayWorktree {
                     Err(_) => continue,
                 };
                 if is_link(&meta) {
+                    staged.links_skipped += 1;
                     continue;
                 }
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -265,11 +326,11 @@ impl ThrowawayWorktree {
                     stack.push((p, child_rel));
                 } else if meta.is_file() && !skip(&p) {
                     self.stage_file(&p, &child_rel)?;
-                    n += 1;
+                    staged.files += 1;
                 }
             }
         }
-        Ok(n)
+        Ok(staged)
     }
 
     /// Create the parent directory of `dest` (inside the worktree) one component at a time: an
@@ -328,6 +389,14 @@ impl ThrowawayWorktree {
         self.removal = Some(r.clone());
         r
     }
+}
+
+/// What [`ThrowawayWorktree::stage_dir`] copied: the files, and the links it skipped (never read
+/// through).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StagedDir {
+    pub files: usize,
+    pub links_skipped: usize,
 }
 
 impl Drop for ThrowawayWorktree {
@@ -532,6 +601,54 @@ fn unlink_links_inside_with(root: &Path, unlink: UnlinkFn) -> UnlinkPass {
     pass
 }
 
+/// (R5, F18-6) Remove every link INSIDE the fresh worktree `root` whose target does not resolve to
+/// a path inside the worktree - a target outside it, or one that cannot be resolved (a dangling
+/// link: a write through it would create its target wherever it points). Every entry is read with
+/// `symlink_metadata`; a link ([`is_link`]: every reparse point on Windows) is never followed and
+/// never descended into - one whose canonical target lies inside the worktree is left as the
+/// revision has it. Returns the removed links' worktree-relative paths (ordinal-sorted); `Err` on
+/// the first entry that cannot be read or link that cannot be removed (the caller does not use
+/// such a worktree).
+fn unlink_outside_links(root: &Path, unlink: UnlinkFn) -> Result<Vec<String>, String> {
+    let canon_root = real_dir_canonical(root).map_err(|why| format!("the worktree root {why}"))?;
+    let mut removed: Vec<String> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = std::fs::read_dir(&dir)
+            .map_err(|e| format!("{} cannot be listed ({e})", dir.display()))?;
+        for entry in rd {
+            let path = entry
+                .map_err(|e| format!("an entry of {} cannot be read ({e})", dir.display()))?
+                .path();
+            let meta = std::fs::symlink_metadata(&path)
+                .map_err(|e| format!("{} cannot be read ({e})", path.display()))?;
+            if is_link(&meta) {
+                let inside = std::fs::canonicalize(&path)
+                    .map(|t| t.starts_with(&canon_root))
+                    .unwrap_or(false);
+                if inside {
+                    continue;
+                }
+                unlink(&path, &meta).map_err(|e| {
+                    format!("the link {} could not be removed ({e})", path.display())
+                })?;
+                if std::fs::symlink_metadata(&path).is_ok() {
+                    return Err(format!("the link {} is still there", path.display()));
+                }
+                removed.push(
+                    path.strip_prefix(root)
+                        .map(|r| r.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| path.to_string_lossy().to_string()),
+                );
+            } else if meta.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    removed.sort();
+    Ok(removed)
+}
+
 /// Remove one link (never its target): on Windows a reparse point carrying the directory attribute
 /// (a junction, a directory symlink) with `remove_dir`, any other with `remove_file` (each falling
 /// back to the other); elsewhere `remove_file`. Neither call follows the link.
@@ -562,6 +679,7 @@ pub(crate) fn remove_throwaway_worktree(repo: &Path, path: &Path) -> bool {
         path: path.to_path_buf(),
         sha: String::new(),
         main_dirty: false,
+        outside_links: Vec::new(),
         removal: None,
     };
     wt.remove().is_ok()
@@ -626,9 +744,7 @@ struct TreeEntry {
 fn rev_tree_entries(repo: &Path, rev: &str, paths: &[String]) -> Result<Vec<TreeEntry>, String> {
     let mut args: Vec<&str> = vec!["--literal-pathspecs", "ls-tree", "-z", rev, "--"];
     args.extend(paths.iter().map(|p| p.as_str()));
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    let out = git_cmd(repo)
         .args(&args)
         .output()
         .map_err(|e| format!("git ls-tree: {e}"))?;
@@ -710,24 +826,52 @@ pub fn committed_blob(repo: &Path, rev: &str, rel: &str) -> Option<Vec<u8>> {
     {
         return None;
     }
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    let out = git_cmd(repo)
         .args(["cat-file", "blob", &format!("{rev}:{rel}")])
         .output()
         .ok()?;
     out.status.success().then_some(out.stdout)
 }
 
+/// (R5, F18-5) Why the live file `p` cannot be read for staging without reading through a link: it
+/// is itself a link (a symlink, a junction, any reparse point - read without following it), or its
+/// canonical path leaves the repository `repo` (a linked directory on its way). `None` for a file
+/// that is not there at all (the caller's fallbacks decide) or a regular file inside the repository.
+pub fn link_source_problem(repo: &Path, p: &Path) -> Option<String> {
+    let meta = std::fs::symlink_metadata(p).ok()?;
+    if is_link(&meta) {
+        return Some(format!(
+            "`{}` is a link (a symlink or a junction), and nothing is ever read through a link into the worktree",
+            p.display()
+        ));
+    }
+    let inside = std::fs::canonicalize(p)
+        .ok()
+        .zip(std::fs::canonicalize(repo).ok())
+        .is_some_and(|(c, r)| c.starts_with(r));
+    if !inside {
+        return Some(format!(
+            "`{}` resolves outside the repository (a link on its way), and nothing outside the repository is ever copied into the worktree",
+            p.display()
+        ));
+    }
+    None
+}
+
 /// (F11-4) The bytes of the brief as the reviewer's worktree gets them: the live file when it can
 /// be read, else the regular file committed at the live checkout's `HEAD` (materialised from HEAD),
 /// else the one committed at `rev` (the worktree's own revision). `Err` names why none is there.
+/// (R5, F18-5) A live brief that is a link, or reached through one from outside the repository, is
+/// an `Err` at once - never read, and not replaced by a committed copy either.
 pub fn brief_bytes(
     repo: &Path,
     brief_ref: &str,
     brief_path: Option<&Path>,
     rev: &str,
 ) -> Result<Vec<u8>, String> {
+    if let Some(why) = brief_path.and_then(|p| link_source_problem(repo, p)) {
+        return Err(why);
+    }
     let live = match brief_path {
         Some(p) => std::fs::read(p).map_err(|e| e.to_string()),
         None => Err("no brief file was resolved".to_string()),
@@ -778,6 +922,14 @@ pub fn isolated_brief_refusal(
     let why = if !stageable_rel(brief_ref) {
         "its path leaves the repository, so it cannot be copied in at the path the prompt names"
             .to_string()
+    } else if let Some(p) = brief_path.and_then(|bp| link_source_problem(repo, bp)) {
+        // (R5, F18-5) a linked brief is never read: the seat is refused before anything starts
+        return Some(staging_refusal(
+            engine,
+            &format!("the brief `{brief_ref}`"),
+            rev_label,
+            &p,
+        ));
     } else if let Some(p) = rev_destination_problem(repo, rev, brief_ref) {
         return Some(staging_refusal(
             engine,
@@ -830,9 +982,7 @@ impl Uncommitted {
 /// (A1, F11-5) The live tree's uncommitted state at launch (`git status --porcelain=v1 -z`):
 /// [`Uncommitted`]. Empty when the tree is clean or git cannot be run.
 pub fn uncommitted_paths(repo: &Path) -> Uncommitted {
-    let out = match std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    let out = match git_cmd(repo)
         .args(["--no-optional-locks", "status", "--porcelain=v1", "-z"])
         .output()
     {
@@ -946,14 +1096,20 @@ pub fn isolation_prompt(repo: &Path, brief_ref: &str) -> String {
 
 /// (B1) The prompt paragraph of a reviewer under `--rev <rev>`: its working directory is a
 /// throwaway worktree of that revision (the full sha), not the live checkout; the brief (when it is
-/// a repo-relative path) and the task's handoffs (`task_rel`, when the collab directory lies in the
-/// repository) were copied in at their paths.
-pub fn rev_prompt_line(sha: &str, rev: &str, brief_ref: &str, task_rel: Option<&str>) -> String {
+/// a repo-relative path) and the task's handoffs were copied in at their paths. (R5, F18-7)
+/// `staged_handoffs` is the task directory's repo-relative path ONLY when a `handoffs/` directory
+/// was actually staged; `None` otherwise, and then the handoffs are not mentioned.
+pub fn rev_prompt_line(
+    sha: &str,
+    rev: &str,
+    brief_ref: &str,
+    staged_handoffs: Option<&str>,
+) -> String {
     let mut l = format!(
         "Isolation: your working directory is a throwaway git worktree of revision {sha} (`--rev {rev}`), not the live checkout: review the code as it is at that revision."
     );
     let brief = !brief_ref.is_empty() && stageable_rel(brief_ref);
-    match (brief, task_rel) {
+    match (brief, staged_handoffs) {
         (true, Some(t)) => l.push_str(&format!(
             " The brief `{brief_ref}` and this task's handoffs (`{t}/handoffs/`) were copied into it at their paths."
         )),
@@ -965,6 +1121,36 @@ pub fn rev_prompt_line(sha: &str, rev: &str, brief_ref: &str, task_rel: Option<&
         )),
         (false, None) => {}
     }
+    l
+}
+
+/// (R5, F18-6) The prompt sentence naming the links removed right after the checkout because they
+/// led outside the worktree: how many, at most [`UNCOMMITTED_PATHS_SHOWN`] of them named - each as
+/// data ([`prompt_safe_path`]: a name that could break out of its code span is counted, never
+/// shown) - and the rest counted. `""` when none was removed.
+pub fn outside_links_sentence(links: &[String]) -> String {
+    if links.is_empty() {
+        return String::new();
+    }
+    let mut shown: Vec<String> = Vec::new();
+    let mut withheld = 0usize;
+    for p in links {
+        match prompt_safe_path(p) {
+            Some(s) if shown.len() < UNCOMMITTED_PATHS_SHOWN => shown.push(s),
+            _ => withheld += 1,
+        }
+    }
+    let mut l = format!(
+        "{} link(s) of the checked-out revision led outside the worktree and were removed right after the checkout, so their targets are not part of what you review",
+        links.len()
+    );
+    if !shown.is_empty() {
+        l.push_str(&format!(": {}", shown.join(", ")));
+    }
+    if withheld > 0 {
+        l.push_str(&format!(" (+{withheld} more)"));
+    }
+    l.push('.');
     l
 }
 
@@ -1219,6 +1405,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 
+    // (R5, F18-2 / F20-2, the reviewers' RC1 / RC4) setting up and checking a review worktree never
+    // rewrites or locks the live repository's index: with the index's stat cache stale (a tracked
+    // file touched, its content unchanged - a plain `git status` would refresh and rewrite the
+    // index), creating a worktree, staging into it and checking it leave the index's bytes as they
+    // were and no `index.lock` behind; a revision that reads as an option is refused, and is never
+    // handed to git as one.
+    #[test]
+    fn a_review_worktree_never_rewrites_the_live_index() {
+        let repo = brief_repo("index");
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(repo.join("committed.md"))
+            .unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+            .unwrap();
+        drop(f);
+        let index = repo.join(".git").join("index");
+        let before = std::fs::read(&index).unwrap();
+        let wt = ThrowawayWorktree::create(&repo, "HEAD").unwrap();
+        wt.stage_bytes(b"brief\n", "docs/brief.md").unwrap();
+        let _ = uncommitted_paths(&repo);
+        let _ = isolation_prompt(&repo, "docs/brief.md");
+        let _ = rev_destination_problem(&repo, wt.sha(), "docs/brief.md");
+        let _ = committed_blob(&repo, "HEAD", "committed.md");
+        assert_eq!(
+            std::fs::read(&index).unwrap(),
+            before,
+            "the live index was rewritten"
+        );
+        assert!(!repo.join(".git").join("index.lock").exists());
+        drop(wt);
+        // the same refresh without the guard WOULD rewrite it (the scenario is real), shown only
+        let plain = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(plain.status.success());
+        if std::fs::read(&index).unwrap() == before {
+            eprintln!("note: this git did not refresh the stale index on a plain status");
+        }
+        for bad in ["--output=x", "-c", "HEAD\nx"] {
+            assert!(resolve_commit(&repo, bad).is_err(), "{bad:?}");
+            assert!(ThrowawayWorktree::create(&repo, bad).is_err(), "{bad:?}");
+        }
+        assert!(!repo.join("x").exists());
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+    }
+
     /// A scratch git repo with one commit holding `committed.md` (identity set repo-locally).
     fn brief_repo(tag: &str) -> PathBuf {
         let base = std::env::temp_dir().join(format!(
@@ -1286,7 +1522,13 @@ mod tests {
         std::fs::write(src.join("deep").join("note.md"), "deep\n").unwrap();
         let skip = |p: &Path| p.to_string_lossy().ends_with(".events.jsonl");
         let n = wt.stage_dir(&src, ".collab/t/handoffs", &skip).unwrap();
-        assert_eq!(n, 2);
+        assert_eq!(
+            n,
+            StagedDir {
+                files: 2,
+                links_skipped: 0
+            }
+        );
         assert!(path.join(".collab/t/handoffs/01-claude-x.md").is_file());
         assert!(path.join(".collab/t/handoffs/deep/note.md").is_file());
         assert!(!path
@@ -1568,15 +1810,18 @@ mod tests {
         .unwrap();
     }
 
-    // (F11-3) a link that appears in the worktree's checkout (here planted by a post-checkout hook)
-    // on the way to the brief: the run's staging is a typed pre-start refusal, nothing is written
-    // through the link.
+    // (F11-3, R5 F18-6) a link that appears in the worktree's checkout (here planted by a
+    // post-checkout hook) on the way to the brief, leading OUTSIDE the worktree: it is removed right
+    // after the checkout (never followed), counted and named, the brief is staged into a real
+    // directory of the worktree, and nothing is written through the link - the outside file keeps
+    // its bytes. A link that stays (here made after the checkout) still refuses the staging.
     #[test]
-    fn a_link_in_the_checkout_on_the_briefs_way_is_a_typed_staging_refusal() {
+    fn a_link_in_the_checkout_leading_outside_is_removed_and_the_brief_staged_inside() {
         let repo = brief_repo("hook-link");
         let outside = repo.parent().unwrap().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("brief.md"), "outside brief\n").unwrap();
+        std::fs::write(outside.join("sentinel.txt"), "keep me\n").unwrap();
         std::fs::create_dir_all(repo.join("docs")).unwrap();
         std::fs::write(repo.join("docs").join("brief.md"), "# live brief\n").unwrap();
         plant_dir_link_on_checkout(&repo, &outside);
@@ -1597,7 +1842,7 @@ mod tests {
             sha: head,
         };
         let collab = repo.join(".collab");
-        let got = crate::consult::reviewed::setup_review_tree(
+        let tree = crate::consult::reviewed::setup_review_tree(
             &plan,
             &crate::consult::reviewed::StageInputs {
                 repo_root: &repo,
@@ -1607,26 +1852,103 @@ mod tests {
                 brief_path: Some(&repo.join("docs").join("brief.md")),
                 engine: "kimi",
             },
+        )
+        .unwrap_or_else(|e| panic!("the outside link was not removed at checkout: {e:?}"));
+        assert_eq!(tree.outside_links(), ["docs".to_string()]);
+        let docs = tree.path().join("docs");
+        let m = std::fs::symlink_metadata(&docs).unwrap();
+        assert!(m.is_dir() && !is_link(&m), "a real directory now");
+        assert_eq!(
+            std::fs::read_to_string(docs.join("brief.md")).unwrap(),
+            "# live brief\n"
         );
-        match got {
-            Err(crate::consult::reviewed::SetupError::Refused(m)) => {
-                assert!(
-                    m.starts_with(
-                        "the kimi seat is not usable: the brief `docs/brief.md` cannot be staged"
-                    ),
-                    "{m}"
-                );
-                assert!(m.contains("is a link in the worktree"), "{m}");
-                assert!(crate::panel::run::is_preflight_refusal(&m), "{m}");
-            }
-            Err(e) => panic!("expected a typed staging refusal, got {e:?}"),
-            Ok(_) => panic!("the hook did not plant the link, or the staging went through it"),
-        }
+        assert!(tree
+            .isolation_line(&plan)
+            .ends_with("1 link(s) of the checked-out revision that led outside the worktree were removed right after the checkout."));
+        // (a link that appears AFTER the checkout on the brief's way is still refused:
+        // `staging_never_writes_through_a_link_in_the_worktree`)
+        let wt_path = tree.path().to_path_buf();
+        drop(tree);
+        assert!(std::fs::symlink_metadata(&wt_path).is_err());
         assert_eq!(
             std::fs::read_to_string(outside.join("brief.md")).unwrap(),
             "outside brief\n"
         );
+        assert_eq!(
+            std::fs::read_to_string(outside.join("sentinel.txt")).unwrap(),
+            "keep me\n",
+            "the removal never followed the link"
+        );
         let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+    }
+
+    // (R5, F18-6, the reviewer's RC5) a link the revision carries whose target is the LIVE checkout
+    // is unlinked right after the checkout - the reviewer can neither read nor write the live tree
+    // through it; a link whose target lies inside the worktree is left as the revision has it; the
+    // prompt names the removed ones as data.
+    #[test]
+    fn links_leading_out_of_the_worktree_are_removed_right_after_the_checkout() {
+        let repo = brief_repo("out-links");
+        // a committed link to the live checkout's file, and one to a file inside the revision
+        commit_link_entry(&repo, "out", &repo.join("committed.md"), "live\n");
+        let wt = ThrowawayWorktree::create(&repo, "HEAD").unwrap();
+        let out = wt.path().join("out");
+        match std::fs::symlink_metadata(&out) {
+            Ok(m) if is_link(&m) => panic!("the outside link survived the checkout"),
+            Ok(_) => eprintln!(
+                "the checkout made a plain file of the committed link (core.symlinks is off): only the planted-link half applies"
+            ),
+            Err(_) => assert_eq!(wt.outside_links(), ["out".to_string()]),
+        }
+        drop(wt);
+        // a planted directory link to the live checkout (a junction needs no privilege) and a
+        // link inside the worktree that stays
+        let repo2 = brief_repo("out-links-2");
+        plant_dir_link_on_checkout(&repo2, &repo2);
+        let wt2 = ThrowawayWorktree::create(&repo2, "HEAD").unwrap();
+        assert_eq!(wt2.outside_links(), ["docs".to_string()]);
+        assert!(std::fs::symlink_metadata(wt2.path().join("docs")).is_err());
+        assert_eq!(
+            std::fs::read_to_string(repo2.join("committed.md")).unwrap(),
+            "# c\n"
+        );
+        std::fs::create_dir_all(wt2.path().join("inner")).unwrap();
+        make_inner_dir_link(&wt2.path().join("inner-link"), &wt2.path().join("inner"));
+        assert_eq!(
+            unlink_outside_links(wt2.path(), remove_link).unwrap(),
+            Vec::<String>::new(),
+            "a link inside the worktree stays"
+        );
+        assert!(std::fs::symlink_metadata(wt2.path().join("inner-link")).is_ok());
+        // the prompt names them as data, a name that could break out is counted
+        let s = outside_links_sentence(&["docs".into(), "a`b".into()]);
+        assert!(
+            s.starts_with("2 link(s) of the checked-out revision led outside the worktree")
+                && s.ends_with(": `docs` (+1 more)."),
+            "{s}"
+        );
+        assert_eq!(outside_links_sentence(&[]), "");
+        drop(wt2);
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+        let _ = std::fs::remove_dir_all(repo2.parent().unwrap());
+    }
+
+    /// A directory link at `link` to `target` inside the same tree: a junction on Windows, a symlink
+    /// elsewhere (no sentinel check, unlike [`make_dir_link`]).
+    fn make_inner_dir_link(link: &Path, target: &Path) {
+        #[cfg(windows)]
+        {
+            let ok = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            assert!(ok, "mklink /J failed");
+        }
+        #[cfg(not(windows))]
+        std::os::unix::fs::symlink(target, link).unwrap();
     }
 
     // (F11-4) an in-repo reference with `..` is normalised to the same file; one that leaves the

@@ -513,6 +513,147 @@ fn rev_runs_kimi_in_a_worktree_of_that_revision_with_the_untracked_brief() {
     assert!(t3.contains("nothing was started"), "{t3}");
 }
 
+/// A structured reply with one finding at `app.txt:1`, reporting `prior` (an id) as still-open
+/// when given.
+fn reply_with_finding(prior: Option<&str>) -> String {
+    let priors = match prior {
+        Some(id) => format!(r#"[{{"id":"{id}","status":"still-open","note":"seen"}}]"#),
+        None => "[]".to_string(),
+    };
+    format!(
+        r#"{{"schema_version":"1","verdict":"ADVISE","verdict_reason":"r","reply_markdown":"m","findings":[{{"severity":"major","locations":[{{"path":"app.txt","line":1}}],"claim":"app.txt is wrong","trigger":"t","evidence":[{{"kind":"read-code","reference":"app.txt:1","observation":"o"}}],"verification":"v","remedy":"r","supersedes":[]}}],"prior_findings":{priors},"unproven":[],"first_run_checklist":[]}}"#
+    )
+}
+
+#[test]
+fn a_rev_run_records_the_revision_it_read_and_offers_no_prior_findings() {
+    // (R5, F18-1 / F19-6, the reviewer's RC2) a --rev review of an OLDER revision: the handoff's
+    // Reviewed line, the ledger's base_commit / reviewed_revision and the new finding's
+    // source.base_commit are that revision's sha, the live HEAD is recorded beside it
+    // (`live_head`); the task's open finding (recorded on HEAD) is not listed - the prompt says so
+    // in one sentence - and the reply's prior-findings report is ignored for the store.
+    let e = setup("rev-records");
+    let first = git_out(&e.repo, &["rev-parse", "HEAD"]);
+    std::fs::write(e.repo.join("app.txt"), "two\n").unwrap();
+    git(&e.repo, &["commit", "-q", "-am", "second"]);
+    let head = git_out(&e.repo, &["rev-parse", "HEAD"]);
+    // a finding filed on HEAD (a live-tree kimi run, no --rev)
+    let r1 = e.work.join("r1.json");
+    std::fs::write(&r1, reply_with_finding(None)).unwrap();
+    let o1 = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--purpose",
+            "framing",
+        ],
+        &[("FAKE_KIMI_REPLY", &r1.to_string_lossy())],
+    );
+    assert_eq!(o1.status.code(), Some(0), "{}", text(&o1));
+    let filed = e.last()["finding_ids"][0]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    assert!(!filed.is_empty(), "{}", e.last());
+    // the --rev review of the older revision reports that finding still-open and files its own
+    let r2 = e.work.join("r2.json");
+    std::fs::write(&r2, reply_with_finding(Some(&filed))).unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--purpose",
+            "framing",
+            "--rev",
+            &first,
+        ],
+        &[("FAKE_KIMI_REPLY", &r2.to_string_lossy())],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let body = e.turns()[0]["prompt_body"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        body.contains("1 open finding(s) of this task were recorded against another revision"),
+        "{body}"
+    );
+    assert!(
+        !body.contains(&format!("- {filed} -")),
+        "the finding is not listed: {body}"
+    );
+    let l = e.last();
+    assert_eq!(l["base_commit"], first.as_str(), "{l}");
+    assert!(
+        first.starts_with(l["reviewed_revision"].as_str().unwrap_or("?")),
+        "{l}"
+    );
+    assert_eq!(l["live_head"], head.as_str(), "{l}");
+    assert_eq!(l["prior_findings_withheld"], 1, "{l}");
+    assert_eq!(
+        l["prior_findings"].as_array().map(|a| a.len()),
+        Some(0),
+        "the reply's prior report is not recorded: {l}"
+    );
+    let nn = l["finding_ids"][0].as_str().unwrap_or("").to_string();
+    let findings: Value = serde_json::from_str(
+        &std::fs::read_to_string(e.repo.join(".collab/t/findings.json")).unwrap(),
+    )
+    .unwrap();
+    let all = findings["findings"].as_array().cloned().unwrap_or_default();
+    let new = all.iter().find(|f| f["id"] == nn.as_str()).expect("filed");
+    assert_eq!(new["source"]["base_commit"], first.as_str(), "{new}");
+    assert_eq!(new["source"]["live_head"], head.as_str(), "{new}");
+    let old = all.iter().find(|f| f["id"] == filed.as_str()).unwrap();
+    assert!(
+        old["reviewer_checks"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(true),
+        "a report against another revision reached the store: {old}"
+    );
+    let reply_rel = l["reply"].as_str().unwrap_or("handoffs/02-kimi-reply.md");
+    let handoff = std::fs::read_to_string(e.repo.join(".collab").join("t").join(reply_rel))
+        .unwrap_or_default();
+    assert!(
+        handoff.contains(&format!("base {first},"))
+            && handoff.contains(&format!("Live HEAD at launch: {head}.")),
+        "{handoff}"
+    );
+}
+
+#[test]
+fn a_kimi_write_into_a_git_ignored_path_of_its_worktree_fails_the_run() {
+    // (R5, F20-4, the reviewer's RC2) the worktree check includes git-ignored paths: kimi's write
+    // into an ignored file of its throwaway worktree is its own write and fails the run.
+    let e = setup("ignored-write");
+    std::fs::write(e.repo.join(".gitignore"), "ignored.txt\n").unwrap();
+    git(&e.repo, &["add", "-A"]);
+    git(&e.repo, &["commit", "-q", "-m", "ignore"]);
+    let o = e.consult(
+        &["--engine", "kimi", "--model", "kimi-code/k3"],
+        &[
+            ("FAKE_KIMI_TOOLCALL", "1"),
+            ("FAKE_KIMI_WRITE", "ignored.txt"),
+        ],
+    );
+    let t = text(&o);
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.starts_with(
+            "failed: the reviewer's throwaway worktree changed during the run: 1 file: ignored.txt"
+        ),
+        "{outcome}\n{t}"
+    );
+    assert_eq!(last["tree_check"]["outcome"], "failed", "{last}");
+}
+
 #[test]
 fn a_live_tree_change_during_a_kimi_run_is_a_warning_and_its_own_write_a_failure() {
     // (B1, item 4) a parallel session edits the LIVE checkout while kimi runs in its worktree: the
@@ -995,11 +1136,12 @@ fn a_committed_link_at_the_brief_path_refuses_the_kimi_seat_and_the_sentinel_sur
 }
 
 #[test]
-fn a_junction_on_the_briefs_way_in_the_checkout_refuses_the_seat_before_launch() {
-    // (F11-3, F11-4) the checkout of the reviewer's worktree carries a JUNCTION where the brief's
-    // directory is (planted by a post-checkout hook - what a checked-out link leaves on disk): the
-    // staging refuses it - a typed pre-start refusal with preflight-class wording, no kimi turn,
-    // the reservation withdrawn, nothing written through the junction.
+fn a_junction_leading_outside_in_the_checkout_is_removed_and_the_brief_staged_inside() {
+    // (F11-3, R5 F18-6) the checkout of the reviewer's worktree carries a JUNCTION where the brief's
+    // directory is, leading OUTSIDE the worktree (planted by a post-checkout hook - what a
+    // checked-out link leaves on disk): it is removed right after the checkout (never followed), the
+    // brief is staged into a real directory, the prompt and the handoff name the removal, and
+    // nothing is written through the junction.
     let e = setup("hook-junction");
     let outside = e.work.join("outside");
     std::fs::create_dir_all(&outside).unwrap();
@@ -1034,25 +1176,29 @@ fn a_junction_on_the_briefs_way_in_the_checkout_refuses_the_seat_before_launch()
         &[],
     );
     let t = text(&o);
-    assert_eq!(o.status.code(), Some(1), "{t}");
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(turns[0]["op_brief_exists"], true, "{:?}", turns[0]);
+    let body = turns[0]["prompt_body"].as_str().unwrap_or("");
     assert!(
-        t.contains("the kimi seat is not usable: the brief `docs/brief.md` cannot be staged into the reviewer's throwaway worktree of HEAD"),
-        "{t}"
+        body.contains("1 link(s) of the checked-out revision led outside the worktree and were removed right after the checkout, so their targets are not part of what you review: `docs`."),
+        "{body}"
     );
-    assert!(t.contains("is a link in the worktree"), "{t}");
-    assert!(e.turns().is_empty(), "no kimi turn: {:?}", e.turns());
-    assert!(e.ledger().is_empty(), "nothing reached the ledger");
+    let last = e.last();
+    let reply_rel = last["reply"]
+        .as_str()
+        .unwrap_or("handoffs/01-kimi-reply.md");
+    let handoff = std::fs::read_to_string(e.repo.join(".collab").join("t").join(reply_rel))
+        .unwrap_or_default();
     assert!(
-        !e.repo
-            .join(".collab")
-            .join("t")
-            .join(".consult.pending.json")
-            .exists(),
-        "the reservation was withdrawn"
+        handoff.contains("1 link(s) of the checked-out revision that led outside the worktree were removed right after the checkout."),
+        "{handoff}"
     );
     assert_eq!(
         std::fs::read_to_string(outside.join("brief.md")).unwrap(),
-        "outside brief\n"
+        "outside brief\n",
+        "nothing was written through the junction"
     );
 }
 

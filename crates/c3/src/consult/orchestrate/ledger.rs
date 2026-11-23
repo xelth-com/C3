@@ -41,14 +41,23 @@ pub(super) fn build_finding(
             extra: Default::default(),
         })
         .collect();
+    // (R5, F18-1) the revision the reviewer READ: under `--rev` the worktree's sha, the live HEAD at
+    // launch beside it as `live_head`
+    let reviewed = ctx.reviewed_info();
     f.source = Source {
         consult: ctx.consult_n,
         reply: handoff_rel.to_string(),
         thread: thread.to_string(),
-        base_commit: ctx.revision.base_commit.clone(),
-        tree_sha256: ctx.revision.tree_sha256.clone(),
+        base_commit: reviewed.base_commit.clone(),
+        tree_sha256: reviewed.tree_sha256.clone(),
         ..Default::default()
     };
+    if let Some(live) = ctx.live_head() {
+        f.source.extra.insert(
+            "live_head".into(),
+            serde_json::Value::String(live.to_string()),
+        );
+    }
     // The finding is created `proposed` with one initial history event, as the plugin does.
     f.history.push(HistoryEvent {
         when: iso_now(),
@@ -56,8 +65,8 @@ pub(super) fn build_finding(
         by: "codex-consult".into(),
         note: String::new(),
         evidence: String::new(),
-        base_commit: ctx.revision.base_commit.clone(),
-        tree_sha256: ctx.revision.tree_sha256.clone(),
+        base_commit: reviewed.base_commit.clone(),
+        tree_sha256: reviewed.tree_sha256.clone(),
         extra: Default::default(),
     });
     f
@@ -247,9 +256,10 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
             }
             w.into_iter().map(serde_json::Value::String).collect()
         },
-        base_commit: ctx.revision.base_commit.clone(),
-        reviewed_revision: ctx.revision.reviewed_revision.clone(),
-        tree_sha256: ctx.revision.tree_sha256.clone(),
+        // (R5, F18-1) the fingerprint of what the reviewer READ (`Context::reviewed_info`)
+        base_commit: ctx.reviewed_info().base_commit.clone(),
+        reviewed_revision: ctx.reviewed_info().reviewed_revision.clone(),
+        tree_sha256: ctx.reviewed_info().tree_sha256.clone(),
         tree_sha256_after: drift.tree_sha256_after.clone(),
         tree_changed_during_review: drift.tree_changed,
         revision_moved: Some(if drift.revision_moved.is_empty() {
@@ -257,13 +267,13 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
         } else {
             Some(drift.revision_moved.clone())
         }),
-        changed_files: ctx.revision.changed_files,
+        changed_files: ctx.reviewed_info().changed_files,
         brief_sha256: ctx.brief_sha.clone(),
         brief_sha256_after: drift.brief_sha_after.clone(),
         brief_changed_during_review: drift.brief_changed,
         artifacts: drift.artifacts.clone(),
         artifacts_changed_during_review: !drift.artifacts_changed_paths.is_empty(),
-        fingerprint_note: ctx.revision.fingerprint_note.clone(),
+        fingerprint_note: ctx.reviewed_info().fingerprint_note.clone(),
         bridge_outcome: bridge_outcome.to_string(),
         provider_failure,
         structured: structured.is_some(),
@@ -331,6 +341,23 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
             "diff".into(),
             crate::consult::reviewed::ledger_diff_value(d),
         );
+    }
+    // (R5, F18-1) under `--rev` base_commit / reviewed_revision / tree_sha256 name the revision the
+    // reviewer read; the live tree at launch is recorded beside it under its own names (the live
+    // pair of tree_sha256_after), and the open findings that were not offered for re-checking.
+    if let Some(live) = ctx.live_head() {
+        e.extra.insert(
+            "live_head".into(),
+            serde_json::Value::String(live.to_string()),
+        );
+        e.extra.insert(
+            "live_tree_sha256".into(),
+            serde_json::Value::String(ctx.revision.tree_sha256.clone()),
+        );
+    }
+    if let Some(n) = ctx.priors_withheld {
+        e.extra
+            .insert("prior_findings_withheld".into(), serde_json::json!(n));
     }
     // (F11-12) the kind of reply a FAILED run preserved, recorded explicitly (`c3 providers` counts
     // its failed runs by it): `sidecar` (the raw reply kept as `.reply.json`), `partial` (a

@@ -625,6 +625,12 @@ pub fn run_pass(opts: PassOpts) -> i32 {
         eprintln!("c3 maintain: no codex home - set CODEX_HOME");
         return 1;
     };
+    // (F15-6) `C3_MAINTAIN_MODELS=off` with `--models`: one line and no file touched - read before
+    // the pass lock is taken and before the state directory is created.
+    if opts.models_only && models_mode() == ModelsMode::Off {
+        println!("{MODELS_OFF_LINE}");
+        return 0;
+    }
     // A dry run is read-only: no lock, no state directory, no state file - it must leave nothing
     // behind that a later hook could mistake for a completed pass.
     let lock = if opts.dry_run {
@@ -799,17 +805,19 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
     0
 }
 
+/// The one line `c3 maintain --models` prints under `C3_MAINTAIN_MODELS=off`.
+const MODELS_OFF_LINE: &str = "c3 maintain: the model step is off (C3_MAINTAIN_MODELS=off) - --models fetched nothing; set C3_MAINTAIN_MODELS=announce or swap to run it";
+
 /// `c3 maintain --models`: the model step alone, on request. No CLI is checked or updated; the
 /// schedule (`next_due`, `last_pass`) and the engine records stay as they are. A real run stores the
 /// collected ids, the report (printed once by the next SessionStart hook) and the notes; a dry run
 /// stores nothing.
 fn models_pass(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) -> i32 {
     // (F02-18) `C3_MAINTAIN_MODELS=off` is authoritative: an explicit `--models` fetches nothing
-    // (no engine, endpoint or public list) and writes nothing, and says why.
+    // (no engine, endpoint or public list) and writes nothing, and says why. (F15-6) `run_pass`
+    // answers it before the lock and the state directory; this is the same answer for a direct call.
     if models_mode() == ModelsMode::Off {
-        println!(
-            "c3 maintain: the model step is off (C3_MAINTAIN_MODELS=off) - --models fetched nothing; set C3_MAINTAIN_MODELS=announce or swap to run it"
-        );
+        println!("{MODELS_OFF_LINE}");
         return 0;
     }
     let mut state = read_state(dir);
@@ -1241,12 +1249,16 @@ fn handle_pending_smoke(
 /// rollback target (and in the record). `None` when there is nothing to try (no check command, no
 /// newer release, an unparsable previous or installed version, a cool-down hold, the engine in
 /// use, or the record could not be written) - the caller then keeps the unresolved record as it is.
+/// (F15-5) "Newer" is judged against the version installed NOW: `--version` is read again here,
+/// after the recovery smoke and any rollback (a failed rollback or a concurrent manual update can
+/// have left another version than the pass started with), and a release that is not newer than it
+/// is never installed.
 #[allow(clippy::too_many_arguments)]
 fn try_newer_release(
     env: &dyn Env,
     name: &str,
     launcher: &str,
-    installed: Option<&version::CliVersion>,
+    installed_at_start: Option<&version::CliVersion>,
     caps: &engine::Caps,
     roster: &c3_core::roster::Roster,
     dir: &Path,
@@ -1259,15 +1271,22 @@ fn try_newer_release(
     if !caps.has_check {
         return None;
     }
-    let failing = installed?;
     let prev = version::parse_cli_version(&p.previous)?;
     let latest = engine::check_latest(env, name, launcher);
     let latest_v = latest.version.clone()?;
-    if &latest_v <= failing {
-        return None;
-    }
+    // (F15-5) the version on disk now, not the one read before the recovery smoke and rollback
+    let failing = engine::installed_version(env, launcher)?;
     let new_text = latest_v.text().to_string();
     let failing_text = failing.text().to_string();
+    if latest_v <= failing {
+        // say so when only the fresh read stopped it (the pass-start version would have let it in)
+        if installed_at_start.is_some_and(|start| latest_v > *start) {
+            println!(
+                "c3 maintain: {name} {new_text} is not tried: {failing_text} is installed now (not older than it)"
+            );
+        }
+        return None;
+    }
     if let Some(released) = latest.released {
         let age = (now - released).num_days();
         if !force && age < min_age_days() {
@@ -1345,9 +1364,9 @@ fn run_one_smoke(
         std::process::id(),
         nonce as u64
     ));
-    let out = smoke::run_smoke(env, self_exe, target, engine, &work, &token, roster_text);
-    let _ = std::fs::remove_dir_all(&work);
-    out
+    // (F14-3) the smoke creates `work` itself (exclusively) and removes it when it ends; a path that
+    // already existed is never removed here
+    smoke::run_smoke(env, self_exe, target, engine, &work, &token, roster_text)
 }
 
 /// The roster text an engine smoke's seat is bound to, read at smoke time (`None` when there is no
@@ -1410,9 +1429,10 @@ fn run_models(
         let (catalogs, pages) = web::configured_sources();
         let public = web::collect(env, &catalogs, &pages);
         for s in &public {
+            // a catalog's name is shown without its query, which may hold a token
             println!(
                 "c3 maintain: {} - {} model id(s) collected",
-                s.source,
+                web::catalog_source_display(&s.source),
                 s.ids.len()
             );
         }
@@ -1545,6 +1565,7 @@ fn run_models(
                 provider: c.provider.clone(),
                 model: c.new.clone(),
                 bind: smoke::Bind::Entry(c.position),
+                seated: c.old.clone(),
             };
             // One smoke per entry and pass: the highest successor only. A failed candidate is tried
             // again on a later pass.
@@ -1638,15 +1659,35 @@ fn run_models(
 
     // Record the collected ids as the new baseline. A public source that was not collected this
     // time (switched off, or the fetch failed) keeps its previous record, so a later pass does not
-    // take it for a first collection and its names stay published.
+    // take it for a first collection and its names stay published. (F16-1, F17-5) A legacy
+    // host-keyed catalog record (`web:<host>`, never trusted) is kept only until a catalog of that
+    // host is recorded under its URL: then the fetch has rewritten it.
     let mut sources = current;
     for prev in &state.models.sources {
-        if web::is_public_source(&prev.source) && !sources.iter().any(|s| s.source == prev.source) {
-            sources.push(prev.clone());
+        if !web::is_public_source(&prev.source) || sources.iter().any(|s| s.source == prev.source) {
+            continue;
         }
+        if web::is_legacy_catalog_source(&prev.source) {
+            let host = web::catalog_source_host(&prev.source);
+            let rewritten = sources.iter().any(|s| {
+                !web::is_legacy_catalog_source(&s.source)
+                    && s.source.starts_with("web:")
+                    && web::catalog_source_host(&s.source) == host
+            });
+            if rewritten {
+                continue;
+            }
+        }
+        sources.push(prev.clone());
     }
-    // (F04-3) a candidate a public source dated as not newer stays rejected in later passes
-    let older = models::merge_older(&state.models.older, &older_found);
+    // (F04-3) a candidate a public source dated as not newer stays rejected in later passes;
+    // (F15-2, F14-2) the refusals of a seated id still in the roster survive the cap
+    let seated_ids: Vec<String> = roster
+        .active_entries()
+        .filter(|e| !e.model.is_empty())
+        .map(|e| e.model.to_ascii_lowercase())
+        .collect();
+    let older = models::merge_older(&state.models.older, &older_found, &seated_ids);
     state.models = models::ModelsState { sources, older };
     let findings = format!(
         "{seated} swap(s), {} new id(s), {} new in the family",

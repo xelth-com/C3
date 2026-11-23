@@ -394,7 +394,8 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
   model outside its class's list is also sent when `c3 maintain` holds it from a TRUSTED public
   source FOR THAT CLASS - the built-in catalog (OpenRouter; `qwen/qwen4-max` counts as `qwen4-max`
   of `alibaba` only), or a configured catalog / page declared `"public": true` (a page's plain ids
-  count for the class of its own host, e.g. `docs.z.ai` -> `zai`). An endpoint's own model list, an
+  count for the class of its own host, e.g. `docs.z.ai` -> `zai`) - judged per catalog URL, never
+  per host (another URL on the same host is trusted only by its own entry). An endpoint's own model list, an
   engine's list, an undeclared configured source, another class's name and a reviewer without a
   class never count; without a maintain state the closed lists alone decide.
 * **Never:** task names, prompts, briefs, paths, thread ids, `consult_id`, finding texts, notes,
@@ -601,20 +602,29 @@ its one-line report.
   a higher major included (`qwen3.8-max` -> `qwen4-max`, `glm-5.3` -> `glm-6`; an id without a
   minor counts as `.0`) — and only after the smoke passed on that entry's own plan; the roster is
   backed up first (`.bak-maintain-<date>`) and only that entry's `model` is edited (located by
-  parsing, the result checked to differ in nothing else). A protected or on-request roster entry is
+  parsing, the result checked to differ in nothing else). The roster is re-read and compared with
+  the snapshot the smoke was judged on immediately before the rename, and the swap is abandoned
+  when it differs (passes are serialised by the pass lock; an edit landing between that re-read and
+  the rename itself is not seen). A protected or on-request roster entry is
   never smoked or edited: its successor is only announced.
 - **Public catalogs.** Once a week (inside the pass) or on request (`--models`), C3 reads
-  `https://openrouter.ai/api/v1/models` with a plain GET that carries **no key** (https only; at
-  most 3 redirects, each to the same host and port and without credentials; one 15 s deadline over
-  all of it; the read stopped at 4 MB; at most 5000 ids). Ids are
+  `https://openrouter.ai/api/v1/models` with a plain GET that carries **no key** (https only; never
+  an IP address or `localhost`, never a name that resolves to - or an answer that comes from - a
+  loopback, private, link-local, unspecified or multicast address; at most 3 redirects, each to the
+  same host and port and without credentials; one 15 s deadline over all of it - name lookup,
+  connect and the body read included; the read stopped at 4 MB; at most 5000 ids). Ids are
   `<vendor>/<model>`; a `:variant` (`:free`, `:batch`) is skipped and every id must have the strict
   model-id shape. A catalog id is only a candidate: for any active, unprotected entry — also one
   whose endpoint gives no list, like Alibaba, Xiaomi MiMo or BytePlus — the model part
   (`qwen4-max`) is smoked on the entry's own plan; a failing one is reported ("seen in the catalog,
   not served by this plan") and tried again on a later pass, one smoke per entry and pass. Dates
   decide first: a catalog id needs a date after the seated id's (or, when the catalog does not list
-  the seated id, within 180 days); one dated in the future, or dated not after the seated id by ANY
-  public source, is refused - and once a source dated it older, it stays refused in later passes.
+  the seated id, within 180 days); a date more than ten minutes in the future is no evidence (more
+  than a day ahead, the id is refused); one dated not after the seated id by ANY public source is
+  refused - and once a source dated it older, it stays refused in later passes while its seated
+  model is in the roster (at most 500 such records are kept, but the cap never evicts one whose
+  seated id is still an active roster model: it applies to the other records, oldest first, and
+  when the protected records alone exceed it they are all kept).
   An id of the entry's own list needs no date, but is refused the same way when a public source
   dates both ids. The pass
   also announces "new in the family": a catalog id not seen before with the prefix of a seated id,
@@ -627,6 +637,8 @@ its one-line report.
   every capture is a candidate id. Every source feeds successor candidates, but only the built-in
   catalog and a source declared `"public": true` make its ids published names telemetry may send
   (bound to their vendor - see "The classes" under Telemetry); an endpoint's own list never does.
+  A catalog is identified by its full URL (scheme, host, port, path, query): every configured URL
+  is fetched and recorded on its own, and trust is per URL, never per host.
 - **By hand.** `c3 maintain` prints the report; `c3 maintain --run [--engine <name>] [--dry-run]
   [--force]` runs a pass now; `c3 maintain --models [--dry-run]` runs only the model step (no CLI is
   checked or updated, the weekly schedule does not move; with `--dry-run` nothing is smoked or

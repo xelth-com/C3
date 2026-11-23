@@ -890,9 +890,9 @@ fn only_a_trusted_vendor_bound_published_id_is_sent_by_name() {
     let mdir = e.home.join("c3").join("maintain");
     std::fs::create_dir_all(&mdir).unwrap();
     let state = serde_json::json!({"models": {"sources": [
-        {"source": "web:openrouter.ai", "ids": ["z-ai/glm-9-pub", "anthropic/claude-opus-9-2"]},
-        {"source": "web:models.example.com", "ids": ["z-ai/glm-9-cfg"]},
-        {"source": "web:pub.example.com", "ids": ["z-ai/glm-9-trusted"]},
+        {"source": "web:https://openrouter.ai:443/api/v1/models", "ids": ["z-ai/glm-9-pub", "anthropic/claude-opus-9-2"]},
+        {"source": "web:https://models.example.com:443/v1/models", "ids": ["z-ai/glm-9-cfg"]},
+        {"source": "web:https://pub.example.com:443/v1/models", "ids": ["z-ai/glm-9-trusted"]},
         {"source": "endpoint:https://api.z.ai:443/api/v1|RT_ZAI_KEY|", "ids": ["glm-9-ep"]},
         {"source": "page:zai-docs", "ids": ["glm-9-page"]}
     ]}});
@@ -921,17 +921,119 @@ fn only_a_trusted_vendor_bound_published_id_is_sent_by_name() {
     let _ = std::fs::remove_dir_all(&e.work);
 }
 
+/// What [`backfilled_models`] yields when no catalog id is published: the closed lists alone.
+const CLOSED_LISTS_ONLY: [&str; 11] = [
+    "other", "other", "other", "other", "other", "other", "other", "other", "glm-5.3", "other",
+    "opus",
+];
+
+/// (F16-1, F17-5) A maintain state written by an older build keys its catalogs by host
+/// (`web:<host>`): it is read without error, and none of its ids is sent by name - not the built-in
+/// catalog host's, not a declared host's - until a fetch rewrites the record under the URL.
+#[test]
+fn a_legacy_host_keyed_maintain_state_publishes_nothing() {
+    let e = setup("tel-published-legacy");
+    let mdir = e.home.join("c3").join("maintain");
+    std::fs::create_dir_all(&mdir).unwrap();
+    let state = serde_json::json!({"models": {"sources": [
+        {"source": "web:openrouter.ai", "ids": ["z-ai/glm-9-pub", "anthropic/claude-opus-9-2"]},
+        {"source": "web:pub.example.com", "ids": ["z-ai/glm-9-trusted"]}
+    ]}});
+    std::fs::write(mdir.join("state.json"), state.to_string()).unwrap();
+    let cfg = serde_json::json!({"config_version": 1,
+        "model_catalogs": ["https://openrouter.ai/api/v1/models", {"url": "https://pub.example.com/v1/models", "public": true}]});
+    std::fs::write(e.home.join("c3").join("config.json"), cfg.to_string()).unwrap();
+    assert_eq!(backfilled_models(&e), CLOSED_LISTS_ONLY);
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
+/// (F16-1, F17-5, the reviewers' RC1) Two catalogs on ONE host, the private one listed first and
+/// only the second declared `"public": true`, end to end: `c3 maintain --models` fetches both (each
+/// served from a local file in test mode) and records each under its own URL, replacing the older
+/// build's host-keyed record; the backfill then sends the public catalog's id by name and the
+/// private catalog's id as `other` - before the fix, the private URL was the only one fetched for
+/// the host and the host was trusted because its other URL was public.
+#[test]
+fn two_catalogs_on_one_host_the_private_first_never_publish_the_private_id() {
+    let e = setup("tel-published-same-host");
+    let mdir = e.home.join("c3").join("maintain");
+    std::fs::create_dir_all(&mdir).unwrap();
+    // what an older build left: one record for the host, holding both ids
+    let legacy = serde_json::json!({"models": {"sources": [
+        {"source": "web:models.example.com", "ids": ["z-ai/glm-9-cfg", "z-ai/glm-9-trusted"]}
+    ]}});
+    std::fs::write(mdir.join("state.json"), legacy.to_string()).unwrap();
+    let private = "https://models.example.com/private/v1/models";
+    let public = "https://models.example.com/public/v1/models";
+    let cfg = serde_json::json!({"config_version": 1,
+        "model_catalogs": [private, {"url": public, "public": true}]});
+    std::fs::write(e.home.join("c3").join("config.json"), cfg.to_string()).unwrap();
+    let private_body = e.work.join("private.json");
+    let public_body = e.work.join("public.json");
+    std::fs::write(
+        &private_body,
+        r#"{"data":[{"id":"z-ai/glm-9-cfg","created":1794000000}]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &public_body,
+        r#"{"data":[{"id":"z-ai/glm-9-trusted","created":1794000000}]}"#,
+    )
+    .unwrap();
+    let map = format!(
+        "{private}|{};{public}|{}",
+        private_body.display(),
+        public_body.display()
+    );
+    let log = e.work.join("http.log");
+    let log_s = log.to_string_lossy().into_owned();
+    let o = e.c3(
+        &["maintain", "--models"],
+        &[
+            ("CODEX_CONSULT_TEST_MODE", "1"),
+            ("C3_MAINTAIN_MODELS", "announce"),
+            ("C3_MAINTAIN_TEST_HTTP", map.as_str()),
+            ("C3_MAINTAIN_TEST_HTTP_LOG", log_s.as_str()),
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    let asked = std::fs::read_to_string(&log).unwrap_or_default();
+    assert_eq!(
+        asked.lines().collect::<Vec<_>>(),
+        vec![private, public],
+        "both URLs of the host were fetched"
+    );
+    let st: Value =
+        serde_json::from_str(&std::fs::read_to_string(mdir.join("state.json")).unwrap()).unwrap();
+    let sources: Vec<String> = st["models"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["source"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(
+        sources,
+        vec![
+            "web:https://models.example.com:443/private/v1/models".to_string(),
+            "web:https://models.example.com:443/public/v1/models".to_string(),
+        ],
+        "each URL under its own key; the host-keyed record is replaced"
+    );
+    let mut want = CLOSED_LISTS_ONLY;
+    want[4] = "glm-9-trusted"; // the declared catalog's id, for its own vendor
+    assert_eq!(
+        backfilled_models(&e),
+        want,
+        "glm-9-cfg (the private catalog's id, row 2) is never sent by name"
+    );
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
 #[test]
 fn without_a_maintain_state_the_closed_lists_decide() {
     let e = setup("tel-published-none");
     let models = backfilled_models(&e);
-    assert_eq!(
-        models,
-        [
-            "other", "other", "other", "other", "other", "other", "other", "other", "glm-5.3",
-            "other", "opus",
-        ]
-    );
+    assert_eq!(models, CLOSED_LISTS_ONLY);
     let _ = std::fs::remove_dir_all(&e.work);
 }
 

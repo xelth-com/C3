@@ -109,7 +109,7 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - **`c3 maintain` reads public model catalogs.** Inside the weekly pass (or on request) the model
   step also fetches `https://openrouter.ai/api/v1/models` with a plain keyless GET (https,
   same-host redirects only, 15 s, 4 MB / 5000 ids at most; `:variant` ids skipped, every id through
-  the strict model-id shape) and records it as `web:<host>`. A catalog id is a successor CANDIDATE
+  the strict model-id shape) and records it under its URL (`web:<url>`). A catalog id is a successor CANDIDATE
   for every active, unprotected entry - also an endpoint entry whose endpoint gives no
   `/v1/models` (Alibaba, Xiaomi MiMo, BytePlus) - and is seated only after the smoke passed on that
   entry's own plan; a failing one is reported "seen in the catalog, not served by this plan" and
@@ -258,6 +258,98 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **`--rev` and `--diff` reach the http reviewer (F19-1, F20-1).** Under `--rev` the http engine
+  got no worktree, printed a warning and sent a pack of the LIVE tree - uncommitted files included -
+  to a remote model while the operator asked for a frozen revision; with `--diff` its prompt said
+  "read the patch" while the pack, the only thing an http reviewer receives, held no patch. Now an
+  http run under `--rev` gets the same throwaway worktree of that revision as every other engine
+  and its pack is built from it (the revision's files, the brief as staged there, no index - the
+  index describes the live tree; no worktree made means nothing is sent, never the live tree). A
+  `--diff` patch is a bound part of the pack, in full after the focus files through the pack's
+  sanitizer (sidecar role `patch`); a patch that does not fit the pack budget refuses the run before
+  any request, naming the sizes. The dry run says the pack is built from the worktree when the run
+  starts instead of measuring the live tree. Test: a repository whose revision, HEAD and uncommitted
+  file differ - the pack shows the revision's file, never the live one, carries the patch, and is
+  refused with a too-small budget or without a worktree.
+- **A `--diff` patch never carries a secret off the machine (F19-2, F18-4, F20-6).** A one-revision
+  `--diff` put every untracked, not-ignored file into the patch handed to the reviewer, a remote one
+  included. Every patch now passes through the redactor packs for remote models use: a
+  secret-shaped value is replaced by its `[REDACTED:<kind>]` marker, the rest is kept, the sha256 is
+  of the file as written, the ledger's `diff` record gains `redactions` and the prompt says the
+  patch is for reading and how many values were redacted. Untracked files stay in for the
+  one-revision form (they are the change), but a file a `.eckignore` excludes, or a TRACKED file the
+  repository's ignore rules match, never enters a patch of either form. Test: a patch with an
+  OpenRouter-shaped key, an untracked note, an `.eckignore`d file and a force-added ignored file.
+- **One patch file per content (F19-3, F20-3).** The patch was named after the brief only, so two
+  runs (or two panel members) with different ranges wrote the same path and a ledger `diff.sha256`
+  could describe bytes another run wrote. The file is now `<stem>.<sha8>.patch`, written by an
+  exclusive create (a new temp file hard-linked to the name, so a sibling never reads half a file):
+  the same bytes reuse the existing file, other bytes get their own name, and a file of that name
+  holding other bytes - or a link - is never overwritten (the run fails instead). Panel members
+  share a stem (a member without a conventional brief names it after the panel's first number).
+  Test: two ranges sharing one stem, a sibling's reuse, a foreign file left untouched.
+- **Under `--rev` the records name the revision that was read (F18-1, F19-6).** The handoff's
+  `Reviewed:` line, the ledger's `base_commit` / `reviewed_revision` and every new finding's
+  `source.base_commit` named the live HEAD while the reviewer read an older revision, so later
+  reviews judged those findings against code nobody reviewed. They now name the worktree's
+  revision (its fingerprint taken right after the staging); the live HEAD at launch is recorded
+  beside it as `live_head` (ledger, finding source, `Live HEAD at launch:` in the handoff) with the
+  live tree's `live_tree_sha256`. When the reviewed revision is not the live HEAD the task's open
+  findings are not offered for re-checking: the prompt (and an http pack) says in one sentence how
+  many were recorded against another revision, the reply's prior findings are ignored for the store
+  (no `reviewer_checks`, ledger `prior_findings_withheld: n`) and no prior blocker applies (seen
+  live 2026-11-22: reviewers of an old revision marked 34 already-fixed findings still-open). Test:
+  a kimi `--rev` review of an older commit after a finding was filed on HEAD.
+- **A review never takes the live repository's index lock (F18-2, F20-2).** Making a throwaway
+  worktree ran `git status --porcelain` on the live repository without `--no-optional-locks`, so a
+  stale stat cache made it rewrite the index and hold `index.lock` while a parallel session worked.
+  Every git call of the worktree set-up and check (and of the `--diff` patch) now runs with
+  `GIT_OPTIONAL_LOCKS=0`, the status call also with `--no-optional-locks`. Test: a stale index
+  (a tracked file's mtime moved, content unchanged) keeps its bytes through a worktree's creation,
+  staging and checks, and no `index.lock` is left.
+- **The bridge's own patch is not a tree change (F18-3).** The `--diff` patch was written into the
+  live handoffs after the collab snapshot, so an otherwise clean isolated run was recorded
+  `tree_check: warned` and a live-tree agy run without tool calls could be failed for the bridge's
+  write. The snapshot is now taken after the patch is written, and the patch's stem (any hash, and
+  its write temp) is among the run's own files. Test: a claude framing run and a frozen-HEAD
+  diff-review with `--diff` both record `clean`.
+- **Staging never reads through a link (F18-5).** A brief or a `handoffs/` directory that is a
+  symlink or junction was followed, and its target's bytes - from outside the repository - copied
+  into the worktree. A brief that is a link, or reached through one from outside the repository,
+  now refuses the run before anything starts (preflight and staging alike, preflight-class wording);
+  a `handoffs/` directory or `state.md` that is a link, and every link below `handoffs/`, is
+  skipped and counted in a run warning. Test: a junction'd `handoffs/`, a junction below it and a
+  brief behind a junction, with an outside sentinel that never reaches the worktree.
+- **A link in the reviewed revision cannot lead out of the worktree (F18-6).** A reviewer that
+  wrote through a link the revision carries could change its target - the live checkout included -
+  and the run stayed usable. Right after the checkout every link in the throwaway worktree whose
+  target does not resolve inside it (outside, or dangling) is unlinked, never followed or descended;
+  a link that cannot be removed makes the worktree unusable. The prompt names the removed entries
+  as data (at most 20, the rest counted) and the handoff's `Isolation:` line counts them. Test: a
+  committed link and a planted junction to the live checkout are removed, a link inside stays.
+- **The worktree check sees git-ignored paths (F20-4).** The before / after comparison of a
+  throwaway worktree used `git status` without `--ignored`, so a kimi or codex reviewer's write
+  into an ignored path went unseen while the doc claimed "gitignored or not". The comparison now
+  includes every ignored file (`--ignored`, each file listed); the records' fingerprint still leaves
+  them out, and the doc says exactly what is covered. Tests: a unit write into `build/` and an
+  ignored file; a kimi run writing an ignored file fails.
+- **The `--rev` prompt claims only what was staged (F18-7).** It said the task's handoffs were
+  copied whenever the collab directory was stageable, even without a `handoffs/` directory; the
+  prompt is now completed after the staging and names the handoffs only when files were copied.
+  An event stream is recognised by both names the bridge writes - `*.events.jsonl` and a bare
+  `events.jsonl` - and neither is staged. Tests: no `handoffs/` means no claim; `events.jsonl` is
+  left out.
+- **`--rev` and `--diff` values can never become git options (F19-5, second half).** The CLI and
+  the MCP tool now check both values with the same functions (one token, no blank or control
+  character - a line break included -, not starting with `-`, at most 256 characters), the MCP tool
+  before it starts anything; and every git call that receives one passes it after
+  `--end-of-options`. Test: `--output=<file>`, `-c` and values with a line break or a control
+  character sent through the MCP tool are refused by the tool with the CLI's text, no file is
+  created and no consultation starts.
+- **The agy denial-retry prompt carries the reviewer role sentence (R1 leftover).** The other
+  secondary prompts got the reviewer-is-not-a-coordinator sentence in wave R1; the agy denial retry
+  now carries it too (structured and raw), asserted in
+  `the_secondary_prompts_carry_the_role_constraint`.
 - **`c3 doctor --fix` never removes through a link and never removes a worktree a live review may
   own (F13-1, F13-8, F12-1).** Staleness read the throwaway path with `std::fs::metadata`, which
   follows a link: a junction or symlink named `c3-kimi-wt-<32 hex>` in the temp directory, pointing
@@ -423,7 +515,7 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   catalog or page made the ids it listed "published", in one global set: a keyless internal catalog
   listing a private endpoint's model would have let telemetry send that name, even for a reviewer
   of an unknown vendor; and the `anthropic` class sent every id of the Claude shape. Now only the
-  built-in catalog host (openrouter.ai) and a configured catalog or page declared `"public": true`
+  built-in catalog (openrouter.ai) and a configured catalog or page declared `"public": true`
   (`"model_catalogs"` takes `{"url": ..., "public": true}` beside a bare URL; a page takes
   `"public"`) confer published status, decided at send time from the code and the current config,
   and a published id counts only for the vendor class its source attributes it to (OpenRouter's
@@ -499,8 +591,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   catalog id dated more than a day in the future is refused; if ANY public source dates a candidate
   not after the seated id it lists too, the candidate is refused whatever another source says (a
   second catalog's recent, unanchored copy no longer outvotes it); such a pair is recorded in the
-  maintain state (`models.older`, at most 500) and stays refused in every later pass, so a catalog
-  that re-stamps an old model later cannot bring it back. An id from the entry's own list (`grok
+  maintain state (`models.older`) and stays refused in every later pass while its seated model is
+  in the roster, so a catalog that re-stamps an old model later cannot bring it back (at most 500
+  pairs are kept, but the cap never evicts a pair whose seated id is still an active roster model:
+  it applies to the other pairs, oldest first, and when the protected pairs alone exceed it they are
+  all kept). An id from the entry's own list (`grok
   models`, `agy models`, an endpoint's list) still needs no date, but goes through the same refusals
   when a public source dates both ids - `grok-4.20` beside `grok-4.7` in `grok models` is no longer
   smoked when the catalog dates it older. Only ids the version rule takes for a successor are gated.
@@ -539,6 +634,87 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   It now locates the string value of `reviewers[<position>].model` by parsing (a repeated key on the
   path is refused), checks it still decodes to the old model, replaces the whole literal, and
   verifies that the re-parsed roster equals the old one except that one field.
+- **`c3 maintain`: a public catalog or page is never read from a local or private address
+  (F15-1).** The URL checks constrained the URL text only: an IP literal or `localhost` was
+  accepted, and a public host name that resolved - or was rebound - to `127.0.0.1` or a private
+  network received the keyless GET, on every redirect hop. A catalog or page URL whose host is an IP
+  literal (any form the URL parser reads as one) or `localhost` (any case, trailing dot included)
+  is now refused when the C3 config is loaded and again before the fetch. The name lookup of a
+  public GET refuses a name of which any address is loopback, private (RFC 1918, unique local
+  `fc00::/7`), link-local, unspecified or multicast, so no connection is made to it; and after the
+  connection, an answer whose peer address (ureq's `remote_addr`) is in those classes - or unknown -
+  is discarded before its body is read. The same checks run at every redirect hop. An endpoint's
+  keyed model list and the kimi installer are not public sources and keep their own rules.
+- **`c3 maintain`: one absolute deadline really bounds the whole public fetch (F14-1).** The 15 s
+  deadline was checked only between redirect hops: every hop's connect phase got the full 15 s again
+  (ureq's connect timeout outranks the request's own), and the body was read in one call with no
+  deadline check, so a trickling body or a stalled later hop ran past it. Each hop's client now gets
+  only the time that remains for its connect, the name lookup runs on its own thread under the same
+  deadline (ureq cannot interrupt it), and the body is read in 8 KiB chunks with the deadline checked
+  between them; a stalled connect, lookup or trickling body ends with the deadline's error at 15 s
+  overall. The same reader and per-hop client serve the installer and endpoint GETs under their own
+  deadlines.
+- **`c3 maintain`: a recorded "older" refusal is not forgotten while its seated model is in the
+  roster (F15-2, F14-2).** The refusals were a 500-pair FIFO: after 500 newer pairs the oldest was
+  evicted, and a catalog that then re-dated that candidate newer could make it a swap candidate
+  again. Eviction at the cap now never drops a pair whose seated id is still an active roster model;
+  the cap applies to the other pairs, oldest first, and when the protected pairs alone exceed it,
+  they are all kept.
+- **`c3 maintain`: an engine smoke runs only on the roster entry it was chosen for (F15-3).** The
+  entry-bound smoke checked only that the position still named the provider: an entry edited in the
+  meantime to another model, endpoint or plan of the same provider was smoked - with the stale model
+  forced onto the new entry's endpoint and quota. The target now carries the model the entry held
+  when it was chosen (the old id for a model swap), and the smoke is "not run: the roster entry
+  changed" - a failure, so the update or the swap is held - when the position no longer holds that
+  provider AND that model. The check runs before anything is created, in test mode too. Tested end
+  to end: a fake update check edits the seat's model during the pass, the update is held and
+  nothing is installed; without the edit the same pass updates.
+- **`c3 maintain`: the smoke's one-entry roster is created safely (F14-3).** It was written with a
+  plain `fs::write` to a predictable sibling of the scratch repository in the shared temp directory,
+  so a link planted there redirected the write. The smoke now creates its own scratch directory with
+  an exclusive create (a path that already exists fails the smoke closed and is left as it is),
+  puts the scratch repository in `repo/` inside it and the one-entry roster beside it, created with
+  `create_new`, and removes the directory when the smoke ends; nothing is written at a sibling path.
+- **`c3 maintain`: the entry-bound smoke reads the protection fields as the router does (F14-4).**
+  `bound_roster` read `ext.reserve_percent` with `as_i64` (a float or string counted as 0),
+  `ext.on_request` as a literal boolean and the inactive list by its own exact match, so an entry
+  the router treats differently could be smoked. It now loads the roster with the router's own
+  loader (`validate_roster`) and uses that entry's `reserve_percent`, `on_request` and `inactive`
+  marks; a roster the loader refuses (a non-integer or out-of-range `reserve_percent`, a non-boolean
+  `on_request`, a malformed `ext.c3.inactive`) refuses the smoke too, with the loader's reason.
+- **`c3 maintain`: a candidate dated in the future is not evidence (F14-5).** Only a date more than
+  a day ahead was refused; a catalog stamp up to 24 h in the future still qualified a candidate,
+  anchored or not. A `created` stamp later than now plus ten minutes now never qualifies a
+  candidate in any branch of the date gate - it is announced only ("dated in the future by the
+  catalog - announce only"), never smoked and never recorded as older; beyond a day it stays
+  negative evidence that refuses the candidate whatever another source says.
+- **`c3 maintain`: pending recovery never installs an older release than the one installed
+  (F15-5).** The "newer release" step compared the vendor's latest with the version read BEFORE the
+  recovery smoke and rollback: a failed rollback (or a manual update meanwhile) that left 1.0.90 on
+  disk after a failing 1.0.80 still let C3 install the vendor's 1.0.82. The installed version is now
+  read again after the smoke and any rollback, and a release that is not newer than what is
+  installed NOW is not installed (`<engine> 1.0.82 is not tried: 1.0.90 is installed now`); the
+  pending record stays unresolved. Tested end to end with a fake rollback that leaves 1.0.90.
+- **`C3_MAINTAIN_MODELS=off` really writes nothing for `c3 maintain --models` (F15-6).** The switch
+  was read after the pass lock was taken, so the maintain state directory and a lock file were
+  created - and a stale lock could be removed - before the "the model step is off" line. The switch
+  is now read before the lock and before the state directory: an explicit `--models` with the switch
+  off prints its one line and touches no file.
+- **Telemetry trust is per catalog URL, not per host (F16-1, F17-5).** The maintain state keyed a
+  catalog by `web:<host>`, the fetch kept only the first configured URL of a host, and a host was
+  trusted when ANY of its URLs was declared `"public": true` (the built-in catalog's host always) -
+  so a non-public catalog listed first on that host supplied the ids telemetry then sent by name. A
+  catalog's identity is now its full URL (scheme, host, port, path, query - `web:https://openrouter.ai:443/api/v1/models`):
+  every configured URL is fetched and recorded under its own key, and an id counts as published
+  only when the URL it was read from is the built-in catalog or is itself declared public. A state
+  file of an older build (host keys) is read without error; its host-keyed ids are not trusted until
+  a fetch of a catalog on that host rewrites the record. Wherever a catalog is NAMED in output (the
+  pass's "model id(s) collected" line, which the detached pass also writes to `last-run.log`) it is
+  shown without its query - which may hold a token - as scheme, host, the port only when it is not
+  443, and the path, with ` (query not shown)` appended when a query was dropped; the stored key
+  keeps the full URL. Tested end to end through `c3 maintain
+  --models` and `c3 telemetry --backfill-ratings`: two catalogs on one host, the private one first -
+  its id goes out as `other`, the declared one's by name.
 
 - **The `kimi` engine's throwaway worktree removal could follow a link.** The reviewer can run
   commands in that worktree; a junction or symlink it left there (e.g. a `node_modules` junction into

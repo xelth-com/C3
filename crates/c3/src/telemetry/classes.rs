@@ -1191,8 +1191,8 @@ mod tests {
         // (possibly private) holds glm-9-secret; a configured page lists glm-6
         let state: ModelsState = serde_json::from_str(
             r#"{"sources":[
-                {"source":"web:openrouter.ai","ids":["qwen/qwen4-max","google/gemini-4-hydrogen","anthropic/claude-opus-6-1","mistralai/mistral-9"]},
-                {"source":"web:models.example.com","ids":["z-ai/glm-9-cfg","glm-9-plain"]},
+                {"source":"web:https://openrouter.ai:443/api/v1/models","ids":["qwen/qwen4-max","google/gemini-4-hydrogen","anthropic/claude-opus-6-1","mistralai/mistral-9"]},
+                {"source":"web:https://models.example.com:443/v1/models","ids":["z-ai/glm-9-cfg","glm-9-plain"]},
                 {"source":"endpoint:https://api.z.ai:443/api/v1|ZAI_API_KEY|zai","ids":["glm-9-secret"]},
                 {"source":"page:zai-docs","ids":["glm-6"]}
             ]}"#,
@@ -1270,6 +1270,18 @@ mod tests {
         assert_eq!(model_token_with(zai, "glm-6", &declared), "glm-6");
         assert_eq!(model_token_with(alibaba, "glm-6", &declared), "other");
         assert_eq!(model_token_with(zai, "glm-9-secret", &declared), "other");
+        // (F16-1, F17-5) trust is per URL: another catalog on the declared host is not trusted by
+        // that declaration, and an older build's host-keyed record is trusted by nothing
+        let other_url: ModelsState = serde_json::from_str(
+            r#"{"sources":[
+                {"source":"web:https://models.example.com:443/private/v1/models","ids":["z-ai/glm-9-private"]},
+                {"source":"web:openrouter.ai","ids":["qwen/qwen4-max"]}
+            ]}"#,
+        )
+        .unwrap();
+        let p = published_from(&other_url, &trusted_sources(Some(&cfg)));
+        assert_eq!(model_token_with(zai, "glm-9-private", &p), "other");
+        assert_eq!(model_token_with(alibaba, "qwen4-max", &p), "other");
     }
 
     #[test]

@@ -154,8 +154,23 @@ struct Entry {
 }
 
 /// Compute the revision fingerprint (`Get-RevisionInfo`). `collab_root` is excluded from
-/// both hashes when it lies under `root`.
+/// both hashes when it lies under `root`. Git-ignored files are not part of it.
 pub fn revision_info(root: &Path, collab_root: Option<&Path>) -> RevisionInfo {
+    revision_info_impl(root, collab_root, false)
+}
+
+/// (0.2.5 R5, F20-4) [`revision_info`] with the git-ignored files of the tree included
+/// (`git status --ignored`, each file listed): the before / after snapshot of a reviewer's
+/// throwaway worktree, where a write into an ignored path is the reviewer's write too.
+pub fn revision_info_with_ignored(root: &Path, collab_root: Option<&Path>) -> RevisionInfo {
+    revision_info_impl(root, collab_root, true)
+}
+
+fn revision_info_impl(
+    root: &Path,
+    collab_root: Option<&Path>,
+    include_ignored: bool,
+) -> RevisionInfo {
     let mut info = RevisionInfo {
         base_commit: "unknown".into(),
         short_sha: "unknown".into(),
@@ -163,16 +178,17 @@ pub fn revision_info(root: &Path, collab_root: Option<&Path>) -> RevisionInfo {
         fingerprint_note: "no git".into(),
         ..Default::default()
     };
-    let status = match git_bytes(
-        root,
-        &[
-            "--no-optional-locks",
-            "status",
-            "--porcelain=v1",
-            "-uall",
-            "-z",
-        ],
-    ) {
+    let mut status_args = vec![
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "-uall",
+        "-z",
+    ];
+    if include_ignored {
+        status_args.push("--ignored");
+    }
+    let status = match git_bytes(root, &status_args) {
         Some(b) => b,
         None => return info,
     };
@@ -252,7 +268,7 @@ pub fn revision_info(root: &Path, collab_root: Option<&Path>) -> RevisionInfo {
         git_mode_map(root)
     };
     for e in entries.iter_mut() {
-        if e.xy == "??" || head.is_empty() {
+        if e.xy == "??" || e.xy == "!!" || head.is_empty() {
             continue;
         }
         e.mode = mode_map
@@ -311,7 +327,11 @@ pub fn revision_info(root: &Path, collab_root: Option<&Path>) -> RevisionInfo {
             "collab dir '{c}' excluded ({excluded_count} entries)"
         ));
     }
-    notes.push("ignored files excluded".into());
+    notes.push(if include_ignored {
+        "ignored files included".into()
+    } else {
+        "ignored files excluded".into()
+    });
     notes.push("untracked file modes not recorded".into());
     if dirs > 0 {
         notes.push(format!(

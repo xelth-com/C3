@@ -623,14 +623,20 @@ fn brief_reviewed_line(ctx: &Context) -> String {
             short_hash(&ctx.brief_sha)
         )
     };
-    let tree = if ctx.revision.tree_sha256.is_empty() {
+    // (R5, F18-1) the revision the reviewer READ (under `--rev` the worktree's), the live HEAD at
+    // launch beside it when that differs
+    let rv = ctx.reviewed_info();
+    let tree = if rv.tree_sha256.is_empty() {
         "(none)".to_string()
     } else {
-        short_hash(&ctx.revision.tree_sha256)
+        short_hash(&rv.tree_sha256)
     };
-    let reviewed_line = format!(
+    let mut reviewed_line = format!(
         "Reviewed: {}, base {}, tree sha256 {}, {} changed files.",
-        ctx.revision.reviewed_revision, ctx.revision.base_commit, tree, ctx.revision.changed_files
+        rv.reviewed_revision, rv.base_commit, tree, rv.changed_files
     );
+    if let Some(live) = ctx.live_head() {
+        reviewed_line.push_str(&format!(" Live HEAD at launch: {live}."));
+    }
     format!("{brief_line} {reviewed_line}")
 }

@@ -66,15 +66,16 @@ pub struct ConsultArgs {
     /// base..head or base...head (diff-review / acceptance only).
     #[arg(long, default_value = "")]
     pub range: String,
-    /// Review this revision: every reviewer that runs in a local working directory runs in a
-    /// throwaway detached worktree of it (the brief and the task's handoffs copied in), removed
-    /// after the run; a panel gives every member its own worktree of the same commit.
+    /// Review this revision: every reviewer runs in a throwaway detached worktree of it (the brief
+    /// and the task's handoffs copied in; an http reviewer's pack is built from it), removed after
+    /// the run; a panel gives every member its own worktree of the same commit.
     #[arg(long, default_value = "")]
     pub rev: String,
     /// Hand the reviewer the change as a patch: `git diff <range>` (base..head, base...head, or one
-    /// revision against the working tree with new files) is written into the task's handoffs
-    /// (.collab/ and .eck/ left out) and named in the prompt; the ledger records the range and the
-    /// patch's sha256.
+    /// revision against the working tree with new files) is written into the task's handoffs as
+    /// `<stem>.<sha8>.patch` (.collab/, .eck/ and ignored or .eckignore'd files left out,
+    /// secret-shaped values redacted) and named in the prompt (an http reviewer gets it in its
+    /// pack); the ledger records the range, the patch's sha256 and the redaction count.
     #[arg(long, default_value = "")]
     pub diff: String,
     /// The handoff base name (a slug); default `reply`.

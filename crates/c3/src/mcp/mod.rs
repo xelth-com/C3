@@ -320,6 +320,15 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
                 ("telemetry", "--telemetry"),
             ] {
                 if let Some(val) = opt_str(args, key) {
+                    // (R5, F19-5) `rev` / `diff` reach git: refused here, before anything starts,
+                    // by the same checks the CLI runs (no value can become a git option)
+                    match key {
+                        "rev" => crate::consult::reviewed::check_rev_value(&val)?,
+                        "diff" => {
+                            crate::consult::reviewed::parse_diff_spec(&val)?;
+                        }
+                        _ => {}
+                    }
                     v.push(flag.into());
                     v.push(val);
                 }

@@ -348,7 +348,9 @@ fn validate(root: &Value) -> Result<C3Config, String> {
 }
 
 /// An https URL with a host and no userinfo (a public source is fetched keyless; a URL carrying a
-/// username or password is refused). The value is never echoed.
+/// username or password is refused), (F15-1) whose host is a NAME - never an IP literal or
+/// `localhost`: a public source is never read from the local machine or a private network. The
+/// value is never echoed.
 fn is_public_https_url(s: &str) -> bool {
     match url::Url::parse(s) {
         Ok(u) => {
@@ -356,6 +358,7 @@ fn is_public_https_url(s: &str) -> bool {
                 && u.host_str().is_some_and(|h| !h.is_empty())
                 && u.username().is_empty()
                 && u.password().is_none()
+                && crate::maintain::env::is_named_public_host(s)
         }
         Err(_) => false,
     }
@@ -373,7 +376,7 @@ fn validate_model_catalogs(v: &Value) -> Result<Vec<ModelCatalogConfig>, String>
         ));
     }
     let bad_url = || {
-        "c3 config: each model_catalogs entry must be an https URL without credentials".to_string()
+        "c3 config: each model_catalogs entry must be an https URL on a host name (no IP address, no localhost) without credentials".to_string()
     };
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
@@ -447,7 +450,7 @@ fn validate_model_pages(v: &Value) -> Result<Vec<ModelPageConfig>, String> {
             Some(s) if is_public_https_url(s) => s.to_string(),
             _ => {
                 return Err(format!(
-                    "c3 config: model page {name} needs an https url without credentials"
+                    "c3 config: model page {name} needs an https url on a host name (no IP address, no localhost) without credentials"
                 ))
             }
         };
@@ -919,6 +922,31 @@ mod tests {
                 "unknown key 'vendor'",
             ),
             (r#"{"config_version":1,"model_catalogs":[7]}"#, "https URL"),
+            // (F15-1) never an IP literal or localhost, for a catalog or a page
+            (
+                r#"{"config_version":1,"model_catalogs":["https://127.0.0.1/v1/models"]}"#,
+                "no IP address, no localhost",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":[{"url":"https://[::1]:8443/m","public":true}]}"#,
+                "no IP address, no localhost",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":["https://10.0.0.7/m"]}"#,
+                "no IP address, no localhost",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":["https://LOCALHOST./m"]}"#,
+                "no IP address, no localhost",
+            ),
+            (
+                r#"{"config_version":1,"model_pages":[{"name":"a","url":"https://192.168.1.4/","pattern":"(a)"}]}"#,
+                "no IP address, no localhost",
+            ),
+            (
+                r#"{"config_version":1,"model_pages":[{"name":"a","url":"https://localhost:3000/","pattern":"(a)"}]}"#,
+                "no IP address, no localhost",
+            ),
         ] {
             let p = write(&d, body);
             let e = load_from(&p).unwrap_err();

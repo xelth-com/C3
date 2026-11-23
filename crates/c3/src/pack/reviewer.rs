@@ -52,6 +52,29 @@ pub struct PackOpts {
     pub conn: Option<String>,
 }
 
+/// (0.2.5 R5) What a consultation adds to a reviewer pack beyond its recipe.
+#[derive(Debug, Clone, Default)]
+pub struct PackExtras {
+    /// (F19-1, F20-1) The run's `--diff` patch: a bound part of the pack, shown in full after the
+    /// focus files through the same sanitizer; a patch that does not fit the budget refuses the
+    /// pack (the run is refused before any request).
+    pub patch: Option<PackPatch>,
+    /// (F18-1, F19-6) Shown in place of the open-findings snapshot (a review of another revision
+    /// than the live HEAD is not shown the task's open findings).
+    pub findings_note: Option<String>,
+}
+
+/// The `--diff` patch a pack carries.
+#[derive(Debug, Clone)]
+pub struct PackPatch {
+    /// The patch file's repo-relative path (the name the records give it).
+    pub rel: String,
+    /// The patch file on disk.
+    pub path: PathBuf,
+    /// The `--diff` value (`git diff <range>`).
+    pub range: String,
+}
+
 /// What one federation peer contributed to a pack (M11): the peer's name (a slug — the only
 /// value that ever leaves this record), how many hits it returned and how many became excerpts,
 /// and the tokens they cost. The pack sidecar records these; the consult dry run prints one line
@@ -153,7 +176,7 @@ fn open_findings_snapshot(collab_root: &Path, task: &str) -> (String, usize) {
 
 /// Assemble the reviewer pack and its sidecar (local only). Does not write anything.
 pub fn build(opts: &PackOpts) -> Result<ReviewerPack, String> {
-    build_inner(opts, &[]).map(|(pack, _)| pack)
+    build_inner(opts, &[], &PackExtras::default()).map(|(pack, _)| pack)
 }
 
 /// Assemble a reviewer pack that may include federation-peer excerpts (M11). The peers must
@@ -164,7 +187,18 @@ pub fn build_with_peers(
     opts: &PackOpts,
     peers: &[crate::index::ResolvedPeer],
 ) -> Result<(ReviewerPack, Vec<PeerPackStat>), String> {
-    build_inner(opts, peers)
+    build_inner(opts, peers, &PackExtras::default())
+}
+
+/// (0.2.5 R5) [`build_with_peers`] with a consultation's [`PackExtras`] (its `--diff` patch, a note
+/// in place of the open findings). With the default extras the pack is byte-for-byte the plain
+/// one.
+pub fn build_with_extras(
+    opts: &PackOpts,
+    peers: &[crate::index::ResolvedPeer],
+    extras: &PackExtras,
+) -> Result<(ReviewerPack, Vec<PeerPackStat>), String> {
+    build_inner(opts, peers, extras)
 }
 
 /// Resolve, from the user configuration, the peers this project may use in a pack under the
@@ -192,6 +226,7 @@ pub fn resolve_pack_peers(
 fn build_inner(
     opts: &PackOpts,
     peers: &[crate::index::ResolvedPeer],
+    extras: &PackExtras,
 ) -> Result<(ReviewerPack, Vec<PeerPackStat>), String> {
     // Resolve the brief path (repo-relative or absolute) and read it.
     let brief_abs = if opts.brief.is_absolute() {
@@ -204,7 +239,7 @@ fn build_inner(
     let brief_rel = c3_core::paths::repo_relative(&opts.repo_root, &brief_abs)
         .unwrap_or_else(|| opts.brief.to_string_lossy().replace('\\', "/"));
 
-    let discovered = discover::discover(
+    let mut discovered = discover::discover(
         &opts.repo_root,
         &DiscoverOpts {
             max_file_size: opts.max_file_size,
@@ -213,6 +248,9 @@ fn build_inner(
             eck_hidden: false,
         },
     );
+    // (0.2.5 R5) a pack built from a linked worktree (an http review under `--rev`) never carries
+    // its `.git` FILE (the local path of the repository's admin directory)
+    discovered.retain(|e| e.rel != ".git");
     let focus_set = build_set(&opts.focus);
     let focus: Vec<FileEntry> = discovered
         .iter()
@@ -278,7 +316,10 @@ fn build_inner(
 
     // Open findings.
     content.push_str("## Open findings\n\n");
-    if let Some(task) = &opts.task {
+    if let Some(note) = &extras.findings_note {
+        content.push_str(note.trim_end());
+        content.push_str("\n\n");
+    } else if let Some(task) = &opts.task {
         let (snap, _n) = open_findings_snapshot(&opts.collab_root, task);
         content.push_str(&snap);
         content.push('\n');
@@ -301,6 +342,33 @@ fn build_inner(
             budget::ext_of(&f.rel),
             with_line_numbers(&safe)
         ));
+    }
+
+    // (0.2.5 R5, F19-1 / F20-1) The `--diff` patch under review: in full, through the same
+    // sanitizer, counted against the budget first - a patch that does not fit refuses the pack
+    // (the run then sends nothing), so the reviewer is never told about a change it cannot see.
+    if let Some(p) = &extras.patch {
+        let text = std::fs::read(&p.path)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .map_err(|e| format!("the -Diff patch `{}` cannot be read ({e})", p.rel))?;
+        let (safe, n) = redact::redact(&text);
+        let section = format!(
+            "## Patch under review (`{}`)\n\nThe change under review is this patch (`git diff {}`); read it first and review that change.\n\n```diff\n{}\n```\n\n",
+            p.rel,
+            p.range,
+            safe.trim_end()
+        );
+        let before = budget::estimate_tokens(&content, "md");
+        let toks = budget::estimate_tokens(&section, "md");
+        if opts.budget != 0 && before + toks > opts.budget {
+            return Err(format!(
+                "the -Diff patch `{}` (about {toks} tokens) does not fit the pack budget of {} tokens after the brief and the focus files (about {before} tokens); nothing was sent - raise --pack-budget (or the roster entry's pack_tokens) or narrow the range",
+                p.rel, opts.budget
+            ));
+        }
+        redactions += n;
+        file_hashes.push((p.rel.clone(), c3_core::sha256_hex(safe.as_bytes()), "patch"));
+        content.push_str(&section);
     }
 
     // Periphery (derived), within budget, skeletonized.

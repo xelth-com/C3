@@ -16,6 +16,78 @@ fn c3_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_c3"))
 }
 
+/// (0.2.5 R5, F19-5) Hostile `rev` / `diff` values sent through the MCP tool are refused by the
+/// tool itself - with the CLI's own refusal text, before any `c3 consult` (and so any git process)
+/// starts: a value that would be a git option (`--output=<file>` would create that file), `-c`, a
+/// value with a line break or a control character.
+#[test]
+fn mcp_consult_refuses_hostile_rev_and_diff_before_anything_starts() {
+    let work = std::env::temp_dir().join(format!(
+        "c3-mcp-hostile-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&work).unwrap();
+    let marker = work.join("git-option-honoured.txt");
+    let marker_s = marker.to_string_lossy().to_string();
+    let mut child = Command::new(c3_bin())
+        .arg("mcp")
+        .current_dir(&work)
+        .env("CODEX_CONSULT_TELEMETRY", "off")
+        .env("C3_PRIORS", "off")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn c3 mcp");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut call = |id: i64, key: &str, val: &str| -> Value {
+        let mut arguments = json!({
+            "task": "t", "purpose": "framing", "brief": "brief.md", "prompt": "p",
+            "reply_name": "r" });
+        arguments[key] = Value::String(val.to_string());
+        let msg = json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": "c3_consult", "arguments": arguments } });
+        stdin.write_all(msg.to_string().as_bytes()).unwrap();
+        stdin.write_all(b"\n").unwrap();
+        stdin.flush().unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str(line.trim()).unwrap_or_else(|e| panic!("bad frame {line:?}: {e}"))
+    };
+    let output_opt = format!("--output={marker_s}");
+    let cases: Vec<(&str, &str, &str)> = vec![
+        ("rev", output_opt.as_str(), "-Rev '"),
+        ("rev", "-c", "-Rev '"),
+        ("rev", "HEAD\nx", "-Rev '"),
+        ("rev", "HEAD\u{1}x", "-Rev '"),
+        ("diff", output_opt.as_str(), "-Diff '"),
+        ("diff", "-c", "-Diff '"),
+        ("diff", "HEAD~1..HEAD\nx", "-Diff '"),
+    ];
+    for (i, (key, val, lead)) in cases.iter().enumerate() {
+        let r = call(10 + i as i64, key, val);
+        assert_eq!(r["result"]["isError"], true, "{key}={val:?}: {r}");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap_or("");
+        assert!(
+            text.starts_with(lead) && text.contains("must be"),
+            "{key}={val:?} was not refused by the tool itself: {text}"
+        );
+    }
+    drop(stdin);
+    let _ = child.wait();
+    assert!(!marker.exists(), "a value reached git as an option");
+    assert!(
+        !work.join(".collab").exists(),
+        "a consultation was started for a refused value"
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
 #[test]
 fn mcp_stdio_session() {
     let bin = c3_bin();

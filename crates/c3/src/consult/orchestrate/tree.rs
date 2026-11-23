@@ -214,6 +214,11 @@ pub(super) fn engine_tree_check(
     // siblings' handoffs are theirs to write meanwhile (each with its atomic-write temp); every
     // other collab path stays monitored.
     let mut own_prefixes = vec![own];
+    // (R5, F18-3) the bridge's own `--diff` patch file (any content hash, and its write temp) is
+    // the run's own file - a panel sibling that writes the same-named patch included
+    if let Some(d) = &ctx.diff {
+        own_prefixes.push(format!("{}/handoffs/{}.", ctx.task, d.stem));
+    }
     if let Some(m) = &ctx.panel_member {
         own_prefixes.extend(crate::engines::tree_check::panel_ignore_prefixes(
             ctx.task.as_str(),

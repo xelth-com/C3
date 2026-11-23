@@ -56,6 +56,11 @@ pub struct Target {
     pub provider: String,
     pub model: String,
     pub bind: Bind,
+    /// (F15-3) For a [`Bind::Entry`] target: the model the roster entry held when the target was
+    /// chosen (an engine smoke: `model` itself; a model swap: the seated id being replaced). The
+    /// smoke is not run when the position no longer holds that provider AND this model. Empty for
+    /// the other bindings.
+    pub seated: String,
 }
 
 /// (F02-16) What a smoke's two `c3 consult` turns resolve the reviewer against. A roster seat is
@@ -95,6 +100,7 @@ pub fn pick_target(
                     provider: p.trim().to_string(),
                     model: m.trim().to_string(),
                     bind: Bind::Label,
+                    seated: String::new(),
                 });
             }
         }
@@ -127,6 +133,7 @@ pub fn pick_target(
                 provider: e.provider.clone(),
                 model: e.model.clone(),
                 bind: Bind::Entry(e.position),
+                seated: e.model.clone(),
             },
             rank,
             headroom,
@@ -184,6 +191,7 @@ pub fn codex_custom_targets() -> Vec<Target> {
                         provider: provider.clone(),
                         model,
                         bind: Bind::CodexConfig,
+                        seated: String::new(),
                     });
                 }
             }
@@ -239,10 +247,13 @@ fn plan_headroom(roster: &Roster, e: &RosterEntry, now: DateTime<Utc>) -> (f64, 
     (mult, saturated)
 }
 
-/// Run the smoke for a target. `self_exe` is this binary; `work` a scratch directory to build the
-/// throwaway repo in; `token` the random token written into `token.txt`; `roster_text` the roster
-/// a [`Bind::Entry`] target is taken from (for a model swap: the very snapshot the gate judged).
-/// Under test mode a `C3_MAINTAIN_TEST_SMOKE` script decides the outcome without a real consult.
+/// Run the smoke for a target. `self_exe` is this binary; `work` a scratch directory path this run
+/// creates (it must not exist yet) and removes; `token` the random token written into
+/// `token.txt`; `roster_text` the roster a [`Bind::Entry`] target is taken from (for a model swap:
+/// the very snapshot the gate judged). (F15-3) The binding is resolved FIRST - in test mode too -
+/// so a seat that is no longer the one the target was chosen with is never smoked: the smoke is
+/// "not run" (a failure, which holds the update or the swap). Under test mode a
+/// `C3_MAINTAIN_TEST_SMOKE` script then decides the outcome without a real consult.
 pub fn run_smoke(
     env: &dyn Env,
     self_exe: &str,
@@ -252,6 +263,26 @@ pub fn run_smoke(
     token: &str,
     roster_text: Option<&str>,
 ) -> Smoke {
+    let bound = match target.bind {
+        Bind::Entry(position) => {
+            let Some(text) = roster_text else {
+                return Smoke::Fail(format!(
+                    "not run: the roster entry {position} could not be read for the smoke"
+                ));
+            };
+            match bound_roster(
+                text,
+                position,
+                &target.provider,
+                &target.seated,
+                &target.model,
+            ) {
+                Ok(one) => Some(one),
+                Err(why) => return Smoke::Fail(format!("not run: {why}")),
+            }
+        }
+        Bind::CodexConfig | Bind::Label => None,
+    };
     if c3_core::test_hooks::mode_on() {
         if let Some(script) = std::env::var("C3_MAINTAIN_TEST_SMOKE")
             .ok()
@@ -260,66 +291,70 @@ pub fn run_smoke(
             return scripted(&script, target);
         }
     }
-    run_consult_smoke(env, self_exe, target, engine, work, token, roster_text)
+    run_consult_smoke(env, self_exe, target, engine, work, token, bound.as_deref())
 }
 
 /// (F02-16) The one-entry roster a [`Bind::Entry`] smoke's consults see: the operator's own JSON
 /// object of `reviewers[position]` (1-based) from `roster_text`, its `model` set to `model`, and
 /// nothing else of the roster - no other entry the label could resolve to, no `require`, no
-/// `ext.c3.reviewers`. Refused when the element is gone or no longer names `provider`, when it is
-/// protected (`ext.reserve_percent`) or on-request (`ext.on_request`) - such an entry is never
-/// smoked, not even indirectly - or when the roster's `ext.c3.inactive` names its plan or label.
+/// `ext.c3.reviewers`. (F14-4) The roster is read exactly as the router reads it
+/// ([`c3_core::roster::validate_roster`]): a roster the loader refuses - an `ext.reserve_percent`
+/// that is not an integer from 1 to 50, an `ext.on_request` that is not a boolean, a malformed
+/// `ext.c3.inactive` - is refused here too, and the protection fields are the loader's. Refused
+/// (F15-3) when the position no longer holds `provider` AND `seated` (the model the target was
+/// chosen with - "the roster entry changed"), when the entry is protected or on-request - such an
+/// entry is never smoked, not even indirectly - or inactive (its plan or label on
+/// `ext.c3.inactive`, or an engine the loader does not know).
 pub fn bound_roster(
     roster_text: &str,
     position: usize,
     provider: &str,
+    seated: &str,
     model: &str,
 ) -> Result<String, String> {
+    let home = std::env::var("USERPROFILE")
+        .ok()
+        .or_else(|| std::env::var("HOME").ok());
+    let parsed = c3_core::roster::validate_roster("roster", roster_text, home.as_deref());
+    if !parsed.error.is_empty() {
+        return Err(format!(
+            "the roster does not load as the router reads it ({})",
+            loader_why(&parsed.error)
+        ));
+    }
+    let changed = || {
+        format!(
+            "the roster entry changed: reviewers entry {position} no longer holds {provider} :: {seated}"
+        )
+    };
+    let entry = parsed
+        .entries
+        .iter()
+        .find(|e| e.position == position)
+        .ok_or_else(changed)?;
+    if entry.provider != provider || entry.model != seated {
+        return Err(changed());
+    }
+    if entry.on_request {
+        return Err(format!(
+            "reviewers entry {position} runs only on request; it is never smoked"
+        ));
+    }
+    if entry.reserve_percent > 0 {
+        return Err(format!(
+            "reviewers entry {position} is protected; it is never smoked"
+        ));
+    }
+    if entry.inactive {
+        return Err(format!("reviewers entry {position} is inactive"));
+    }
     let v: serde_json::Value =
         serde_json::from_str(roster_text).map_err(|_| "the roster does not parse".to_string())?;
     let entry = position
         .checked_sub(1)
         .and_then(|i| v.get("reviewers")?.as_array()?.get(i))
         .and_then(|e| e.as_object())
-        .ok_or_else(|| format!("the roster has no reviewers entry {position}"))?;
-    let str_of = |k: &str| entry.get(k).and_then(|x| x.as_str()).unwrap_or("");
-    if str_of("provider") != provider {
-        return Err(format!(
-            "reviewers entry {position} is no longer provider {provider}"
-        ));
-    }
-    let ext = entry.get("ext");
-    if ext
-        .and_then(|x| x.get("on_request"))
-        .and_then(|b| b.as_bool())
-        == Some(true)
-    {
-        return Err(format!(
-            "reviewers entry {position} runs only on request; it is never smoked"
-        ));
-    }
-    if ext
-        .and_then(|x| x.get("reserve_percent"))
-        .and_then(|n| n.as_i64())
-        .unwrap_or(0)
-        > 0
-    {
-        return Err(format!(
-            "reviewers entry {position} is protected; it is never smoked"
-        ));
-    }
-    let inactive = v
-        .pointer("/ext/c3/inactive")
-        .and_then(|a| a.as_array())
-        .map(|a| {
-            a.iter().filter_map(|x| x.as_str()).any(|i| {
-                i.trim() == provider || (!str_of("plan").is_empty() && i.trim() == str_of("plan"))
-            })
-        })
-        .unwrap_or(false);
-    if inactive {
-        return Err(format!("reviewers entry {position} is inactive"));
-    }
+        .ok_or_else(changed)?;
     let mut one = entry.clone();
     one.insert(
         "model".to_string(),
@@ -332,14 +367,35 @@ pub fn bound_roster(
     .to_string())
 }
 
-/// A file removed when dropped (the bound roster of one smoke).
-struct RemoveOnDrop(std::path::PathBuf);
+/// The reason inside a roster loader refusal (`the reviewer roster '<path>' is not usable: <why>.
+/// Fix it ...`), or the whole message when it has another shape.
+fn loader_why(refusal: &str) -> &str {
+    refusal
+        .split_once("is not usable: ")
+        .map(|(_, rest)| {
+            rest.split_once(". Fix it or move it aside")
+                .map(|(why, _)| why)
+                .unwrap_or(rest)
+        })
+        .unwrap_or(refusal)
+}
 
-impl Drop for RemoveOnDrop {
+/// (F14-3) The smoke's own scratch directory, removed with everything in it when dropped. Only a
+/// directory this run CREATED is ever held (and so removed): a path that already existed fails the
+/// smoke before anything is written or removed.
+struct ScratchDir(std::path::PathBuf);
+
+impl Drop for ScratchDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+/// (F14-3) The one-entry roster's file name inside the smoke's scratch directory (beside the
+/// scratch repository, outside it).
+const BOUND_ROSTER_FILE: &str = "roster.json";
+/// The scratch repository's folder inside the smoke's scratch directory.
+const SCRATCH_REPO_DIR: &str = "repo";
 
 /// Per-seat call counter so a `pass-then-fail` verdict can distinguish the installed-version smoke
 /// (call 0) from the post-update smoke (call 1) in tests.
@@ -401,8 +457,12 @@ fn scripted(script: &str, target: &Target) -> Smoke {
 }
 
 /// The real two-turn smoke through `c3 consult`. Both turns run under the target's binding
-/// ([`Bind`]): a roster seat through a one-entry roster written beside the scratch repo (outside
-/// it) and named by `CODEX_CONSULT_ROSTER`, a codex-config provider with no roster.
+/// ([`Bind`]): a roster seat through its one-entry roster (`bound`, from [`bound_roster`]) named by
+/// `CODEX_CONSULT_ROSTER`, a codex-config provider with no roster. (F14-3) Everything lives in the
+/// smoke's own scratch directory `work`, created here with an exclusive create (a path that already
+/// exists fails the smoke closed, and is left as it is): the scratch repository in `work/repo`, the
+/// one-entry roster beside it (outside the repository) in `work/roster.json`, itself created with
+/// `create_new`. The directory is removed when the smoke ends.
 fn run_consult_smoke(
     env: &dyn Env,
     self_exe: &str,
@@ -410,36 +470,39 @@ fn run_consult_smoke(
     engine: &str,
     work: &std::path::Path,
     token: &str,
-    roster_text: Option<&str>,
+    bound: Option<&str>,
 ) -> Smoke {
-    // 0. the binding, before anything is created
-    let mut _bound_file: Option<RemoveOnDrop> = None;
+    // 0. the smoke's own scratch directory: created by this run, or the smoke does not run
+    if let Err(e) = std::fs::create_dir(work) {
+        return Smoke::Fail(format!(
+            "could not create the smoke's own scratch directory {} ({e}); nothing was written",
+            work.display()
+        ));
+    }
+    let _scratch = ScratchDir(work.to_path_buf());
+    let repo = work.join(SCRATCH_REPO_DIR);
     let roster_env: Option<String> = match target.bind {
         Bind::Label => None,
         Bind::CodexConfig => Some("none".to_string()),
         Bind::Entry(position) => {
-            let Some(text) = roster_text else {
+            let Some(one) = bound else {
                 return Smoke::Fail(format!(
-                    "the roster entry {position} could not be read for the smoke"
+                    "not run: the roster entry {position} could not be bound for the smoke"
                 ));
             };
-            let one = match bound_roster(text, position, &target.provider, &target.model) {
-                Ok(one) => one,
-                Err(why) => return Smoke::Fail(format!("not smoked: {why}")),
-            };
-            let name = format!(
-                "{}.roster.json",
-                work.file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "c3-maintain-smoke".to_string())
-            );
-            let path = work.with_file_name(name);
-            if std::fs::write(&path, one).is_err() {
-                return Smoke::Fail("could not write the smoke's roster".to_string());
+            let path = work.join(BOUND_ROSTER_FILE);
+            let written = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .and_then(|mut f| {
+                    use std::io::Write as _;
+                    f.write_all(one.as_bytes())
+                });
+            if let Err(e) = written {
+                return Smoke::Fail(format!("could not create the smoke's roster ({e})"));
             }
-            let s = path.to_string_lossy().into_owned();
-            _bound_file = Some(RemoveOnDrop(path));
-            Some(s)
+            Some(path.to_string_lossy().into_owned())
         }
     };
     let mut turn_env: Vec<(&str, &str)> = roster_env
@@ -454,10 +517,11 @@ fn run_consult_smoke(
         turn_env.push(("CODEX_HOME", codex_home.as_str()));
     }
 
-    // 1. a throwaway git repo with token.txt
-    if std::fs::create_dir_all(work).is_err() {
+    // 1. a throwaway git repo with token.txt, inside the scratch directory
+    if std::fs::create_dir(&repo).is_err() {
         return Smoke::Fail("could not create the smoke workdir".to_string());
     }
+    let work = repo.as_path();
     for args in [
         vec!["init", "-q"],
         vec!["config", "user.email", "maintain@c3.local"],
@@ -1112,6 +1176,7 @@ mod tests {
             provider: "grok".into(),
             model: "grok-4.7".into(),
             bind: Bind::Entry(1),
+            seated: "grok-4.7".into(),
         };
         assert_eq!(scripted("grok::grok-4.7=pass", &t), Smoke::Pass);
         assert!(matches!(
@@ -1124,6 +1189,7 @@ mod tests {
             provider: "unit-ftp".into(),
             model: "m-1".into(),
             bind: Bind::Label,
+            seated: String::new(),
         };
         assert!(matches!(
             scripted("unit-ftp::m-1=fail-then-pass", &u),
@@ -1144,6 +1210,10 @@ mod tests {
         let t = pick_target("", &r, "claude", now()).unwrap();
         assert_eq!(t.model, "qwen3.8-max");
         assert_eq!(t.bind, Bind::Entry(2));
+        assert_eq!(
+            t.seated, "qwen3.8-max",
+            "the model the seat was chosen with"
+        );
         let t = pick_target("alibaba::qwen3.7-max", &r, "claude", now()).unwrap();
         assert_eq!(t.bind, Bind::Label);
     }
@@ -1158,7 +1228,7 @@ mod tests {
             {"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://b.example/v1","env_key":"KEY_B"},"plan":"alibaba","panel":"weighty"},
             {"provider":"grok","engine":"grok","model":"grok-4.7","ext":{"reserve_percent":15}}
         ],"ext":{"c3":{"inactive":["dormant"],"reviewers":[]}}}"##;
-        let one = bound_roster(text, 2, "alibaba", "qwen4-max").unwrap();
+        let one = bound_roster(text, 2, "alibaba", "qwen3.8-max", "qwen4-max").unwrap();
         let v: serde_json::Value = serde_json::from_str(&one).unwrap();
         let mut expected: serde_json::Value = serde_json::from_str(text).unwrap();
         let mut e = expected["reviewers"][1].take();
@@ -1176,18 +1246,255 @@ mod tests {
             r.entries[0].endpoint.as_ref().unwrap().base_url,
             "https://b.example/v1"
         );
-        assert!(bound_roster(text, 1, "alibaba", "qwen4-max")
+        assert!(bound_roster(text, 1, "alibaba", "qwen3.7-max", "qwen4-max")
             .unwrap_err()
             .contains("on request"));
-        assert!(bound_roster(text, 3, "grok", "grok-4.8")
+        assert!(bound_roster(text, 3, "grok", "grok-4.7", "grok-4.8")
             .unwrap_err()
             .contains("protected"));
-        assert!(bound_roster(text, 2, "grok", "qwen4-max").is_err());
-        assert!(bound_roster(text, 4, "alibaba", "qwen4-max").is_err());
-        assert!(bound_roster(text, 0, "alibaba", "qwen4-max").is_err());
+        assert!(bound_roster(text, 2, "grok", "qwen3.8-max", "qwen4-max").is_err());
+        assert!(bound_roster(text, 4, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
+        assert!(bound_roster(text, 0, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
         let dormant = text.replace("\"plan\":\"alibaba\"", "\"plan\":\"dormant\"");
-        assert!(bound_roster(&dormant, 2, "alibaba", "qwen4-max")
+        assert!(
+            bound_roster(&dormant, 2, "alibaba", "qwen3.8-max", "qwen4-max")
+                .unwrap_err()
+                .contains("inactive")
+        );
+    }
+
+    /// (F15-3) The entry-bound smoke checks that the position still holds the provider AND the
+    /// model the target was chosen with: an entry replaced by another one of the same provider
+    /// (another model, endpoint and plan) is refused - "the roster entry changed" - and nothing of
+    /// the new entry is used.
+    #[test]
+    fn a_bound_smoke_refuses_a_position_that_no_longer_holds_the_chosen_model() {
+        let chosen = r#"{"roster_version":1,"reviewers":[
+            {"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://seat.example/v1","env_key":"KEY_SEAT"},"plan":"cheap"}
+        ]}"#;
+        assert!(bound_roster(chosen, 1, "alibaba", "qwen3.8-max", "qwen3.8-max").is_ok());
+        // the same position, the same provider - another model, endpoint and plan
+        let replaced = r#"{"roster_version":1,"reviewers":[
+            {"provider":"alibaba","engine":"claude","model":"qwen3.9-max","auth":"endpoint","endpoint":{"base_url":"https://other.example/v1","env_key":"KEY_OTHER"},"plan":"expensive"}
+        ]}"#;
+        let why = bound_roster(replaced, 1, "alibaba", "qwen3.8-max", "qwen3.8-max").unwrap_err();
+        assert_eq!(
+            why,
+            "the roster entry changed: reviewers entry 1 no longer holds alibaba :: qwen3.8-max"
+        );
+        // a model swap's smoke: the seat must still hold the OLD id, the turns use the new one
+        assert!(bound_roster(chosen, 1, "alibaba", "qwen3.8-max", "qwen4-max").is_ok());
+        assert!(bound_roster(replaced, 1, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
+
+        // through run_smoke: refused before anything is created or run (in test mode too)
+        struct NoRun(std::cell::Cell<usize>);
+        impl Env for NoRun {
+            fn run(
+                &self,
+                _p: &str,
+                _a: &[&str],
+                _e: &[(&str, &str)],
+                _c: Option<&std::path::Path>,
+            ) -> super::super::env::RunResult {
+                self.0.set(self.0.get() + 1);
+                super::super::env::RunResult::default()
+            }
+            fn http_get(
+                &self,
+                _u: &str,
+                _h: &[(&str, &str)],
+                _p: super::super::env::GetPolicy,
+            ) -> Result<(u16, String), String> {
+                Err("no network".into())
+            }
+        }
+        let env = NoRun(std::cell::Cell::new(0));
+        let work = std::env::temp_dir().join(format!(
+            "c3-smoke-changed-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let t = Target {
+            provider: "alibaba".into(),
+            model: "qwen3.8-max".into(),
+            bind: Bind::Entry(1),
+            seated: "qwen3.8-max".into(),
+        };
+        let got = run_smoke(&env, "c3", &t, "claude", &work, "tok", Some(replaced));
+        assert_eq!(
+            fail_reason(got),
+            "not run: the roster entry changed: reviewers entry 1 no longer holds alibaba :: qwen3.8-max"
+        );
+        assert_eq!(env.0.get(), 0, "no command ran");
+        assert!(!work.exists(), "nothing was created");
+    }
+
+    /// (F14-4) The protection checks read the roster as the router does: a value the roster loader
+    /// refuses (a float or string `reserve_percent`, a string `on_request`, a malformed inactive
+    /// list) refuses the entry here too, and the inactive list is matched as the loader matches it.
+    #[test]
+    fn the_bound_smoke_reads_the_protection_fields_as_the_router_does() {
+        let with_ext = |ext: &str| {
+            format!(
+                r#"{{"roster_version":1,"reviewers":[{{"provider":"grok","engine":"grok","model":"grok-4.7","plan":"supergrok","ext":{ext}}}]}}"#
+            )
+        };
+        for ext in [
+            r#"{"reserve_percent":0.5}"#,
+            r#"{"reserve_percent":"15"}"#,
+            r#"{"reserve_percent":0}"#,
+            r#"{"on_request":"true"}"#,
+            r#"{"on_request":1}"#,
+        ] {
+            let why = bound_roster(&with_ext(ext), 1, "grok", "grok-4.7", "grok-4.8").unwrap_err();
+            assert!(
+                why.starts_with("the roster does not load as the router reads it (entry 1: ext."),
+                "{ext}: {why}"
+            );
+            assert!(!why.contains("Fix it or move it aside"), "{why}");
+        }
+        assert!(bound_roster(
+            &with_ext(r#"{"reserve_percent":15}"#),
+            1,
+            "grok",
+            "grok-4.7",
+            "g-1"
+        )
+        .unwrap_err()
+        .contains("protected"));
+        assert!(bound_roster(
+            &with_ext(r#"{"on_request":true}"#),
+            1,
+            "grok",
+            "grok-4.7",
+            "g-1"
+        )
+        .unwrap_err()
+        .contains("on request"));
+        assert!(bound_roster(&with_ext("{}"), 1, "grok", "grok-4.7", "grok-4.8").is_ok());
+        // the inactive list: matched by the loader (a padded item counts), a malformed one refuses
+        let inactive = |list: &str| {
+            format!(
+                r#"{{"roster_version":1,"reviewers":[{{"provider":"grok","engine":"grok","model":"grok-4.7","plan":"supergrok"}}],"ext":{{"c3":{{"inactive":{list}}}}}}}"#
+            )
+        };
+        assert!(bound_roster(
+            &inactive(r#"[" supergrok "]"#),
+            1,
+            "grok",
+            "grok-4.7",
+            "g-1"
+        )
+        .unwrap_err()
+        .contains("inactive"));
+        assert!(
+            bound_roster(&inactive(r#"["grok"]"#), 1, "grok", "grok-4.7", "g-1")
+                .unwrap_err()
+                .contains("inactive")
+        );
+        assert!(bound_roster(&inactive("[7]"), 1, "grok", "grok-4.7", "g-1")
             .unwrap_err()
-            .contains("inactive"));
+            .contains("does not load"));
+        assert!(bound_roster(&inactive(r#"["other"]"#), 1, "grok", "grok-4.7", "g-1").is_ok());
+    }
+
+    /// (F14-3) The smoke's one-entry roster is created with an exclusive create inside the smoke's
+    /// OWN scratch directory (created by this run), never at a predictable sibling path in the
+    /// shared temp directory; a scratch path that already exists fails the smoke closed and is left
+    /// as it is; the directory is gone when the smoke ends.
+    #[test]
+    fn the_bound_roster_is_created_exclusively_inside_the_smokes_own_scratch_dir() {
+        struct Watch {
+            work: std::path::PathBuf,
+            saw: std::cell::RefCell<Vec<String>>,
+        }
+        impl Env for Watch {
+            fn run(
+                &self,
+                p: &str,
+                a: &[&str],
+                e: &[(&str, &str)],
+                c: Option<&std::path::Path>,
+            ) -> super::super::env::RunResult {
+                let roster = self.work.join("roster.json");
+                self.saw.borrow_mut().push(format!(
+                    "{p} {} | cwd={} | roster={} {} | env={:?}",
+                    a.join(" "),
+                    c.map(|d| d.display().to_string()).unwrap_or_default(),
+                    roster.exists(),
+                    std::fs::read_to_string(&roster).unwrap_or_default().len(),
+                    e
+                ));
+                // the git setup fails: the smoke stops here (no consult is ever run)
+                super::super::env::RunResult {
+                    code: Some(1),
+                    stderr: "no git here".into(),
+                    ..Default::default()
+                }
+            }
+            fn http_get(
+                &self,
+                _u: &str,
+                _h: &[(&str, &str)],
+                _p: super::super::env::GetPolicy,
+            ) -> Result<(u16, String), String> {
+                Err("no network".into())
+            }
+        }
+        let text = r#"{"roster_version":1,"reviewers":[{"provider":"grok","engine":"grok","model":"grok-4.7","plan":"supergrok"}]}"#;
+        let t = Target {
+            provider: "grok".into(),
+            model: "grok-4.8".into(),
+            bind: Bind::Entry(1),
+            seated: "grok-4.7".into(),
+        };
+        let base = std::env::temp_dir().join(format!(
+            "c3-smoke-scratch-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let work = base.join("c3-maintain-smoke-grok-1-2");
+        // the old predictable sibling path holds a sentinel: it is never written
+        let sibling = base.join("c3-maintain-smoke-grok-1-2.roster.json");
+        std::fs::write(&sibling, "SENTINEL").unwrap();
+        let env = Watch {
+            work: work.clone(),
+            saw: Default::default(),
+        };
+        let got = run_smoke(&env, "c3", &t, "grok", &work, "tok", Some(text));
+        assert!(fail_reason(got).contains("git setup failed"));
+        let saw = env.saw.borrow().clone();
+        assert_eq!(saw.len(), 1, "{saw:?}");
+        assert!(
+            saw[0].contains(&format!("cwd={}", work.join("repo").display())),
+            "the repository is inside the scratch dir: {saw:?}"
+        );
+        assert!(
+            saw[0].contains("roster=true") && !saw[0].contains("roster=true 0 "),
+            "the one-entry roster was in place beside the repository: {saw:?}"
+        );
+        assert!(!work.exists(), "the scratch directory is removed");
+        assert_eq!(std::fs::read_to_string(&sibling).unwrap(), "SENTINEL");
+
+        // a scratch path that already exists: the smoke fails closed, writes and removes nothing
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(work.join("keep.txt"), "KEEP").unwrap();
+        let env = Watch {
+            work: work.clone(),
+            saw: Default::default(),
+        };
+        let why = fail_reason(run_smoke(&env, "c3", &t, "grok", &work, "tok", Some(text)));
+        assert!(
+            why.contains("could not create the smoke's own scratch directory"),
+            "{why}"
+        );
+        assert!(env.saw.borrow().is_empty(), "nothing ran");
+        assert_eq!(
+            std::fs::read_to_string(work.join("keep.txt")).unwrap(),
+            "KEEP"
+        );
+        assert!(!work.join("roster.json").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

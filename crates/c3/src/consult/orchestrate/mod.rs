@@ -42,7 +42,7 @@ use crate::telemetry;
 
 use super::args::{self, Options, Resolved};
 use super::ingest;
-use super::prompt::{self, OpenFinding, PromptInputs};
+use super::prompt::{self, OpenFinding};
 use super::revision::{self, RevisionInfo};
 use super::section;
 use super::summary;
@@ -1025,6 +1025,13 @@ pub(crate) struct Context {
     pub(crate) pending_ref: Option<PendingRef>,
     /// (B1) The `--diff` patch: planned here, written (and its sha256 taken) by `run_live`.
     pub(crate) diff: Option<super::reviewed::DiffPlan>,
+    /// (R5, F18-1 / F19-6) `Some(n)` when the run reviews another revision than the live HEAD
+    /// (`--rev`): the task's `n` open findings are not offered for re-checking, the reply's prior
+    /// findings are ignored for the store and the prior-blocker semantics do not apply.
+    pub(crate) priors_withheld: Option<usize>,
+    /// (R5) The prompt's owned inputs: `run_live` re-assembles [`Context::prompt_text`] from them
+    /// once the worktree and the patch exist ([`finalize_prompt`]).
+    pub(crate) prompt_plan: prompt::PromptPlan,
     // paths
     pub(crate) handoffs_dir: PathBuf,
     pub(crate) reply_path: PathBuf,
@@ -1063,6 +1070,36 @@ impl Context {
             .map(|t| t.path().to_path_buf())
             .unwrap_or_else(|| self.repo_root.clone())
     }
+
+    /// (R5, F18-1) The fingerprint the run's records name as REVIEWED - the handoff's `Reviewed:`
+    /// line, the ledger's `base_commit` / `reviewed_revision` / `tree_sha256`, every new finding's
+    /// `source`: under `--rev` the throwaway worktree's (its sha, taken right after the staging),
+    /// else the live tree's ([`Context::revision`]).
+    pub(crate) fn reviewed_info(&self) -> &RevisionInfo {
+        match (&self.isolation, &self.review_tree) {
+            (Some(p), Some(t)) if p.is_rev() => t.reviewed_info(),
+            _ => &self.revision,
+        }
+    }
+
+    /// (R5, F18-1) The live HEAD at launch, when the records name another fingerprint
+    /// ([`Context::reviewed_info`]): recorded beside it as `live_head`.
+    pub(crate) fn live_head(&self) -> Option<&str> {
+        match (&self.isolation, &self.review_tree) {
+            (Some(p), Some(_)) if p.is_rev() => Some(self.revision.base_commit.as_str()),
+            _ => None,
+        }
+    }
+}
+
+/// (R5, F18-7) The task directory's repo-relative path when its `handoffs/` is a real directory
+/// (not a link) inside the repository - what the planned `--rev` prompt may say was copied in;
+/// `finalize_prompt` corrects it from what the staging actually did.
+fn planned_handoffs_rel(repo_root: &Path, collab_root: &Path, task: &str) -> Option<String> {
+    let task_rel = c3_core::paths::repo_relative(repo_root, &collab_root.join(task))
+        .filter(|t| crate::engines::worktree::stageable_rel(t))?;
+    let m = std::fs::symlink_metadata(collab_root.join(task).join("handoffs")).ok()?;
+    (m.is_dir() && !crate::engines::worktree::is_link(&m)).then_some(task_rel)
 }
 
 /// Run one consultation; return the exit code. Wraps [`run_inner`] with the priors refresh and
@@ -2387,8 +2424,8 @@ fn build_context(
 
     // (B1) The throwaway worktree this run's reviewer reads: `--rev` (a revision git does not know
     // refuses here, nothing started), the engine's own isolation (kimi), or a claude diff-review /
-    // acceptance (a frozen worktree of HEAD). The http engine sends a pack of the live tree, so
-    // `--rev` does not reach it: said, not refused (a panel seats it beside the others).
+    // acceptance (a frozen worktree of HEAD). (R5, F19-1) Under `--rev` the http engine builds its
+    // pack from that worktree - never from the live tree.
     let isolation = super::reviewed::plan_isolation(
         &repo_root,
         &engine_name,
@@ -2397,16 +2434,6 @@ fn build_context(
         spec.worktree_isolated,
     )
     .map_err(|m| (m, 1))?;
-    if !o.rev.is_empty() && isolation.is_none() {
-        let w = format!(
-            "-Rev {}: the {engine_name} engine sends a pack of the live working tree, so this reviewer does not read that revision",
-            o.rev
-        );
-        if !o.dry_run {
-            println!("WARNING: {w}");
-        }
-        run_warnings.push(w);
-    }
 
     // (A1) a reviewer in a throwaway worktree (of HEAD, or of `--rev`) reads the brief at its
     // repo-relative path IN that worktree: when the brief is neither committed at that revision nor
@@ -2522,11 +2549,24 @@ fn build_context(
         None
     } else {
         super::reviewed::check_diff_spec(&repo_root, &o.diff).map_err(|m| (m, 1))?;
+        // (R5, F19-3) a panel member names a patch without a conventional brief after the panel's
+        // first number, so members that render the same bytes share one file
+        let stem_nn = member
+            .map(|m| {
+                m.sibling_nns
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(m.nn))
+                    .filter(|n| *n > 0)
+                    .min()
+                    .unwrap_or(m.nn) as u32
+            })
+            .unwrap_or(nn);
         Some(super::reviewed::plan_diff(
             &repo_root,
             &handoffs_dir,
             brief_path.as_deref(),
-            nn,
+            stem_nn,
             &r.brief_prefix,
             &o.diff,
         ))
@@ -2587,6 +2627,24 @@ fn build_context(
             None => open_findings.retain(|f| m.listed_ids.contains(&f.id)),
         }
         open_findings_count = open_findings.len();
+    }
+    // (R5, F18-1 / F19-6) a review of ANOTHER revision than the live HEAD is not asked to re-check
+    // the task's open findings: they were recorded against other code (seen live 2026-11-22:
+    // reviewers of an old revision marked 34 already-fixed findings still-open). The prompt says how
+    // many are not listed, the reply's prior findings are ignored for the store, and the
+    // prior-blocker semantics do not apply to the run.
+    let priors_withheld = isolation
+        .as_ref()
+        .filter(|i| {
+            i.is_rev()
+                && i.sha
+                    != crate::engines::worktree::resolve_commit(&repo_root, "HEAD")
+                        .unwrap_or_default()
+        })
+        .map(|_| open_findings_count);
+    if priors_withheld.is_some() {
+        open_findings.clear();
+        open_findings_count = 0;
     }
 
     let mut consult_id = uuid::Uuid::new_v4().to_string();
@@ -2703,40 +2761,39 @@ fn build_context(
     // told which paths of the live tree were uncommitted at launch and so are not (or not as they
     // are) in its worktree; (B1) a reviewer under `--rev` is told which revision it reads and what
     // was copied in.
+    // (R5) planned here (the dry run shows it); `run_live` re-assembles the prompt once the worktree
+    // is staged (`finalize_prompt`): the handoffs are named only when they were staged, and the
+    // links the checkout lost are counted.
     let isolation_line = match &isolation {
-        Some(iso) if iso.is_rev() => {
-            let task_rel =
-                c3_core::paths::repo_relative(&repo_root, &collab_root.join(task.as_str()))
-                    .filter(|t| crate::engines::worktree::stageable_rel(t));
-            crate::engines::worktree::rev_prompt_line(
-                &iso.sha,
-                &iso.rev,
-                &brief_ref,
-                task_rel.as_deref(),
-            )
-        }
+        Some(iso) if iso.is_rev() => crate::engines::worktree::rev_prompt_line(
+            &iso.sha,
+            &iso.rev,
+            &brief_ref,
+            planned_handoffs_rel(&repo_root, &collab_root, task.as_str()).as_deref(),
+        ),
         Some(_) => crate::engines::worktree::isolation_prompt(&repo_root, &brief_ref),
         None => String::new(),
     };
-    let prompt_text = prompt::assemble(&PromptInputs {
+    let prompt_plan = prompt::PromptPlan {
         raw: r.raw,
-        purpose: &o.purpose,
-        prompt: &o.prompt,
-        brief_ref: &brief_ref,
-        brief_text: &brief_text,
-        range: prompt_range.as_ref(),
-        diff_line: &diff_line,
-        open_findings: &open_findings,
-        schema_transport: &transport.transport,
-        schema_text: &schema_text,
+        purpose: o.purpose.clone(),
+        prompt: o.prompt.clone(),
+        brief_ref: brief_ref.clone(),
+        brief_text: brief_text.clone(),
+        range: prompt_range.clone(),
+        diff_line: diff_line.clone(),
+        open_findings,
+        withheld_findings: priors_withheld.unwrap_or(0),
+        schema_transport: transport.transport.clone(),
+        schema_text: schema_text.clone(),
         max_words: r.max_words,
-        consult_id: &consult_id,
-        tools_line: spec.tools_line,
-        isolation_line: &isolation_line,
-        role_line: &role_line,
-        context_line: &context_line,
-        prev_reply_line: &prev_reply_line,
-        reread_line: &prompt::reread_line(context_tokens, &brief_ref, &o.prompt),
+        consult_id: consult_id.clone(),
+        tools_line: spec.tools_line.to_string(),
+        isolation_line,
+        role_line: role_line.clone(),
+        context_line: context_line.clone(),
+        prev_reply_line: prev_reply_line.clone(),
+        reread_line: prompt::reread_line(context_tokens, &brief_ref, &o.prompt),
         // (C3) grok/kimi count tool calls: on a reviewing purpose the tool-reading is mandatory
         // (a zero-tool-call reply is rejected and re-asked). Never for codex (byte-parity).
         tool_reading_required: code_review && matches!(engine_name.as_str(), "grok" | "kimi"),
@@ -2748,7 +2805,8 @@ fn build_context(
         // (C3) grok (review or not): the answer is written exactly once, last - no schema-shaped
         // progress note that the CLI would end the turn on and the bridge would take as the reply.
         grok_answer_once: !r.raw && engine_name == "grok",
-    });
+    };
+    let prompt_text = prompt_plan.assemble();
 
     // (0.6.0, wave 29, D4) the model the engine's turns send: the roster's on a new thread; on
     // resume and fork (claude) the id the parent thread resolved - its ledger entry's
@@ -3102,6 +3160,8 @@ fn build_context(
         review_tree: None,
         pending_ref: None,
         diff: diff_plan,
+        priors_withheld,
+        prompt_plan,
         handoffs_dir,
         reply_path,
         reply_json_path,
@@ -3865,14 +3925,9 @@ fn run_live(mut ctx: Context) -> i32 {
     // `.consult.*` files under the collab dir are counted among the excluded entries
     // (`fingerprint_note`). Re-fingerprint here to match (`$revBefore` in the plugin flow).
     ctx.revision = revision::revision_info(&ctx.repo_root, Some(&ctx.collab_root));
-    // The collab-directory snapshot (`$collabBefore`), taken after the reserved record and the
-    // tree fingerprint, before launch — the read-only tree check compares it after the last turn
-    // (agy/muse only; `.consult.*` control files are excluded). `codex-consult.ps1:3661`.
-    let collab_before = if ctx.is_codex() {
-        std::collections::HashMap::new()
-    } else {
-        crate::engines::tree_check::collab_snapshot(&ctx.collab_root)
-    };
+    // (R5, F18-3) The collab-directory snapshot is taken AFTER the run's own `--diff` patch is
+    // written (below, right after `prepare_review_inputs`): the bridge's own write is not a tree
+    // change.
 
     // Peak status AT LAUNCH (the one the ledger records; the early check was call 0, this is
     // call 1). Preparation between the two may cross a window boundary: under `-OffPeakOnly` a
@@ -3920,7 +3975,12 @@ fn run_live(mut ctx: Context) -> i32 {
     // single run withdraws its reservation, and a panel member leaves its reserved record untouched,
     // so the panel re-seats an optional seat from its reserve exactly as for a preflight refusal.
     let setup_failure = match prepare_review_inputs(&mut ctx) {
-        Ok(()) => None,
+        Ok(()) => {
+            // (R5) the prompt as the reviewer gets it: the patch's content-named path and its
+            // redaction count, what was staged, the links the checkout lost
+            finalize_prompt(&mut ctx);
+            None
+        }
         Err(super::reviewed::SetupError::Capability(msg)) => Some(msg),
         Err(super::reviewed::SetupError::Refused(msg)) => {
             if !is_member {
@@ -3928,6 +3988,15 @@ fn run_live(mut ctx: Context) -> i32 {
             }
             return refuse(&msg);
         }
+    };
+    // The collab-directory snapshot (`$collabBefore`), taken after the reserved record, the tree
+    // fingerprint and (R5, F18-3) the run's own `--diff` patch, before launch — the read-only tree
+    // check compares it after the last turn (agy/muse only; `.consult.*` control files are
+    // excluded). `codex-consult.ps1:3661`.
+    let collab_before = if ctx.is_codex() {
+        std::collections::HashMap::new()
+    } else {
+        crate::engines::tree_check::collab_snapshot(&ctx.collab_root)
     };
 
     // (3) launching — from here on a crash may leave a codex process whose pid is not yet
@@ -4212,6 +4281,59 @@ fn prepare_review_inputs(ctx: &mut Context) -> Result<(), super::reviewed::Setup
         ctx.review_tree = Some(super::reviewed::setup_review_tree(plan, &inputs)?);
     }
     Ok(())
+}
+
+/// (R5) Re-assemble the prompt once the run's `--diff` patch and throwaway worktree exist: the
+/// patch line names the content-named file and its redaction count (F19-2, F19-3); the `--rev`
+/// paragraph names the task's handoffs only when a `handoffs/` directory was actually staged
+/// (F18-7); the links the checkout lost because they led outside the worktree are counted and named
+/// as data (F18-6). Collab entries skipped because they are links (F18-5) become a run warning.
+fn finalize_prompt(ctx: &mut Context) {
+    if let Some(d) = ctx.diff.as_ref().filter(|d| d.written()) {
+        ctx.prompt_plan.diff_line = super::reviewed::diff_prompt_line(d);
+    }
+    if let (Some(plan), Some(t)) = (&ctx.isolation, &ctx.review_tree) {
+        let mut line = if plan.is_rev() {
+            let staged = if t.handoffs_staged() {
+                c3_core::paths::repo_relative(
+                    &ctx.repo_root,
+                    &ctx.collab_root.join(ctx.task.as_str()),
+                )
+                .filter(|r| crate::engines::worktree::stageable_rel(r))
+            } else {
+                None
+            };
+            crate::engines::worktree::rev_prompt_line(
+                t.sha(),
+                &plan.rev,
+                &ctx.brief_ref,
+                staged.as_deref(),
+            )
+        } else {
+            ctx.prompt_plan.isolation_line.clone()
+        };
+        let links = crate::engines::worktree::outside_links_sentence(t.outside_links());
+        if !links.is_empty() {
+            if line.is_empty() {
+                line = format!(
+                    "Isolation: your working directory is a throwaway git worktree of the committed HEAD {}, not the live checkout.",
+                    t.sha().chars().take(12).collect::<String>()
+                );
+            }
+            line.push(' ');
+            line.push_str(&links);
+        }
+        ctx.prompt_plan.isolation_line = line;
+        if t.links_skipped() > 0 {
+            let w = format!(
+                "{} entr(y/ies) of the task's collab files are links (a symlink or a junction) and were not staged into the reviewer's throwaway worktree: nothing is read through a link",
+                t.links_skipped()
+            );
+            println!("WARNING: {w}");
+            ctx.run_warnings.push(w);
+        }
+    }
+    ctx.prompt_text = ctx.prompt_plan.assemble();
 }
 
 /// (B1) The primary "turn" of a run whose patch or worktree could not be made: a capability
@@ -5673,7 +5795,15 @@ fn finish(args: Finish) -> i32 {
         // the status, severity and text it was shown decide, and only a listed id is accepted as
         // a prior report; its checks still merge into the current store at the commit, under the
         // task lock.
-        let view = member_prior_view(ctx.panel_member.as_ref(), existing.as_ref());
+        let mut view = member_prior_view(ctx.panel_member.as_ref(), existing.as_ref());
+        // (R5, F18-1 / F19-6) a review of another revision than the live HEAD was shown no prior
+        // findings: its "prior findings" section is ignored for the store, and no prior blocker
+        // applies to it.
+        let withheld = ctx.priors_withheld.is_some();
+        if withheld {
+            view.open_priors.clear();
+            view.records.clear();
+        }
         let open_priors = view.open_priors;
         let known: std::collections::HashSet<String> = match &view.reportable {
             Some(ids) => ids
@@ -5684,7 +5814,8 @@ fn finish(args: Finish) -> i32 {
             None => known_in_store.clone(),
         };
         let now = iso_now();
-        for p in &s.prior_findings {
+        let reviewed = ctx.reviewed_info();
+        for p in s.prior_findings.iter().filter(|_| !withheld) {
             let status = match p.status {
                 c3_core::engine::PriorStatus::Fixed => "fixed",
                 c3_core::engine::PriorStatus::StillOpen => "still-open",
@@ -5704,8 +5835,8 @@ fn finish(args: Finish) -> i32 {
                         when: now.clone(),
                         status: status.to_string(),
                         note: p.note.clone(),
-                        base_commit: ctx.revision.base_commit.clone(),
-                        tree_sha256: ctx.revision.tree_sha256.clone(),
+                        base_commit: reviewed.base_commit.clone(),
+                        tree_sha256: reviewed.tree_sha256.clone(),
                         ..Default::default()
                     },
                 ));

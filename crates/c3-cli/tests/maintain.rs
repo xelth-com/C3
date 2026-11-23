@@ -875,18 +875,47 @@ fn models_case_with(e: &Env, roster_json: &str, smoke: &str, catalog_body: &str)
 
 const SCHEDULED: &str = r#"{"last_pass":"2026-11-10T00:00:00Z","next_due":"2026-11-17T00:00:00Z","reported":true,"engines":[{"name":"grok","installed":"1.0.77","action":"up to date","when":"2026-11-10T00:00:00Z"}]}"#;
 
+/// The default catalog configured with a query that holds a token (the GET is keyless, but an
+/// operator may write one): the source key keeps it, nothing a person or an agent reads shows it.
+const QUERY_CATALOG_URL: &str = "https://openrouter.ai/api/v1/models?key=sk-test-QUERYTOKEN";
+
 #[test]
 fn a_catalog_successor_that_passes_its_smoke_is_seated_without_moving_the_schedule() {
     let e = setup("web-seat");
     e.write_state(SCHEDULED);
-    let m = models_case(
+    let mut m = models_case(
         &e,
         &endpoint_roster(false),
         "alibaba-claude::qwen4-max=pass",
     );
+    // the catalog is configured WITH a query, served from the same file
+    std::fs::write(
+        e.home.join("c3").join("config.json"),
+        format!(r#"{{"config_version":1,"model_catalogs":["{QUERY_CATALOG_URL}"]}}"#),
+    )
+    .unwrap();
+    for (k, v) in m.owned.iter_mut() {
+        if k == "C3_MAINTAIN_TEST_HTTP" {
+            *v = format!(
+                "{QUERY_CATALOG_URL}|{}",
+                e.work.join("catalog.json").display()
+            );
+        }
+    }
     let o = e.run(&["maintain", "--models"], &m.env());
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
+    // the collected line names the catalog without its query
+    assert!(
+        t.contains(
+            "c3 maintain: web:https://openrouter.ai/api/v1/models (query not shown) - 3 model id(s) collected"
+        ),
+        "{t}"
+    );
+    assert!(
+        !t.contains("QUERYTOKEN") && !t.contains("key="),
+        "no query text is printed: {t}"
+    );
     assert!(
         t.contains("model alibaba-claude :: qwen3.8-max -> qwen4-max, smoke passed"),
         "the successor from the catalog is seated: {t}"
@@ -928,8 +957,8 @@ fn a_catalog_successor_that_passes_its_smoke_is_seated_without_moving_the_schedu
     );
     assert!(state.contains("\"action\": \"up to date\""), "{state}");
     assert!(
-        state.contains("web:openrouter.ai"),
-        "the catalog is recorded: {state}"
+        state.contains("\"web:https://openrouter.ai:443/api/v1/models?key=sk-test-QUERYTOKEN\""),
+        "the catalog is recorded under its FULL URL (the key keeps the query): {state}"
     );
     // the stored report names it, and the full notes are printed by `c3 maintain`
     let r = text(&e.run(&["maintain"], &m.env()));
@@ -941,6 +970,12 @@ fn a_catalog_successor_that_passes_its_smoke_is_seated_without_moving_the_schedu
     // the next SessionStart hook prints the line once
     let h = text(&e.run(&["hook"], &m.env()));
     assert!(h.contains("qwen3.8-max -> qwen4-max, smoke passed"), "{h}");
+    for (what, out) in [("the report", &r), ("the hook line", &h)] {
+        assert!(
+            !out.contains("QUERYTOKEN") && !out.contains("key="),
+            "{what} shows no query text: {out}"
+        );
+    }
 }
 
 #[test]
@@ -1096,13 +1131,13 @@ fn models_off_is_authoritative_for_an_explicit_models_run() {
         &endpoint_roster(false),
         "alibaba-claude::qwen4-max=pass",
     );
+    let mut env = m.env();
+    env.retain(|(k, _)| *k != "C3_MAINTAIN_MODELS");
+    env.push(("C3_MAINTAIN_MODELS", "off"));
     for args in [
         vec!["maintain", "--models"],
         vec!["maintain", "--models", "--dry-run"],
     ] {
-        let mut env = m.env();
-        env.retain(|(k, _)| *k != "C3_MAINTAIN_MODELS");
-        env.push(("C3_MAINTAIN_MODELS", "off"));
         let o = e.run(&args, &env);
         let t = text(&o);
         assert_eq!(o.status.code(), Some(0), "{t}");
@@ -1115,6 +1150,29 @@ fn models_off_is_authoritative_for_an_explicit_models_run() {
         assert!(!t.contains("qwen4-max"), "{t}");
     }
     assert!(!e.state_path().exists(), "nothing was written");
+    // (F15-6) not even the pass lock or the state directory: the switch is read before both
+    let maintain_dir = e.home.join("c3").join("maintain");
+    assert!(
+        !maintain_dir.exists(),
+        "the maintain state directory was not created"
+    );
+    // an existing directory with a lock another pass left (unreadable, so a lock taker would
+    // remove it as stale) is not touched either
+    std::fs::create_dir_all(&maintain_dir).unwrap();
+    std::fs::write(maintain_dir.join("lock"), "not a lock record").unwrap();
+    let o = e.run(&["maintain", "--models"], &env);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert_eq!(
+        std::fs::read_to_string(maintain_dir.join("lock")).unwrap(),
+        "not a lock record",
+        "the lock was left as it was"
+    );
+    let names: Vec<String> = std::fs::read_dir(&maintain_dir)
+        .unwrap()
+        .flatten()
+        .map(|d| d.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["lock".to_string()], "no other file appeared");
     assert_eq!(m.roster_text(), endpoint_roster(false));
 }
 
@@ -1258,14 +1316,80 @@ fn a_swap_smoke_runs_through_the_exact_roster_entry_not_its_label() {
         roster_json.replace("\"qwen3.8-max\"", "\"qwen4-max\""),
         "only reviewers[2].model changed"
     );
-    // the smoke's one-entry roster is gone with its scratch repo
+    // (F14-3) the smoke's one-entry roster lived inside the smoke's own scratch directory and is
+    // gone with it; nothing was written at a sibling path in the shared temp directory
     let leftovers: Vec<String> = std::fs::read_dir(std::env::temp_dir())
         .unwrap()
         .flatten()
+        .filter(|d| {
+            let n = d.file_name().to_string_lossy().into_owned();
+            n.starts_with("c3-maintain-smoke-claude-")
+                && (n.ends_with(".roster.json") || d.path().join("roster.json").exists())
+        })
         .map(|d| d.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.starts_with("c3-maintain-smoke-claude-") && n.ends_with(".roster.json"))
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+/// (F15-3) An engine-update smoke bound to a roster seat is not run when that position no longer
+/// holds the provider AND the model the target was chosen with: here the seat's model is edited
+/// (same provider) after the pass read the roster and before the smoke. The update is held, and
+/// the fake's scripted smoke - which would pass for either model - is never asked. Without the
+/// edit the same pass updates, so the binding check passes an unchanged seat.
+#[test]
+fn an_engine_smoke_is_not_run_when_its_roster_seat_changed() {
+    let e = setup("seat-changed");
+    let roster = e.work.join("roster.json");
+    let roster_json = r#"{"roster_version":1,"reviewers":[{"provider":"grok","engine":"grok","model":"grok-4.7","plan":"supergrok"}]}"#;
+    let roster_s = roster.to_string_lossy().into_owned();
+    let run = |edit: bool| {
+        std::fs::write(&roster, roster_json).unwrap();
+        std::fs::write(&e.grok_verfile, "1.0.77").unwrap();
+        let mut env: Vec<(&str, &str)> = vec![
+            ("CODEX_CONSULT_GROK_EXE", e.grok_exe_s()),
+            ("FAKE_GROK_VERFILE", e.grok_verfile_s()),
+            ("FAKE_GROK_VER", "1.0.77"),
+            ("FAKE_GROK_LATEST", "1.0.80"),
+            ("FAKE_MNT_LOG", e.mnt_log_s()),
+            ("CODEX_CONSULT_ROSTER", roster_s.as_str()),
+            (
+                "C3_MAINTAIN_TEST_SMOKE",
+                "grok::grok-4.7=pass,grok::grok-4.6=pass",
+            ),
+        ];
+        if edit {
+            env.extend([
+                ("FAKE_GROK_EDIT_ROSTER", roster_s.as_str()),
+                ("FAKE_GROK_EDIT_FROM", "grok-4.7"),
+                ("FAKE_GROK_EDIT_TO", "grok-4.6"),
+            ]);
+        }
+        let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+        let t = text(&o);
+        assert_eq!(o.status.code(), Some(0), "{t}");
+        t
+    };
+    let t = run(true);
+    assert!(
+        t.contains("held: smoke fails on the installed version (not run: the roster entry changed: reviewers entry 1 no longer holds grok :: grok-4.7)"),
+        "{t}"
+    );
+    assert_eq!(verfile(&e.grok_verfile), "1.0.77", "nothing was installed");
+    assert!(
+        !e.mnt_log().contains("update --version 1.0.80"),
+        "{}",
+        e.mnt_log()
+    );
+    assert!(
+        std::fs::read_to_string(&roster)
+            .unwrap()
+            .contains("grok-4.6"),
+        "the edit happened during the pass"
+    );
+    // the control: the seat unchanged, the bound smoke runs (scripted) and the update lands
+    let t = run(false);
+    assert!(t.contains("grok 1.0.77 -> 1.0.80 ok"), "{t}");
+    assert_eq!(verfile(&e.grok_verfile), "1.0.80");
 }
 
 // ------------------------------------------------------------------ an unresolved pending update and a newer release
@@ -1377,6 +1501,40 @@ fn a_newer_release_that_fails_too_keeps_the_original_previous() {
         e.mnt_log().contains("update --version 1.0.77"),
         "{}",
         e.mnt_log()
+    );
+}
+
+/// (F15-5, the reviewer's RC5) Pending recovery never installs an older release than the one
+/// installed: the recovery smoke of 1.0.80 fails, the rollback to 1.0.77 leaves 1.0.90 on disk and
+/// exits non-zero, and the vendor offers 1.0.82 - newer than the 1.0.80 the pass started with, but
+/// not newer than what is installed NOW. It is not installed; the record stays unresolved.
+#[test]
+fn a_pending_recovery_never_installs_a_release_older_than_the_installed_one() {
+    let e = setup("pend-no-downgrade");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let mut env = e.grok_env("1.0.80", "1.0.82", "grok::grok-4.7=fail");
+    env.push(("FAKE_GROK_ROLLBACK_TO", "1.0.90"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(t.contains("rollback failed, still 1.0.90"), "{t}");
+    assert!(
+        t.contains("grok 1.0.82 is not tried: 1.0.90 is installed now"),
+        "{t}"
+    );
+    assert!(!t.contains("trying the newer"), "{t}");
+    assert_eq!(verfile(&e.grok_verfile), "1.0.90", "no downgrade");
+    assert!(
+        !e.mnt_log().contains("update --version 1.0.82"),
+        "the older release was never installed: {}",
+        e.mnt_log()
+    );
+    let pending = e.pending_json();
+    assert!(
+        pending.contains("\"previous\":\"1.0.77\"") && pending.contains("\"target\":\"1.0.80\""),
+        "the record stays as it was: {pending}"
     );
 }
 
