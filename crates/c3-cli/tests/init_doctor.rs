@@ -405,6 +405,53 @@ fn the_hook_never_edits_a_hard_linked_agent_file() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+// (R2, F13-2) The hook's repair needs a real repository: behind a stray `.git` entry (a regular
+// file that is no `gitdir:` file) nothing is repaired, and with `GIT_DIR` set in the environment
+// nothing is either; the same pin in a real repository without `GIT_DIR` is repaired.
+#[test]
+fn the_hook_repairs_nothing_behind_a_stray_git_entry_or_with_git_dir_set() {
+    let pinned = "---\nname: opus-worker\nmodel: claude-opus-4-8\n---\nbody\n";
+    let envs = [
+        ("C3_CONFIG", "none"),
+        ("C3_MAINTAIN", "off"),
+        ("C3_UPDATE_CHECK", "off"),
+        ("C3_BRANCH_CHECK", "off"),
+        ("C3_CI_CHECK", "off"),
+    ];
+    let dir = scratch_dir("stray-git");
+    std::fs::write(dir.join(".git"), "not a repository\n").unwrap();
+    std::fs::create_dir_all(dir.join(".claude/agents")).unwrap();
+    let agent = dir.join(".claude/agents/opus-worker.md");
+    std::fs::write(&agent, pinned).unwrap();
+    let (code, out, err) = run_c3_env(&dir, &["hook"], &envs);
+    assert_eq!(code, 0, "hook must exit 0: {out}\n{err}");
+    assert!(!out.contains("model settings"), "{out}");
+    assert_eq!(std::fs::read_to_string(&agent).unwrap(), pinned);
+
+    let repo = scratch_repo("git-dir");
+    std::fs::create_dir_all(repo.join(".claude/agents")).unwrap();
+    let agent = repo.join(".claude/agents/opus-worker.md");
+    std::fs::write(&agent, pinned).unwrap();
+    let git_dir = repo.join(".git").to_string_lossy().to_string();
+    let mut with_git_dir = envs.to_vec();
+    with_git_dir.push(("GIT_DIR", git_dir.as_str()));
+    let (code, out, err) = run_c3_env(&repo, &["hook"], &with_git_dir);
+    assert_eq!(code, 0, "hook must exit 0: {out}\n{err}");
+    assert!(!out.contains("model settings"), "{out}");
+    assert_eq!(std::fs::read_to_string(&agent).unwrap(), pinned);
+    // the control: without GIT_DIR the same pin is repaired
+    let (_c, out, _e) = run_c3_env(&repo, &["hook"], &envs);
+    assert!(
+        out.contains("c3: model settings refreshed in this repository"),
+        "{out}"
+    );
+    assert!(std::fs::read_to_string(&agent)
+        .unwrap()
+        .contains("model: opus"));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
 #[test]
 fn init_never_overwrites_an_existing_claude_md() {
     let repo = scratch_repo("noclobber");

@@ -272,6 +272,21 @@ pub struct StageInputs<'a> {
     pub task: &'a str,
     pub brief_ref: &'a str,
     pub brief_path: Option<&'a Path>,
+    /// The engine, as a staging refusal names the seat.
+    pub engine: &'a str,
+}
+
+/// Why [`setup_review_tree`] could not make the run's throwaway worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetupError {
+    /// The worktree itself could not be made: the run's capability failure (nothing was started).
+    Capability(String),
+    /// (F11-3, F11-4) Something could not be STAGED into it (an unsafe destination - a link the
+    /// checked-out revision carries -, a brief that cannot be read nor materialised from HEAD, a
+    /// write error): a typed pre-start refusal with preflight-class wording
+    /// ([`worktree::staging_refusal`]) - no reviewer starts, and a panel re-seats an optional seat
+    /// from its reserve exactly as for a preflight refusal.
+    Refused(String),
 }
 
 /// Whether a handoff file is left out of the staging: the engines' event streams (large, never
@@ -285,11 +300,24 @@ fn skip_staging(p: &Path) -> bool {
 /// Make the run's throwaway worktree of `plan` and stage into it, at their repo-relative paths: the
 /// task's `handoffs/` (event streams left out) and `state.md` when the collab directory lies in the
 /// repository, then the brief (a [`worktree::stageable_rel`] reference) - so an uncommitted brief
-/// and the earlier replies are readable there. `Err` is the capability failure the run records
-/// (nothing was started).
-pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<ReviewTree, String> {
-    let wt = ThrowawayWorktree::create(s.repo_root, plan.checkout())
-        .map_err(|e| format!("the reviewer's throwaway worktree could not be created: {e}"))?;
+/// and the earlier replies are readable there. (F11-4) The brief's bytes are the live file's, else
+/// the regular file committed at HEAD (or at the worktree's revision) - [`worktree::brief_bytes`];
+/// a stageable brief is ALWAYS staged or the run is refused, so the prompt's "copied into your
+/// worktree" sentence is only ever sent when the copy was made. (F11-3) Nothing is ever written
+/// through a link: the brief's destination is checked in the revision's tree
+/// ([`worktree::rev_destination_problem`]) and on disk ([`ThrowawayWorktree::stage_bytes`]).
+/// `Err(Capability)` when the worktree cannot be made, `Err(Refused)` when staging cannot be done
+/// safely ([`SetupError`]); either way nothing was started.
+pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<ReviewTree, SetupError> {
+    let wt = ThrowawayWorktree::create(s.repo_root, plan.checkout()).map_err(|e| {
+        SetupError::Capability(format!(
+            "the reviewer's throwaway worktree could not be created: {e}"
+        ))
+    })?;
+    let label = plan.label();
+    let refused = |what: &str, why: String| {
+        SetupError::Refused(worktree::staging_refusal(s.engine, what, &label, &why))
+    };
     let collab_rel = c3_core::paths::repo_relative(s.repo_root, s.collab_root)
         .filter(|r| !r.is_empty() && worktree::stageable_rel(r));
     let mut collab: Option<PathBuf> = None;
@@ -297,31 +325,31 @@ pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<Review
         let task_dir = s.collab_root.join(s.task);
         let handoffs = task_dir.join("handoffs");
         if handoffs.is_dir() {
-            wt.stage_dir(&handoffs, &format!("{cr}/{}/handoffs", s.task), &skip_staging)
-                .map_err(|e| {
-                    format!("the task's handoffs could not be staged into the reviewer's throwaway worktree: {e}")
-                })?;
+            wt.stage_dir(
+                &handoffs,
+                &format!("{cr}/{}/handoffs", s.task),
+                &skip_staging,
+            )
+            .map_err(|e| refused("the task's handoffs", e))?;
         }
         let state = task_dir.join("state.md");
         if state.is_file() {
             wt.stage_file(&state, &format!("{cr}/{}/state.md", s.task))
-                .map_err(|e| {
-                    format!("the task's state.md could not be staged into the reviewer's throwaway worktree: {e}")
-                })?;
+                .map_err(|e| refused("the task's state.md", e))?;
         }
         collab = Some(wt.path().join(cr));
     }
-    if let Some(src) = s.brief_path {
-        if worktree::stageable_rel(s.brief_ref) {
-            // (F11-3) the prompt tells the reviewer to read this brief; if it cannot be staged the
-            // review would read stale or missing content - refuse before launch instead.
-            wt.stage_file(src, s.brief_ref).map_err(|e| {
-                format!(
-                    "could not stage the operator brief `{}` into the reviewer's throwaway worktree: {e}",
-                    s.brief_ref
-                )
-            })?;
+    if !s.brief_ref.is_empty() && worktree::stageable_rel(s.brief_ref) {
+        // (F11-3) the prompt tells the reviewer to read this brief; if it cannot be staged the
+        // review would read stale or missing content - refuse before launch instead.
+        let what = format!("the brief `{}`", s.brief_ref);
+        if let Some(p) = worktree::rev_destination_problem(s.repo_root, wt.sha(), s.brief_ref) {
+            return Err(refused(&what, p));
         }
+        let bytes = worktree::brief_bytes(s.repo_root, s.brief_ref, s.brief_path, wt.sha())
+            .map_err(|e| refused(&what, e))?;
+        wt.stage_bytes(&bytes, s.brief_ref)
+            .map_err(|e| refused(&what, e))?;
     }
     let before = revision::revision_info(wt.path(), collab.as_deref());
     let before_collab = collab
@@ -979,6 +1007,7 @@ mod tests {
                 task: "t",
                 brief_ref: "docs/brief.md",
                 brief_path: Some(&r.join("docs").join("brief.md")),
+                engine: "grok",
             },
         )
         .unwrap();

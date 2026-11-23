@@ -96,6 +96,15 @@ fn read_state(dir: &Path) -> State {
         .unwrap_or_default()
 }
 
+/// (0.2.5 R2, F13-6) The model part of the maintain state on disk (the catalogs' ids and dates, the
+/// recorded older pairs) - empty when there is no state or it cannot be read. The repository
+/// `AGENTS.md` repair reads its date evidence here.
+pub fn models_state() -> models::ModelsState {
+    state_dir()
+        .map(|d| read_state(&d).models)
+        .unwrap_or_default()
+}
+
 /// Write the state via a temp file and rename, so a reader never sees a half-written file.
 fn write_state(dir: &Path, s: &State) {
     if std::fs::create_dir_all(dir).is_err() {
@@ -901,15 +910,21 @@ fn maintain_one_engine(
         return (format!("{installed_text} -> {new_text} {msg}"), msg);
     };
 
-    // 1. smoke the installed version first.
+    // 1. smoke the installed version first. (F11-7) An unproven smoke holds exactly like a
+    // failed one.
     let roster_text = roster_text_of(roster);
-    if let smoke::Smoke::Fail(why) =
-        run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref())
+    if let Some((word, why)) =
+        run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref()).hold()
     {
-        let msg = format!("held: smoke fails on the installed version ({why})");
+        let verb = if word == "failed" {
+            "fails"
+        } else {
+            "is unproven"
+        };
+        let msg = format!("held: smoke {verb} on the installed version ({why})");
         println!("c3 maintain: {name} {installed_text} {msg}");
         return (
-            format!("{installed_text} held: smoke fails on the installed version"),
+            format!("{installed_text} held: smoke {verb} on the installed version"),
             msg,
         );
     }
@@ -1019,10 +1034,12 @@ fn update_and_verify(
         .map(|v| v.text().to_string())
         .unwrap_or_else(|| new_text.to_string());
 
-    // 3. smoke the new version.
+    // 3. smoke the new version. (F11-7) An unproven smoke (the sub-agent switch not proven on
+    // both turns) holds the update exactly like a failed one: rolled back where supported, the
+    // pending record kept unless the previous version is verified back - never "ok".
     let roster_text = roster_text_of(roster);
-    if let smoke::Smoke::Fail(why) =
-        run_one_smoke(env, self_exe, target, name, now, roster_text.as_deref())
+    if let Some((word, why)) =
+        run_one_smoke(env, self_exe, target, name, now, roster_text.as_deref()).hold()
     {
         if caps.has_rollback {
             if let Some(res) = engine::do_rollback(env, name, launcher, installed_text, dir) {
@@ -1036,14 +1053,14 @@ fn update_and_verify(
                 // (R1) Resolved only when the previous version is verified back; a failed rollback
                 // leaves the broken new version on disk, so keep the pending record.
                 let (msg, resolved) = if cmd_ok && restored {
-                    ("smoke failed, rolled back".to_string(), true)
+                    (format!("smoke {word}, rolled back"), true)
                 } else {
                     let now_t = back
                         .as_ref()
                         .map(|v| v.text().to_string())
                         .unwrap_or_else(|| "unknown".to_string());
                     (
-                        format!("smoke failed, rollback failed, still {now_t}"),
+                        format!("smoke {word}, rollback failed, still {now_t}"),
                         false,
                     )
                 };
@@ -1057,7 +1074,7 @@ fn update_and_verify(
         }
         // (R1) No rollback path: the engine is stuck on a failed new version with no safe target.
         // Keep the record so the next pass re-smokes it once more before giving up.
-        let msg = "smoke failed, no rollback path".to_string();
+        let msg = format!("smoke {word}, no rollback path");
         println!("c3 maintain: {name} {installed_text} -> {new_text} {msg} ({why})");
         return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
     }
@@ -1162,7 +1179,9 @@ fn handle_pending_smoke(
         return Done(format!("{installed_text} {msg}"), msg, false); // keep the pending record
     };
     let roster_text = roster_text_of(roster);
-    match run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref()) {
+    let outcome = run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref());
+    let word = outcome.hold().map(|(w, _)| w).unwrap_or("failed");
+    match outcome {
         smoke::Smoke::Pass => {
             let msg = format!(
                 "recovered: update to {} verified after an interrupted pass",
@@ -1171,7 +1190,8 @@ fn handle_pending_smoke(
             println!("c3 maintain: {name} {installed_text} - {msg}");
             Done(format!("{installed_text} {msg}"), msg, true)
         }
-        smoke::Smoke::Fail(why) => {
+        // (F11-7) an unproven smoke is never "verified": it is handled exactly like a failure
+        smoke::Smoke::Fail(why) | smoke::Smoke::Unproven(why) => {
             if caps.has_rollback {
                 if let Some(res) = engine::do_rollback(env, name, launcher, &p.previous, _dir) {
                     let cmd_ok = matches!(res, Ok(ref r) if r.ok());
@@ -1185,7 +1205,7 @@ fn handle_pending_smoke(
                     // undone, so the pending record may be cleared.
                     if cmd_ok && restored {
                         let msg = format!(
-                            "recovered: smoke failed, rolled back to {} ({why})",
+                            "recovered: smoke {word}, rolled back to {} ({why})",
                             p.previous
                         );
                         println!("c3 maintain: {name} {installed_text} - {msg}");
@@ -1207,7 +1227,7 @@ fn handle_pending_smoke(
             }
             // No rollback path (unsupported, or do_rollback returned None): the engine is stuck on a
             // failing version. Keep the record for another pass; this is not a recovery.
-            let msg = format!("pending update unresolved: smoke failed, no rollback path ({why})");
+            let msg = format!("pending update unresolved: smoke {word}, no rollback path ({why})");
             println!("c3 maintain: {name} {installed_text} - {msg}");
             StillFailing(format!("{installed_text} {msg}"), msg, target)
         }
@@ -1564,6 +1584,12 @@ fn run_models(
                     println!("c3 maintain: {msg} ({why})");
                     clauses.push(msg);
                 }
+                // (F11-7) an unproven smoke never seats a model
+                smoke::Smoke::Unproven(why) => {
+                    let msg = format!("{label} not seated (smoke unproven)");
+                    println!("c3 maintain: {msg} ({why})");
+                    clauses.push(msg);
+                }
             }
         }
     }
@@ -1682,6 +1708,9 @@ pub fn run_smoke_only(engines: Vec<String>, dry_run: bool) -> i32 {
                         }
                         smoke::Smoke::Fail(why) => {
                             println!("c3 maintain smoke: {name} -> {seat} fail ({why})")
+                        }
+                        smoke::Smoke::Unproven(why) => {
+                            println!("c3 maintain smoke: {name} -> {seat} unproven ({why})")
                         }
                     }
                 }

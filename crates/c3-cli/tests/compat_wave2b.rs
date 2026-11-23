@@ -643,6 +643,10 @@ fn fake_agy_cmd() -> String {
         // read-only tool so the read-only tree check does not fail them, while the writing-tool test
         // leaves the default.
         "if not defined FAKE_AGY_TOOL_NAME set FAKE_AGY_TOOL_NAME=run_command".to_string(),
+        // (F10-1) the tool step's logged parameters (FAKE_AGY_TOOL_PARAMS, default a command line):
+        // a reader carrying a command counts as writing, so the read-only runs pass a path.
+        r#"if not defined FAKE_AGY_TOOL_PARAMS set FAKE_AGY_TOOL_PARAMS={"CommandLine":"cargo build"}"#
+            .to_string(),
         format!(
             r#"echo {{"event":"init","conversation_id":"{ID}","init":{{"model":"gemini-3.8-flash-high","cwd":"x","tools":["run_command"],"permission_mode":"request-review"}}}}"#
         ),
@@ -651,15 +655,15 @@ fn fake_agy_cmd() -> String {
         ),
         "if not defined FAKE_AGY_TOOL_PINGS goto result".to_string(),
         format!(
-            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"%FAKE_AGY_TOOL_NAME%","tool_info":{{"name":"%FAKE_AGY_TOOL_NAME%","parameters":{{"CommandLine":"cargo build"}}}}}}}}"#
+            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"%FAKE_AGY_TOOL_NAME%","tool_info":{{"name":"%FAKE_AGY_TOOL_NAME%","parameters":%FAKE_AGY_TOOL_PARAMS%}}}}}}"#
         ),
         "ping -n %FAKE_AGY_TOOL_PINGS% 127.0.0.1 >nul".to_string(),
         format!(
             r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"DONE","step_type":"tool","tool_name":"%FAKE_AGY_TOOL_NAME%"}}}}"#
         ),
         ":result".to_string(),
-        // (A1) FAKE_AGY_TOUCH=<path>: a file appears in the tree during the run (somebody else's
-        // edit - agy's own tool log shows no writing call).
+        // (A1, F11-1) FAKE_AGY_TOUCH=<path>: a file appears in the tree during the run, written by
+        // the launcher itself with no tool event - who wrote it cannot be told from the log.
         "if defined FAKE_AGY_TOUCH echo touched>\"%FAKE_AGY_TOUCH%\"".to_string(),
         format!(
             r#"echo {{"event":"result","result":{{"conversation_id":"{ID}","status":"SUCCESS","response":"advise","duration_seconds":1.0,"num_turns":1,"structured_output":{ADVISE},"usage":{{"input_tokens":100,"output_tokens":10,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":110}}}}}}"#
@@ -839,6 +843,7 @@ fn agy_quiet_tool_run(e: &Env, tag: &str, pings: &str) -> Output {
             // A read-only tool: the stall mechanic is what these tests exercise, not the read-only
             // tree check, so the tool must not trip the writing-tool fail (Muse, review-2026-10-30).
             ("FAKE_AGY_TOOL_NAME", "read_file"),
+            ("FAKE_AGY_TOOL_PARAMS", r#"{"Path":"app.txt"}"#),
         ],
     )
 }
@@ -909,12 +914,13 @@ fn an_agy_writing_tool_call_fails_a_clean_run() {
     assert!(o.contains("a writing tool was called: run_command"), "{o}");
 }
 
-// (A1, xelixir panel be3d155b) a file somebody else wrote appears in the working tree while agy
-// runs; agy's own tool log shows no writing call and its reply is complete and schema-valid: the
-// change is a WARNING ("reply kept"), the run is usable and its ledger entry is written - a
-// failure is "no usable reply", never a change the reviewer did not make.
+// (A1, xelixir panel be3d155b; F11-1) a file appears in the working tree while agy runs - the fake
+// launcher writes it itself, with no tool event, as a write missing from agy's log would look; agy's
+// own tool log shows no writing step and its reply is complete and schema-valid: the change is a
+// WARNING ("reply kept"), the run is usable and its ledger entry is written. The warning calls the
+// change UNATTRIBUTED - the log cannot prove who made it, so it never says "someone else's".
 #[test]
-fn an_agy_tree_change_with_a_complete_reply_is_kept_as_a_warning() {
+fn an_agy_tree_change_with_a_complete_reply_is_kept_as_an_unattributed_warning() {
     let e = setup("agykept");
     let agy = e.fake_agy();
     let path = path_without_agy();
@@ -946,10 +952,53 @@ fn an_agy_tree_change_with_a_complete_reply_is_kept_as_a_warning() {
     assert_eq!(last["tree_check"]["outcome"], "warned", "{last}");
     assert!(
         t.contains("the working tree changed during the run")
-            && t.contains("agy's event stream named no tool call")
+            && t.contains("agy's event stream named no tool call, the change is unattributed")
             && t.contains("reply kept"),
-        "the warning says the reply was kept: {t}"
+        "the warning says the reply was kept and the change unattributed: {t}"
     );
+    assert!(!t.contains("not the reviewer's"), "{t}");
+}
+
+// (F11-2) the BRIEF the review is bound to changes while agy reads it (the reviewer's Verify): a
+// complete, schema-valid reply is NOT recorded as usable - the outcome is a failure naming the
+// changed input, class permission (as a failed read-only check), the raw reply kept.
+#[test]
+fn an_agy_run_whose_brief_changed_is_not_recorded_as_usable() {
+    let e = setup("agybound");
+    let agy = e.fake_agy();
+    let path = path_without_agy();
+    let brief = e.repo.join("brief.md");
+    std::fs::write(&brief, "# Brief\n\n1. Is app.txt fine?\n").unwrap();
+    let brief_s = brief.to_string_lossy().to_string();
+    let x = e.consult(
+        &[
+            "--provider",
+            "gemini",
+            "--engine",
+            "agy",
+            "--model",
+            "gemini-3.8-flash-high",
+            "--engine-exe",
+            &agy,
+            "--reply-name",
+            "ab",
+            "--brief",
+            "brief.md",
+            "--continue-sec",
+            "0",
+        ],
+        &[("PATH", &path), ("FAKE_AGY_TOUCH", &brief_s)],
+    );
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{t}");
+    let last = e.last();
+    let o = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        o.starts_with("failed: a bound input changed during the run: the brief `brief.md`"),
+        "{o}\n{t}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "permission", "{last}");
+    assert_eq!(last["tree_check"]["outcome"], "failed", "{last}");
 }
 
 // ------------------------------------------------------------------ ROLE / TOPIC (companions D8)

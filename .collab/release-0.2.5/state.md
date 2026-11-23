@@ -244,3 +244,101 @@ swap -> xelth.com/C3 page after the tag.
   - parts 3, 4 after these two; part 5 last (Grok and Muse are in several parts).
   Come back: `c3 consult --task release-0.2.5 --status --id <id>`. No writes under the tree or
   `.collab` until both are done (Muse member).
+- 2026-11-23 00:03: CI for e4f42a8 failed on Windows in ONE test (claude_engine, the live-cwd
+  assertion compared `RUNNER~1` with the long path - a test defect); fixed in 4f43074, CI green on
+  all three jobs (run 45081072873). So B1 is verified on Linux and Windows, the 14 c3-cli binaries
+  not run locally included. B1's worktree removed, branch deleted.
+- 2026-11-23, diff-review (one panel per task at a time - the task lock refuses a second one, so the
+  five parts run in sequence; binary copy `scratchpad/bin/c3-review.exe`):
+  - part 1 `58fdcafb` done, 2 of 2 usable (n=4 Muse HOLD 6 major / 1 minor, n=5 Sol HOLD 2 blocker /
+    8 major / 2 minor; Sol: 5h window 9 -> 21 %, week 28 -> 30 %; both rated yes). Findings F10-1..7,
+    F11-1..12. Blockers: F11-3 brief staging can write outside the worktree through a link the
+    revision carries; F11-7 the maintain smoke passes without proof of the sub-agent switch.
+    F10-6 rejected (Codex ignores unknown -c keys). The rest accepted -> wave R1 (brief
+    `briefs/R1-review-fixes-reliability.md`, opus-worker, worktree `agent-ac4c333d5cd5125e3`).
+  - part 2 `e5147fa6` done, 2 of 2 usable (n=6 GLM-5.3 ACCEPT 1 minor / 3 note, rated partly; n=7
+    Grok HOLD 1 blocker / 3 major / 5 minor, rated yes). Findings F12-1..4, F13-1..9. Blocker:
+    F13-1 `doctor --fix` can remove through a link named like a throwaway worktree. F13-9 wontfix
+    (decided boundary: the rename race needs a local writer). The rest accepted -> wave R2 (brief
+    `briefs/R2-review-fixes-repair-branches.md`, opus-worker, worktree `agent-aa5609ac7c9c247c3`).
+  - part 3 `45a285b0` running (brief 07, 23b1455..8e6fd3e, kimi-claude k3.1-pro + Muse contributor).
+  - parts 4 (brief 08, roster-p4, --rev 08ae5d5 --diff 8e6fd3e..08ae5d5) and 5 (brief 09, roster-p5,
+    --rev e4f42a8 --diff 08ae5d5..e4f42a8) to launch.
+  Note: a reviewer of an OLD revision marks the prior findings `still-open` because the fixes are
+  later commits - an artefact, the store's statuses did not change. The first live run of `--rev` /
+  `--diff` worked: one worktree per member, patch in handoffs, worktrees removed.
+- 2026-11-23 ~01:10, diff-review continued:
+  - part 3 `45a285b0` done, 2 of 2 usable (n=8 Muse HOLD 3 major / 2 minor, n=9 kimi-claude k3.1-pro
+    HOLD 5 major / 1 minor; both rated yes). Findings F14-1..5, F15-1..6, no blocker: the catalog
+    fetch can reach a local / private address and its 15 s deadline does not bound connect or a
+    trickling body; the 500-pair cap forgets `older` refusals; the entry-bound smoke does not check
+    the entry is still the chosen one and writes its roster at a predictable temp path; pending
+    recovery compares against a stale installed version. F15-4 wontfix (decided boundary). The rest
+    accepted -> wave R3 (brief `briefs/R3-review-fixes-maintain.md`), to launch AFTER R1 is applied
+    (both touch `maintain/smoke.rs` and `maintain/mod.rs`).
+  - part 4 `d243d6b5` done, 2 of 2 usable (n=10 Grok HOLD 4 major / 5 minor / 1 note, n=11 DeepSeek
+    ACCEPT 8 minor / 2 note; both rated yes). Findings F16-1..10, F17-1..10: telemetry trust is per
+    host, not per URL (F16-1, F17-5 -> moved into R3 as item 10); a run title from GitHub reaches
+    the session unsanitised; the CI check's deadline does not cover its git calls or kill children;
+    wrong default branch / run order; explain / replay differ from the real draw; lab table gaps; a
+    missed weighty seat is silent; the daily gate file races. F16-5 wontfix (decided boundary). The
+    rest accepted -> wave R4 (brief `briefs/R4-review-fixes-panel-ci.md`), to launch AFTER R2 is
+    applied (it reuses R2's kill-the-children helper in the hook).
+  - part 5 `bbe17837` running (brief 09, 08ae5d5..e4f42a8, Grok + Muse contributor + GLM-5.3).
+    Its fixes (wave R5) after R1 is applied (both touch `engines/worktree.rs`, `consult/reviewed.rs`).
+  Decided boundaries so far (wontfix, to name in the acceptance brief): F13-9, F15-4, F16-5 - all
+  three need a local process with the user's own rights racing a check-then-write window; F10-6
+  rejected. Worker queue (two heavy workers at a time): R1, R2 running -> R3 after R1, R4 after R2.
+- 2026-11-23 ~01:50, diff-review finished (5 of 5 parts, 11 consultations, all usable, all rated):
+  - part 5 `bbe17837` done, 3 of 3 usable (n=12 Grok HOLD 6 major / 1 minor, n=13 Muse REJECT
+    1 blocker / 5 major, n=14 GLM-5.3 HOLD 1 major / 4 minor / 1 note; all rated yes). Findings
+    F18-1..7, F19-1..6, F20-1..6. Blocker F19-1: `--rev` on the http engine only warns and sends a
+    pack of the LIVE tree. Others: a one-revision `--diff` puts untracked files' contents (a secret)
+    into the patch; the patch name is shared by runs with different ranges; under `--rev` the
+    records and new findings name the live HEAD, not the revision read (and prior findings are
+    offered for re-check against the wrong revision - the `still-open` artefact seen in parts 1-4);
+    staging reads through a source-side link; a link in the reviewed revision can lead out of the
+    worktree; `git status` on the live repo without --no-optional-locks; the bridge's own patch
+    counts as a tree change. F19-4 is covered by R2, F20-5 by R1; the first half of F19-5 rejected.
+    The rest accepted -> wave R5 (brief `briefs/R5-review-fixes-reviewed-revision.md`), AFTER R1.
+  Totals of the second review: 82 findings (F10..F20), 5 blockers (F11-3, F11-7, F13-1, F19-1 + the
+  http one counted once), 3 decided boundaries (F13-9, F15-4, F16-5), 1 rejected (F10-6).
+- 2026-11-23 ~01:40, operator: C3 must be usable without eckSnapshot. Decisions: the project folder
+  becomes lowercase `.c3` at the repository root (he first wrote `.C3`; lowercase after I named the
+  existing `.collab/.c3/` and Linux case rules); it holds 'not only the collab files but all of
+  eckSnapshot's innards'; created with stubs when missing; snapshots 'are apparently not much
+  needed - only to hand something to a web reviewer that has no bridge'. Plan (wave S1, after the
+  R waves, inside 0.2.5, then a sixth review part): `.c3/` git-ignored at the root with the
+  manifests, the journal, the finish report, scouts and the cache now in `.collab/.c3/`; a one-time
+  move of an existing `.eck/` by `c3 init` / `c3 doctor --fix` / `c3 finish` (never the hook, never
+  a merge of two folders); `c3 finish` writes no snapshot by default; `.eckignore` -> `.c3ignore`
+  and `--eck` -> `--state` with the old names still read; the `[STUB]` / `[STUB:` mismatch fixed;
+  the root `AGENTS.md` rewritten. `.collab/` (committed records) stays where it is - told to the
+  operator, not objected to so far. Recon report: 20 literals, no shared constant, ~80 test hits.
+- 2026-11-23 ~03:10, waves R1 and R2 reported and APPLIED to main together (R2 first, clean; R1 on
+  top by 3-way, the only conflict CHANGELOG.md, both sides kept).
+  - R1 (12 items, both blockers were real at HEAD): staging checks the destination in the
+    revision's tree and on disk, writes a new file and renames; a staging failure is a pre-start
+    refusal; the prompt names only tracked changed paths; agy steps merged before classification,
+    an unexplained change is `unattributed`, a changed bound input withholds the reply (agy, runs
+    outside a worktree); the member spec carries the findings as shown (`listed`); the smoke has
+    `Unproven`, treated as a failure by every automatic path; rollout identity, terminal record,
+    absolute CODEX_HOME; one guard inspection after exit; secondary prompts carry the role
+    sentence; the death record uses the run's own stream; `reply_kept` on failed ledger entries.
+    Accepted: `reply_kept` only on failed entries (ledger order pinned by telemetry_parity). Open:
+    the bound-input rule for muse / grok / claude outside a worktree (still a warning - debt); the
+    agy denial-retry prompt lacks the role sentence (-> R5); no panel integration test for the
+    re-seat after a staging refusal; agy's Cascade reader names are unconfirmed by a fixture.
+  - R2 (8 items): a throwaway path that is a link is reported and never removed; the owner record
+    is mandatory (creation fails without it); no owner record -> removable only when git calls it
+    prunable (the 6-hour rule is gone); liveness has `cannot tell`; a stray `.git` is not a
+    repository and `GIT_DIR` set disables the hook's repair; a record needs a real date; every
+    child of `c3 update` is marked; `--set` / `--clear` refuse in a child (coordinator added
+    `--default`); the hook deadline kills the scan's git children (`run_registered`);
+    `AGENTS.md` never follows to a model dated older; a failed `git cherry` is unchecked; wording.
+    Accepted: C3's own re-executions (detached consult / work, panel members, MCP calls) stay
+    unmarked; a stray `.git` stops the upward search.
+  Verification on the combined tree: fmt, clippy clean; c3-core + c3 all green (793 lib tests);
+  c3-cli kimi_engine 18, claude_engine 18; on R2 alone branches 14, init_doctor 15, update 12. The
+  remaining c3-cli binaries are left to CI (local background runs get reaped under memory
+  pressure).

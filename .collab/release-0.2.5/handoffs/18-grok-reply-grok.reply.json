@@ -1,0 +1,238 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The sha is pinned and a destination link in the checkout is refused, but a --rev review is recorded as the live HEAD, staging follows source links, --diff can publish untracked secrets and mark a clean run warned, and worktree setup can rewrite the live index.",
+  "reply_markdown": "## Q1\nA branch or tag is resolved with `rev^{commit}` to a full sha before `git worktree add`, and a panel passes that sha once (`panel/run.rs:2248`). A leading `-`, whitespace, or `..` is refused; a blob or tree fails `^{commit}`. The worktree sha in `extra.worktree` matches the checkout. The handoff `Reviewed:` line, ledger `base_commit` / `reviewed_revision`, and each finding's `source.base_commit` are still the live HEAD (`orchestrate/mod.rs:3806`, `ledger.rs:48`, `render.rs:632`). Those findings are stored on the live task and later reviews of HEAD judge them. If the planned sha is empty, create re-resolves `HEAD`. Ambiguous names fail `rev-parse`. A shallow clone is refused only when the object is absent.\n\n## Q2\nStaging copies a stageable brief, `state.md`, and `handoffs/` except names ending in `.events.jsonl`. A symlink, junction, or linked ancestor at the destination is refused (`worktree.rs:154`, `worktree.rs:217`). A source symlink or junction is followed: `handoffs.is_dir()` and `fs::copy` read the target, so an outside secret becomes a normal file in the worktree. Hard-link bytes are copied; a hard-linked destination is not treated as a link. `..` and absolute paths are not staged. Tracked paths inside the worktree are overwritten on purpose. The prompt says handoffs were copied whenever the collab path is stageable, even when `handoffs/` is absent (`worktree.rs:641`).\n\n## Q3\nThe working-tree form sets `GIT_INDEX_FILE` to a temp copy; the unit test shows the real index bytes unchanged on that path. A leading dash cannot be a revision token, and the range is one argv after `diff`, so it is not `--output`. A single revision intent-to-adds every non-ignored untracked file (`reviewed.rs:639`), so a secret that is not gitignored is written into the patch and named in the prompt. The patch is written after `collab_before` (`mod.rs:3810` then `mod.rs:3988`). Two members can race on one patch path; each ledger stores the hash it rendered.\n\n## Q4\n`ReviewTree` drops the worktree on return, including a failed stage. A hard kill skips `Drop`. The `c3-kimi-wt-<32 hex>` name and owner file let `c3 branches` / `c3 doctor --fix` see a dead pid. The owner write is best effort. Removal unlinks links first and aborts if that pass fails or the root is a link. `create` runs `git status --porcelain` on the live repo with no `--no-optional-locks` (`worktree.rs:91`), so the live index can be refreshed and locked. A link created after the last unlink pass and before `remove_dir_all` is not covered. Ctrl-c unwind was not read.\n\n## Q5\nA live-tree or sibling change only warns. Kimi, and agy with a writing tool, fail on a change inside their own worktree. Claude, grok, and muse only warn, so a write that stays in the worktree is deleted with it and the reply stays usable. A write through a symlink is not a worktree change; the live change is labeled not the reviewer's and the reply stays usable (`tree.rs:193`). C3's own patch makes `tree_check` `warned` on a clean isolated `--diff` run; a live-tree agy reply with no tools and no structured parse is failed for that file. Two runs get distinct uuid directories.\n\n## Q6\nHttp with `--rev` gets no worktree. The operator warning says the pack is the live tree; the model prompt does not. The frozen-HEAD prompt lists the first 20 uncommitted paths, including names outside the review (F11-5). MCP passes `rev` and `diff` as flag values; the CLI rejects a leading dash and whitespace before git. `C3_CHILD` does not suppress `--rev` or `--diff`. The changelog's untouched-index sentence is about the temp index, which that test supports; it does not mention `git status` in `create`. \"Event streams left out\" is only `*.events.jsonl`.\n\n## Q7\nHappy-path `--rev`, frozen HEAD, patch sha256, a quiet index-byte compare, and a reviewer-left junction are tested. Not covered: moving ref vs checkout, source symlink, symlink write, index lock, finding provenance, `--diff` vs `tree_check`, an untracked secret, the http pack, ctrl-c, a shallow clone, a hard link, and two members racing one patch. Not read: most test bodies, the http pack builder, signal handling, and the prior-finding files outside this diff.\n\n## Requested checks\nRC1. In a scratch repo, `stat` the index, run a fake-engine `c3 consult --rev HEAD` that creates a worktree, `stat` again. Workspace-write, 2 min. Finding #2: mtime changes or `index.lock` appears.\nRC2. Same repo, review an old sha and print the ledger `worktree.sha`, `base_commit`, and `findings.json` `source.base_commit`. Read-only after the run, 2 min. Finding #1: finding commit equals live HEAD, not the old sha.\nRC3. Claude `diff-review` with `--diff HEAD` on a clean tree plus one untracked `secret.txt` not in gitignore. Workspace-write, 2 min. Finding #3 and #4: `tree_check.outcome` is `warned` and the patch contains `secret.txt`.\nRC4. Make `handoffs` a symlink to a directory outside the repo that holds `sentinel.txt`, run an isolated consult. Workspace-write, 2 min. Finding #5: the worktree copy contains the sentinel bytes.\nRC5. Commit a symlink `out` pointing at a file in the main checkout; fake the reviewer writing through `out`. Workspace-write, 2 min. Finding #6: the target changes and the ledger outcome stays usable.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/consult/orchestrate/mod.rs", "line": 3806},
+        {"path": "crates/c3/src/consult/orchestrate/ledger.rs", "line": 48},
+        {"path": "crates/c3/src/consult/orchestrate/ledger.rs", "line": 251},
+        {"path": "crates/c3/src/consult/orchestrate/render.rs", "line": 632}
+      ],
+      "claim": "Under --rev the reviewer reads the pinned worktree sha, but the handoff Reviewed line, the ledger base_commit and reviewed_revision, and every new finding's source.base_commit are the live HEAD taken before the run. Those findings are stored on the live task and a later review of HEAD treats them as findings about HEAD.",
+      "trigger": "c3 consult --rev <old-sha> on a dirty live checkout whose HEAD is a different commit, and the reply files a finding.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/mod.rs:3806", "observation": "ctx.revision is revision_info of the live repo_root, not of the worktree."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/ledger.rs:44-59", "observation": "build_finding copies ctx.revision.base_commit and tree_sha256 into source and the first history event."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/render.rs:631-633", "observation": "The Reviewed line prints ctx.revision.reviewed_revision and base_commit."},
+        {"kind": "read-code", "reference": "crates/c3/src/panel/run.rs:2248", "observation": "Members receive the resolved sha as rev, so the worktree itself is pinned; only the recorded provenance stays on the live HEAD."}
+      ],
+      "verification": "RC2.",
+      "remedy": "Stamp finding source, history, and the Reviewed line with the worktree sha when isolation is present, and keep the live fingerprint in a separate field.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/engines/worktree.rs", "line": 91}
+      ],
+      "claim": "Creating a review worktree runs git status --porcelain on the live repository with no --no-optional-locks and no GIT_OPTIONAL_LOCKS=0. That refresh can lock and rewrite the live index while a consult is starting.",
+      "trigger": "Any kimi run, claude diff-review or acceptance, or --rev consult, while the live index stat cache is stale or another git process wants the index.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/engines/worktree.rs:89-95", "observation": "create calls git_capture(repo, [\"status\", \"--porcelain\"]) on the live repo before worktree add. git_capture does not set GIT_OPTIONAL_LOCKS."},
+        {"kind": "read-code", "reference": "crates/c3/src/engines/worktree.rs:557-561", "observation": "The later uncommitted-path status does pass --no-optional-locks; the create call does not."}
+      ],
+      "verification": "RC1.",
+      "remedy": "Pass --no-optional-locks on that status, or drop it and use the already lock-avoiding uncommitted_paths result.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/consult/orchestrate/mod.rs", "line": 3810},
+        {"path": "crates/c3/src/consult/orchestrate/mod.rs", "line": 3988},
+        {"path": "crates/c3/src/consult/reviewed.rs", "line": 675},
+        {"path": "crates/c3/src/consult/orchestrate/tree.rs", "line": 234}
+      ],
+      "claim": "The --diff patch is written into the live handoffs after collab_before is taken, and the patch path is not on the run's ignored handoff prefix. An isolated run that was otherwise clean is recorded tree_check warned. A live-tree agy reply with no tool call and no structured parse is failed for that write.",
+      "trigger": "c3 consult --diff HEAD on a claude diff-review, or on agy with no --rev, when the reply has no tool call and does not parse as structured.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/mod.rs:3806-3814", "observation": "collab_before is snapshotted before prepare_review_inputs."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/mod.rs:4085-4088", "observation": "write_patch runs inside prepare_review_inputs, after that snapshot."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/tree.rs:207-246", "observation": "A collab path outside the reply prefix becomes a failure reason, or only a warning when the run is worktree-isolated."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/tree.rs:382-390", "observation": "agy warns on a change only when the reply is complete or the log names a tool; otherwise the change fails the run."}
+      ],
+      "verification": "RC3, and repeat on agy with a no-tool unstructured reply.",
+      "remedy": "Take collab_before after the patch write, or add the patch path to the ignore prefixes.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/consult/reviewed.rs", "line": 615},
+        {"path": "crates/c3/src/consult/reviewed.rs", "line": 639}
+      ],
+      "claim": "A single-revision --diff marks every non-ignored untracked file intent-to-add and puts its contents in the patch that the prompt tells the reviewer to read. A secret that is untracked but not gitignored leaves the machine with a remote reviewer.",
+      "trigger": "c3 consult --diff HEAD while an untracked file such as secret.txt is not matched by exclude rules, .collab, or .eck.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/consult/reviewed.rs:615-663", "observation": "WorkingTree runs ls-files --others --exclude-standard and git add --intent-to-add on that list, then git diff of that revision."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/reviewed.rs:537-544", "observation": "Excludes are only .collab, .eck, and the collab directory."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/reviewed.rs:712-715", "observation": "The prompt names that patch as the change under review."}
+      ],
+      "verification": "RC3.",
+      "remedy": "Intent-to-add only paths the operator named, or require an explicit path list before untracked contents are written into the patch.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/consult/reviewed.rs", "line": 299},
+        {"path": "crates/c3/src/engines/worktree.rs", "line": 161},
+        {"path": "crates/c3/src/engines/worktree.rs", "line": 169}
+      ],
+      "claim": "Staging follows a symlink or junction used as the brief or as handoffs/. is_dir and fs::copy read the target, and the bytes are written into the worktree as a normal file. A link in the checked-out revision at the destination is refused, but the source link is not.",
+      "trigger": "The live handoffs directory, or the brief path, is a symlink or junction to a directory or file outside the repository.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/consult/reviewed.rs:298-303", "observation": "Staging runs only if handoffs.is_dir(), which follows a directory symlink or junction, then stage_dir walks that target."},
+        {"kind": "read-code", "reference": "crates/c3/src/engines/worktree.rs:161-164", "observation": "stage_file copies with fs::copy, which follows a symlink at the source."},
+        {"kind": "read-code", "reference": "crates/c3/src/engines/worktree.rs:186-188", "observation": "Nested links inside the walked directory are skipped; the top-level follow has already happened."}
+      ],
+      "verification": "RC4.",
+      "remedy": "Open the brief and handoffs with symlink_metadata, refuse a link, and copy with a non-following read.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/consult/orchestrate/tree.rs", "line": 193},
+        {"path": "crates/c3/src/consult/reviewed.rs", "line": 361}
+      ],
+      "claim": "A reviewer that writes through a symlink checked out in the throwaway worktree changes the link target, which can be the live checkout. changes() only sees files in the worktree, and a live-tree change is recorded as not the reviewer's, so the reply stays usable.",
+      "trigger": "The reviewed commit contains a symlink whose target is a file or directory in the live checkout, and the reviewer writes through that symlink.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/consult/reviewed.rs:357-377", "observation": "changes() compares git content and the staged collab snapshot inside the worktree only."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/tree.rs:191-196", "observation": "When the run is isolated, a live working-tree change is pushed only onto main_warn with NOT_THE_WORKTREE."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/orchestrate/mod.rs:5297-5308", "observation": "Warnings do not clear a usable reply; only check.problem does."}
+      ],
+      "verification": "RC5.",
+      "remedy": "Treat a live-tree change that touches a path reached by a worktree symlink as the reviewer's write, and fail the engines that must not write.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "crates/c3/src/engines/worktree.rs", "line": 641},
+        {"path": "crates/c3/src/consult/reviewed.rs", "line": 279}
+      ],
+      "claim": "The --rev prompt says the task handoffs were copied whenever the collab path is stageable, including when handoffs/ does not exist. Staging also skips only filenames ending in .events.jsonl, so a differently named event stream is copied in.",
+      "trigger": "A --rev consult whose task directory has no handoffs directory, or a handoff file named events.jsonl rather than *.events.jsonl.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/engines/worktree.rs:635-651", "observation": "rev_prompt_line appends the copied-handoffs sentence from task_rel alone."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/reviewed.rs:298-303", "observation": "The directory is staged only when handoffs.is_dir()."},
+        {"kind": "read-code", "reference": "crates/c3/src/consult/reviewed.rs:279-282", "observation": "skip_staging matches only a filename that ends with .events.jsonl."}
+      ],
+      "verification": "Run --rev in a task with no handoffs directory and read the prompt; add handoffs/events.jsonl and see it in the worktree.",
+      "remedy": "Claim the copy only after staging succeeds, and skip every events stream the engines write.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id": "F02-1", "status": "not-checked", "note": "Not in this diff; repo_models was not re-read."},
+    {"id": "F02-2", "status": "not-checked", "note": "Not in this diff; repo_models was not re-read."},
+    {"id": "F02-3", "status": "not-checked", "note": "Not in this diff; repo_models was not re-read."},
+    {"id": "F02-4", "status": "not-checked", "note": "Not in this diff; repo_models was not re-read."},
+    {"id": "F02-5", "status": "not-checked", "note": "Not in this diff; auth and maintain launch were not re-read."},
+    {"id": "F02-6", "status": "not-checked", "note": "Not in this diff; hook git calls were not re-read."},
+    {"id": "F02-7", "status": "not-checked", "note": "Not in this diff; branch description parsing was not re-read."},
+    {"id": "F02-8", "status": "not-checked", "note": "Not in this diff. A new live-index status is finding #2, not this site."},
+    {"id": "F02-9", "status": "not-checked", "note": "Not in this diff; default-branch discovery was not re-read."},
+    {"id": "F02-10", "status": "not-checked", "note": "Not in this diff; cherry content check was not re-read."},
+    {"id": "F02-11", "status": "not-checked", "note": "Not in this diff; user worktree prefix filtering was not re-read."},
+    {"id": "F02-12", "status": "not-checked", "note": "Not in this diff; catalog redirects were not re-read."},
+    {"id": "F02-13", "status": "not-checked", "note": "Not in this diff; catalog body limits were not re-read."},
+    {"id": "F02-14", "status": "not-checked", "note": "Not in this diff; catalog dates were not re-read."},
+    {"id": "F02-15", "status": "not-checked", "note": "Not in this diff; endpoint model lists were not re-read."},
+    {"id": "F02-16", "status": "not-checked", "note": "Not in this diff; smoke binding was not re-read."},
+    {"id": "F02-17", "status": "not-checked", "note": "Not in this diff; roster writer was not re-read."},
+    {"id": "F02-18", "status": "not-checked", "note": "Not in this diff; maintain --models was not re-read."},
+    {"id": "F02-19", "status": "not-checked", "note": "Not in this diff; telemetry catalogs were not re-read."},
+    {"id": "F02-20", "status": "not-checked", "note": "Not in this diff; Claude-shaped telemetry was not re-read."},
+    {"id": "F02-21", "status": "not-checked", "note": "Removal now lives in worktree.rs and aborts when the unlink pass fails; the old kimi.rs site was not compared line by line."},
+    {"id": "F03-1", "status": "not-checked", "note": "child_environment was not re-read. This diff does not gate --rev on C3_CHILD."},
+    {"id": "F03-2", "status": "not-checked", "note": "The moved unlink walk treats Windows reparse points as links; the old junction case was not re-run."},
+    {"id": "F03-3", "status": "not-checked", "note": "Not in this diff; branch config keys were not re-read."},
+    {"id": "F03-4", "status": "not-checked", "note": "Not in this diff; model-line parsing was not re-read."},
+    {"id": "F03-5", "status": "not-checked", "note": "Not in this diff; telemetry suffix case was not re-read."},
+    {"id": "F03-6", "status": "not-checked", "note": "Not in this diff; branch listing cost was not re-read."},
+    {"id": "F04-1", "status": "not-checked", "note": "Not in this diff. Finding #2 is a new status call in worktree create."},
+    {"id": "F04-2", "status": "not-checked", "note": "Not in this diff; swap date gate was not re-read."},
+    {"id": "F04-3", "status": "not-checked", "note": "Not in this diff; catalog created stamps were not re-read."},
+    {"id": "F04-4", "status": "not-checked", "note": "Not in this diff; doctor --fix child guard was not re-read."},
+    {"id": "F04-5", "status": "not-checked", "note": "Current remove_worktree_dir returns before --force when the unlink pass fails; the Windows hold-open case was not run."},
+    {"id": "F04-6", "status": "not-checked", "note": "Not in this diff; auth and detached maintain env were not re-read."},
+    {"id": "F04-7", "status": "not-checked", "note": "Not in this diff; default-branch fallback was not re-read."},
+    {"id": "F04-8", "status": "not-checked", "note": "Not in this diff; telemetry shape and catalog caps were not re-read."},
+    {"id": "F04-9", "status": "not-checked", "note": "Not in this diff; --clear description handling was not re-read."},
+    {"id": "F10-1", "status": "not-checked", "note": "Not in this diff; agy classifier was not re-read."},
+    {"id": "F10-2", "status": "not-checked", "note": "Not in this diff; agy ACTIVE/DONE merge was not re-read."},
+    {"id": "F10-3", "status": "still-open", "note": "A brief that is committed at the rev is still admitted, and a later stage failure is a capability error. is_preflight_refusal does not match that text, so the panel does not re-seat."},
+    {"id": "F10-4", "status": "not-checked", "note": "Not in this diff; findings snapshot races were not re-read."},
+    {"id": "F10-5", "status": "not-checked", "note": "Not in this diff; smoke sub-agent checks were not re-read."},
+    {"id": "F10-7", "status": "not-checked", "note": "Not in this diff; panel death records were not re-read."},
+    {"id": "F11-1", "status": "not-checked", "note": "Not in this diff; agy write classification was not re-read."},
+    {"id": "F11-2", "status": "not-checked", "note": "Bound-input drift during an agy run was not re-read beyond the new worktree warning path."},
+    {"id": "F11-3", "status": "fixed", "note": "stage_file refuses a symlink or junction at the destination or an ancestor. Source links are a separate defect (finding #5)."},
+    {"id": "F11-4", "status": "still-open", "note": "A path with .. is now refused. A destination that is a directory, or a source that disappears after the preflight, still fails as capability and is not re-seated."},
+    {"id": "F11-5", "status": "still-open", "note": "uncommitted_paths still feeds the first 20 live names into the frozen-HEAD prompt, now also for claude diff-review and acceptance."},
+    {"id": "F11-6", "status": "not-checked", "note": "Not in this diff; panel acceptance vs shown blockers was not re-read."},
+    {"id": "F11-7", "status": "not-checked", "note": "Not in this diff; smoke sub-agent pass was not re-read."},
+    {"id": "F11-8", "status": "not-checked", "note": "Not in this diff; rollout parsing was not re-read."},
+    {"id": "F11-9", "status": "not-checked", "note": "Not in this diff; spawn attribution was not re-read."},
+    {"id": "F11-10", "status": "not-checked", "note": "Secondary prompts were not re-read for the role constraint. They do use engine_cwd."},
+    {"id": "F11-11", "status": "not-checked", "note": "Not in this diff; death-record stream identity was not re-read."},
+    {"id": "F11-12", "status": "not-checked", "note": "Not in this diff; providers reply_outcomes was not re-read."},
+    {"id": "F12-1", "status": "not-checked", "note": "stale_verdict still calls pid_alive; process_start_iso failure behavior was not re-read."},
+    {"id": "F12-2", "status": "not-checked", "note": "Not in this diff; resolve_repo_root env was not re-read."},
+    {"id": "F12-3", "status": "not-checked", "note": "Not in this diff; OneDrive reparse classification was not re-read."},
+    {"id": "F12-4", "status": "not-checked", "note": "Not in this diff; description write race was not re-read."},
+    {"id": "F13-1", "status": "fixed", "note": "If the worktree path itself is a link, unlink_links_inside_with errors and remove_worktree_dir returns before git worktree remove or remove_dir_all."},
+    {"id": "F13-2", "status": "not-checked", "note": "Not in this diff; .git walk for the hook was not re-read."},
+    {"id": "F13-3", "status": "not-checked", "note": "Not in this diff; BranchRecord::parse was not re-read."},
+    {"id": "F13-4", "status": "not-checked", "note": "Not in this diff; update and branches child mark were not re-read."},
+    {"id": "F13-5", "status": "not-checked", "note": "Not in this diff; hook deadline was not re-read."},
+    {"id": "F13-6", "status": "not-checked", "note": "Not in this diff; AGENTS.md numeric seating was not re-read."},
+    {"id": "F13-7", "status": "not-checked", "note": "Not in this diff; git cherry failure was not re-read."},
+    {"id": "F13-8", "status": "still-open", "note": "record_throwaway_owner still ignores write errors, and a missing owner still goes stale after 6 hours."},
+    {"id": "F14-1", "status": "not-checked", "note": "Not in this diff; catalog deadlines were not re-read."},
+    {"id": "F14-2", "status": "not-checked", "note": "Not in this diff; older-pair cap was not re-read."},
+    {"id": "F14-3", "status": "not-checked", "note": "Not in this diff; smoke roster symlink was not re-read."},
+    {"id": "F14-4", "status": "not-checked", "note": "Not in this diff; bound_roster types were not re-read."},
+    {"id": "F14-5", "status": "not-checked", "note": "Not in this diff; future catalog dates were not re-read."},
+    {"id": "F15-1", "status": "not-checked", "note": "Not in this diff; resolved peer checks were not re-read."},
+    {"id": "F15-2", "status": "not-checked", "note": "Not in this diff; older-pair eviction was not re-read."},
+    {"id": "F15-3", "status": "not-checked", "note": "Not in this diff; smoke roster position was not re-read."},
+    {"id": "F15-5", "status": "not-checked", "note": "Not in this diff; pending recovery version was not re-read."},
+    {"id": "F15-6", "status": "not-checked", "note": "Not in this diff; maintain off writes were not re-read."},
+    {"id": "F16-1", "status": "not-checked", "note": "Not in this diff; catalog host trust was not re-read."},
+    {"id": "F16-2", "status": "not-checked", "note": "Not in this diff; CI title forwarding was not re-read."},
+    {"id": "F16-3", "status": "not-checked", "note": "Not in this diff; CI deadline coverage was not re-read."},
+    {"id": "F16-4", "status": "not-checked", "note": "Not in this diff; default-branch CI line was not re-read."},
+    {"id": "F16-6", "status": "not-checked", "note": "Not in this diff; router explain was not re-read."},
+    {"id": "F16-7", "status": "not-checked", "note": "Not in this diff; lab identity was not re-read."},
+    {"id": "F16-8", "status": "not-checked", "note": "Not in this diff; weighty seat guarantee was not re-read."},
+    {"id": "F16-9", "status": "not-checked", "note": "Not in this diff; CI daily gate race was not re-read."},
+    {"id": "F16-10", "status": "not-checked", "note": "Not in this diff; hook script truncation was not re-read."},
+    {"id": "F17-1", "status": "not-checked", "note": "Not in this diff; CI displayTitle was not re-read."},
+    {"id": "F17-2", "status": "not-checked", "note": "Not in this diff; router explain seats were not re-read."},
+    {"id": "F17-3", "status": "not-checked", "note": "Not in this diff; weighty tier skip was not re-read."},
+    {"id": "F17-4", "status": "not-checked", "note": "Not in this diff; MiniMax lab split was not re-read."},
+    {"id": "F17-5", "status": "not-checked", "note": "Not in this diff; catalog host trust was not re-read."},
+    {"id": "F17-6", "status": "not-checked", "note": "Not in this diff; delegation rule rewrite was not re-read."},
+    {"id": "F17-7", "status": "not-checked", "note": "Not in this diff; CI default branch was not re-read."},
+    {"id": "F17-8", "status": "not-checked", "note": "Not in this diff; github.com remote match was not re-read."},
+    {"id": "F17-9", "status": "not-checked", "note": "Not in this diff; hook script bytes were not re-read."},
+    {"id": "F17-10", "status": "not-checked", "note": "Not in this diff; CI latest-run wording was not re-read."}
+  ],
+  "unproven": [
+    "Whether a warm index makes the new git status a no-op, or it always takes index.lock.",
+    "Ctrl-c and SIGKILL: Drop removal was read, the signal path was not.",
+    "Http pack bytes under --rev were not read; only the operator warning and the empty isolation line were.",
+    "A hard-linked destination appearing between checkout and fs::copy.",
+    "A symlink created after the last unlink pass and before remove_dir_all.",
+    "Shallow-clone and ambiguous-name behavior beyond the rev-parse arguments."
+  ],
+  "first_run_checklist": []
+}

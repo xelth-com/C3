@@ -7,13 +7,16 @@
 //! `c3 finish`.
 //!
 //! (0.2.5, F02-1 / F02-2) A file is never written through: the new content goes to a sibling
-//! temporary file in the same directory, which is read back, the original is re-read and compared
-//! with the snapshot the edit was computed from (a concurrent edit aborts the repair and leaves the
-//! file as it is), and the temporary file then REPLACES the original by rename - so a failed or
-//! interrupted repair never leaves a truncated file, and a second name of the file (a hard link)
-//! never sees the edit. A file with more than one hard link, a link (symlink, junction) and a file
-//! under a linked `.claude` / `.claude/agents` are not edited at all; the links are checked again
-//! immediately before the rename. Every repair that was not made is reported with its reason.
+//! temporary file in the same directory, which is read back, the original is re-read immediately
+//! before the rename and compared with the snapshot the edit was computed from (when it changed,
+//! the repair is dropped and the file left as it is), and the temporary file then REPLACES the
+//! original by rename - so a failed or interrupted repair never leaves a truncated file, and a
+//! second name of the file (a hard link) never sees the edit. The moment between that re-read and
+//! the rename itself remains (a decided boundary, F13-9: closing it needs a local process with
+//! write access to the repository, which can edit the files directly anyway). A file with more than
+//! one hard link, a link (symlink, junction) or another reparse point, and a file under a linked
+//! `.claude` / `.claude/agents` are not edited at all; the links are checked again immediately
+//! before the rename. Every repair that was not made is reported with its reason.
 //!
 //! It is used from two places: `c3 doctor --fix` (which then re-reports what is left) and the
 //! `c3 hook` SessionStart line (automatic, default ON, off with `C3_REPO_MODELS=off` or
@@ -26,6 +29,7 @@ use std::path::{Path, PathBuf};
 use c3_core::claude::model_family;
 use c3_core::roster::Roster;
 
+use crate::maintain::models::{dated_older, ModelsState};
 use crate::maintain::version::{parse_model_id, successor};
 use crate::setup::doctor::{agent_model, frontmatter_model, pinned_agent_model};
 
@@ -103,6 +107,11 @@ pub fn rewrite_agent_model(content: &str) -> Option<(String, String, String)> {
 /// * an entry whose model IS the value (case-insensitively) keeps it: `AGENTS.md` is in step;
 /// * otherwise each entry's model is asked on its own whether it is the value's successor
 ///   ([`successor`]: same prefix and suffix, a higher version - a higher major included);
+/// * (0.2.5 R2, F13-6) a successor the maintain state dates as NOT newer than the value is never
+///   followed ([`dated_older`]: a public catalog of `models_state` dates both ids and the
+///   candidate not later, or an earlier pass recorded the pair as older - `grok-4.20` is a 2025
+///   model below `grok-4.7` although 4.20 > 4.7); without dates for both ids the version rule
+///   alone decides, as before;
 /// * the value is rewritten only when exactly ONE successor id results; two entries carrying
 ///   different successors leave it alone (ambiguous).
 ///
@@ -112,6 +121,7 @@ pub fn rewrite_agent_model(content: &str) -> Option<(String, String, String)> {
 pub fn rewrite_agents_md_model(
     content: &str,
     roster_models: &[String],
+    models_state: &ModelsState,
 ) -> Option<(String, String, String)> {
     let value = agent_model(content)?;
     if value.trim().is_empty() || !model_family(&value).is_empty() {
@@ -129,7 +139,7 @@ pub fn rewrite_agents_md_model(
     let mut succs: Vec<&str> = Vec::new();
     for m in &entries {
         if let Some(s) = successor(&lowered, std::slice::from_ref(m)) {
-            if !succs.contains(&s) {
+            if !succs.contains(&s) && !dated_older(models_state, &lowered, s) {
                 succs.push(s);
             }
         }
@@ -159,10 +169,11 @@ pub fn rewrite_agents_md_model(
 }
 
 /// Apply both kinds of fix to a repository. `roster_models` is [`roster_models`]' list (for the
-/// AGENTS.md rule). Inside a child C3 started (`C3_CHILD`, F04-4) it does nothing and says so
-/// ([`RepairReport::skipped_in_child`]). Otherwise every file is replaced, never written through
-/// (see the module doc); a repair that cannot be made safely is reported, never forced. Nothing is
-/// written outside `repo_root` and no process is started.
+/// AGENTS.md rule, whose date gate reads the maintain state's catalog dates -
+/// [`crate::maintain::models_state`]). Inside a child C3 started (`C3_CHILD`, F04-4) it does
+/// nothing and says so ([`RepairReport::skipped_in_child`]). Otherwise every file is replaced,
+/// never written through (see the module doc); a repair that cannot be made safely is reported,
+/// never forced. Nothing is written outside `repo_root` and no process is started.
 pub fn refresh_repo_models(repo_root: &Path, roster_models: &[String]) -> RepairReport {
     if crate::engines::in_c3_child() {
         return RepairReport {
@@ -170,11 +181,15 @@ pub fn refresh_repo_models(repo_root: &Path, roster_models: &[String]) -> Repair
             ..RepairReport::default()
         };
     }
-    refresh_repo_models_at(repo_root, roster_models)
+    refresh_repo_models_at(repo_root, roster_models, &crate::maintain::models_state())
 }
 
-/// [`refresh_repo_models`] without the C3-child check.
-fn refresh_repo_models_at(repo_root: &Path, roster_models: &[String]) -> RepairReport {
+/// [`refresh_repo_models`] without the C3-child check, with the maintain state given.
+fn refresh_repo_models_at(
+    repo_root: &Path,
+    roster_models: &[String],
+    models_state: &ModelsState,
+) -> RepairReport {
     let mut report = RepairReport::default();
 
     // 1. `.claude/agents/*.md` pins -> the alias. The directory is read even when it is a link
@@ -218,7 +233,9 @@ fn refresh_repo_models_at(repo_root: &Path, roster_models: &[String]) -> RepairR
     let agents_md = repo_root.join("AGENTS.md");
     if let Ok(snapshot) = std::fs::read(&agents_md) {
         if let Ok(content) = std::str::from_utf8(&snapshot) {
-            if let Some((new_content, old, new)) = rewrite_agents_md_model(content, roster_models) {
+            if let Some((new_content, old, new)) =
+                rewrite_agents_md_model(content, roster_models, models_state)
+            {
                 let edit = Edit {
                     file: "AGENTS.md".to_string(),
                     path: &agents_md,
@@ -272,15 +289,16 @@ pub(crate) fn edit_refusal(dirs: &[(&Path, &str)], path: &Path) -> Option<String
     for (dir, label) in dirs {
         if !is_real_dir(dir) {
             return Some(format!(
-                "{label} is a link (a symlink or junction) or no directory, so the file may lie outside the repository - not edited"
+                "{label} is {} or no directory, so the file may lie outside the repository - not edited",
+                link_words(dir)
             ));
         }
     }
     if !is_real_file(path) {
-        return Some(
-            "it is a link (a symlink or junction) or no regular file, so its target may lie outside the repository - not edited"
-                .to_string(),
-        );
+        return Some(format!(
+            "it is {} or no regular file, so its target may lie outside the repository - not edited",
+            link_words(path)
+        ));
     }
     match link_count(path) {
         Ok(1) => None,
@@ -363,6 +381,30 @@ fn write_then_rename(edit: &Edit<'_>, tmp: &Path) -> Result<(), String> {
     }
     std::fs::rename(tmp, edit.path)
         .map_err(|e| format!("could not replace it ({e}) - left as it was"))
+}
+
+/// (0.2.5 R2, F12-3) How a refusal names what `p` is, read without following it: `a link (a
+/// symlink or junction)` when it is one, `a reparse point (not a symlink or junction - e.g. a
+/// cloud-sync placeholder)` for any other Windows reparse point, which C3 refuses too since it
+/// cannot tell where it leads; otherwise both words (the entry is no link: missing, or another
+/// kind - the rest of the sentence says so).
+fn link_words(p: &Path) -> &'static str {
+    let m = std::fs::symlink_metadata(p).ok();
+    let symlink = m.as_ref().is_some_and(|m| m.file_type().is_symlink());
+    let reparse = m.as_ref().is_some_and(is_link);
+    reparse_words(symlink, reparse)
+}
+
+/// [`link_words`] from what the metadata says: a symlink (Rust's `is_symlink`, on Windows a
+/// name-surrogate reparse point - a symlink or a junction), and a reparse point at all.
+fn reparse_words(symlink: bool, reparse: bool) -> &'static str {
+    match (symlink, reparse) {
+        (true, _) => "a link (a symlink or junction)",
+        (false, true) => {
+            "a reparse point (not a symlink or junction - e.g. a cloud-sync placeholder)"
+        }
+        (false, false) => "a link (a symlink or junction), a reparse point",
+    }
 }
 
 /// Whether the metadata (read without following a link) is a link: a symlink, or on Windows any
@@ -476,17 +518,67 @@ pub fn enabled() -> bool {
 }
 
 /// (0.2.5, F02-6) The repository root WITHOUT running git: the nearest directory, from `start`
-/// upwards, holding a `.git` entry - a directory, or the `.git` FILE of a linked worktree or a
-/// submodule. `None` when no ancestor has one.
+/// upwards, holding a `.git` entry. (R2, F13-2) That entry decides: the directory is the root only
+/// when its `.git` is a repository ([`is_git_entry`]: a directory holding `HEAD`, or the `gitdir:`
+/// file of a linked worktree or a submodule whose target directory holds `HEAD`); a stray `.git`
+/// (an empty file, a broken link, a non-repository directory) means no root - `None`, and the
+/// repair does nothing. `None` too when no ancestor has a `.git` entry.
 pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
     let mut dir = Some(start);
     while let Some(d) = dir {
-        if std::fs::symlink_metadata(d.join(".git")).is_ok() {
-            return Some(d.to_path_buf());
+        let dotgit = d.join(".git");
+        if std::fs::symlink_metadata(&dotgit).is_ok() {
+            return is_git_entry(&dotgit).then(|| d.to_path_buf());
         }
         dir = d.parent();
     }
     None
+}
+
+/// Whether a `.git` entry is a repository, read without running git and without following a link:
+/// a real directory (not a link) that holds `HEAD`, or a regular file (not a link) whose first line
+/// is `gitdir: <path>` naming a directory - relative paths against the file's own directory - that
+/// holds `HEAD`. Anything else is not.
+fn is_git_entry(dotgit: &Path) -> bool {
+    let Ok(m) = std::fs::symlink_metadata(dotgit) else {
+        return false;
+    };
+    if is_link(&m) {
+        return false;
+    }
+    if m.file_type().is_dir() {
+        return dotgit.join("HEAD").is_file();
+    }
+    if !m.file_type().is_file() {
+        return false;
+    }
+    let mut text = String::new();
+    let read = std::fs::File::open(dotgit).and_then(|f| {
+        use std::io::Read;
+        f.take(4096).read_to_string(&mut text)
+    });
+    if read.is_err() {
+        return false;
+    }
+    let Some(target) = text
+        .lines()
+        .next()
+        .and_then(|l| l.strip_prefix("gitdir:"))
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        return false;
+    };
+    let target = Path::new(target);
+    let target = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        match dotgit.parent() {
+            Some(base) => base.join(target),
+            None => return false,
+        }
+    };
+    target.is_dir() && target.join("HEAD").is_file()
 }
 
 /// The hook's line for a repair pass: what was refreshed and what could not be, in one line;
@@ -527,9 +619,11 @@ pub fn hook_line_for(report: &RepairReport) -> Option<String> {
 ///
 /// It also does nothing inside a child that C3 itself started (`engines::in_c3_child`): a reviewer
 /// on the `claude` engine runs this same hook in the repository under review and must stay
-/// read-only, and a worker's edit would land in its patch and could break its scope check.
+/// read-only, and a worker's edit would land in its patch and could break its scope check. (R2,
+/// F13-2) Nor with `GIT_DIR` set in the environment: git would then take another repository than
+/// the walk up to `.git` finds, so the walk's answer is not trusted.
 pub fn hook_line() -> Option<String> {
-    if !enabled() || crate::engines::in_c3_child() {
+    if !enabled() || crate::engines::in_c3_child() || std::env::var_os("GIT_DIR").is_some() {
         return None;
     }
     let cwd = std::env::current_dir().ok()?;
@@ -557,11 +651,12 @@ mod tests {
         d
     }
 
-    /// A scratch repository `<base>/repo` with `.git` and `.claude/agents/`.
+    /// A scratch repository `<base>/repo` with `.git` (holding `HEAD`) and `.claude/agents/`.
     fn repo_with_agents(tag: &str) -> (PathBuf, PathBuf) {
         let base = scratch(tag);
         let repo = base.join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
         std::fs::create_dir_all(repo.join(".claude").join("agents")).unwrap();
         (base, repo)
     }
@@ -578,6 +673,110 @@ mod tests {
     }
 
     const PINNED: &str = "---\nname: w\nmodel: claude-opus-4-8\n---\nbody\n";
+
+    /// The AGENTS.md rewrite with an empty maintain state (no catalog dates).
+    fn rewrite_agents_md_model(c: &str, roster: &[String]) -> Option<(String, String, String)> {
+        super::rewrite_agents_md_model(c, roster, &ModelsState::default())
+    }
+
+    /// The repair with an empty maintain state (no catalog dates).
+    fn refresh_repo_models_at(repo: &Path, roster: &[String]) -> RepairReport {
+        super::refresh_repo_models_at(repo, roster, &ModelsState::default())
+    }
+
+    /// A maintain state whose public catalog lists `(id, created)`.
+    fn catalog(ids: &[(&str, Option<i64>)]) -> ModelsState {
+        let mut s = crate::maintain::models::SourceList {
+            source: "web:openrouter.ai".into(),
+            ..Default::default()
+        };
+        for (id, c) in ids {
+            s.ids.push(id.to_string());
+            if let Some(c) = c {
+                s.created.insert(id.to_string(), *c);
+            }
+        }
+        ModelsState {
+            sources: vec![s],
+            ..Default::default()
+        }
+    }
+
+    // (R2, F13-6) AGENTS.md never follows to a model the maintain state dates older: grok-4.20 is
+    // numerically above grok-4.7 but a 2025 model. Without dates for both ids the version rule
+    // alone decides, as before; a pair recorded as older by an earlier pass is refused too.
+    #[test]
+    fn agents_md_never_follows_to_a_model_dated_older() {
+        let src = "---\nmodel: grok-4.7\n---\n";
+        let roster = ["grok-4.20".to_string()];
+        const Y2025: i64 = 1_740_000_000;
+        const Y2026: i64 = 1_770_000_000;
+        // the catalog dates both, the candidate older: no rewrite
+        let dated = catalog(&[
+            ("x-ai/grok-4.20", Some(Y2025)),
+            ("x-ai/grok-4.7", Some(Y2026)),
+        ]);
+        assert!(super::rewrite_agents_md_model(src, &roster, &dated).is_none());
+        // the same date counts as not newer
+        let same = catalog(&[
+            ("x-ai/grok-4.20", Some(Y2026)),
+            ("x-ai/grok-4.7", Some(Y2026)),
+        ]);
+        assert!(super::rewrite_agents_md_model(src, &roster, &same).is_none());
+        // dated newer: followed
+        let newer = catalog(&[
+            ("x-ai/grok-4.20", Some(Y2026)),
+            ("x-ai/grok-4.7", Some(Y2025)),
+        ]);
+        let (_, _, new) = super::rewrite_agents_md_model(src, &roster, &newer).unwrap();
+        assert_eq!(new, "grok-4.20");
+        // only one of the two dated, or no state at all: the behaviour stays as it is
+        let one = catalog(&[("x-ai/grok-4.20", Some(Y2025)), ("x-ai/grok-4.7", None)]);
+        assert!(super::rewrite_agents_md_model(src, &roster, &one).is_some());
+        assert!(rewrite_agents_md_model(src, &roster).is_some());
+        // recorded as older in an earlier pass
+        let recorded = ModelsState {
+            older: vec![crate::maintain::models::OlderPair::new(
+                "grok-4.7",
+                "grok-4.20",
+            )],
+            ..Default::default()
+        };
+        assert!(super::rewrite_agents_md_model(src, &roster, &recorded).is_none());
+        // an older-dated candidate drops out; another entry's newer one is still followed
+        let roster2 = ["grok-4.20".to_string(), "grok-4.8".to_string()];
+        let (_, _, new) = super::rewrite_agents_md_model(src, &roster2, &dated).unwrap();
+        assert_eq!(new, "grok-4.8");
+    }
+
+    // (R2, F12-3) A refusal says "a reparse point" where the entry is a Windows reparse point that
+    // is not a symlink or junction (a cloud placeholder), "a link" where it is one.
+    #[test]
+    fn a_refusal_names_a_reparse_point_for_what_it_is() {
+        assert_eq!(reparse_words(true, true), "a link (a symlink or junction)");
+        assert!(
+            reparse_words(false, true).starts_with("a reparse point (not a symlink or junction")
+        );
+        assert!(reparse_words(false, false).contains("a reparse point"));
+        let (base, repo) = repo_with_agents("words");
+        let file = repo.join(".claude").join("agents").join("w.md");
+        std::fs::write(&file, PINNED).unwrap();
+        // a plain directory and file: no refusal at all
+        let agents = repo.join(".claude").join("agents");
+        assert_eq!(
+            edit_refusal(&[(agents.as_path(), ".claude/agents")], &file),
+            None
+        );
+        // a missing file: the refusal names both possibilities
+        let why = edit_refusal(&[], &repo.join("none.md")).unwrap();
+        assert!(
+            why.starts_with(
+                "it is a link (a symlink or junction), a reparse point or no regular file"
+            ),
+            "{why}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn agent_pin_becomes_the_alias_and_keeps_every_other_byte() {
@@ -886,12 +1085,57 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
         // (an ancestor of the temp directory could hold a `.git` of its own: only `base` matters)
         assert!(find_repo_root(&deep).is_none_or(|r| !r.starts_with(&base)));
-        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join(".git").join("worktrees").join("wt")).unwrap();
+        std::fs::write(repo.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(
+            repo.join(".git").join("worktrees").join("wt").join("HEAD"),
+            "0123\n",
+        )
+        .unwrap();
         assert_eq!(find_repo_root(&deep), Some(repo.clone()));
         let wt = base.join("wt");
         std::fs::create_dir_all(wt.join("src")).unwrap();
         std::fs::write(wt.join(".git"), "gitdir: ../repo/.git/worktrees/wt\n").unwrap();
         assert_eq!(find_repo_root(&wt.join("src")), Some(wt.clone()));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (R2, F13-2) A stray `.git` entry is not a repository: an empty or foreign file, a `gitdir:`
+    // file whose target is missing or holds no HEAD, a directory without HEAD - each is the
+    // nearest `.git`, so there is no root (the walk does not go on past it) and no repair.
+    #[test]
+    fn a_stray_git_entry_is_not_a_repository() {
+        let base = scratch("stray");
+        let dir = base.join("plain");
+        let deep = dir.join("sub");
+        std::fs::create_dir_all(&deep).unwrap();
+        let dotgit = dir.join(".git");
+        for body in [
+            "",
+            "not a repository\n",
+            "gitdir:\n",
+            "gitdir: ../missing\n",
+            "x\ngitdir: ../plain\n",
+        ] {
+            std::fs::write(&dotgit, body).unwrap();
+            assert_eq!(find_repo_root(&deep), None, "{body:?}");
+        }
+        // a gitdir target that exists but holds no HEAD, then one that does
+        let target = base.join("admin");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(&dotgit, "gitdir: ../admin\n").unwrap();
+        assert_eq!(find_repo_root(&deep), None);
+        std::fs::write(target.join("HEAD"), "0123\n").unwrap();
+        assert_eq!(find_repo_root(&deep), Some(dir.clone()));
+        // an absolute target is read as such
+        std::fs::write(&dotgit, format!("gitdir: {}\n", target.display())).unwrap();
+        assert_eq!(find_repo_root(&deep), Some(dir.clone()));
+        // a `.git` directory without HEAD is not a repository either
+        std::fs::remove_file(&dotgit).unwrap();
+        std::fs::create_dir_all(&dotgit).unwrap();
+        assert_eq!(find_repo_root(&deep), None);
+        std::fs::write(dotgit.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert_eq!(find_repo_root(&deep), Some(dir.clone()));
         let _ = std::fs::remove_dir_all(&base);
     }
 }

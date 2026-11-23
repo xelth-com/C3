@@ -7,12 +7,15 @@
 //! waits for the operator; the text is the question put to him) or `parked` (a WIP put aside; the
 //! text is the condition for merging it). The description is shared by every worktree of the
 //! repository and disappears with `git branch -d`. A description is C3's only when its FIRST line
-//! parses as such a full record ([`BranchRecord::parse`]); anything else - a line `c3: hello`
-//! included - is somebody's own note: it is kept byte for byte (a recorded state is written as the
-//! first line above it, and `--clear` removes only that line) and the branch counts as having no
-//! recorded state. The value is read with NUL framing and never trimmed; a value C3 cannot read
-//! exactly (git fails, the value is not UTF-8, the key holds several values), or one that changed
-//! between C3's read and its write, is never written over.
+//! parses as such a full record ([`BranchRecord::parse`]: a known state, four fields, a real
+//! `YYYY-MM-DD` date); anything else is somebody's own note (a line `c3: hello` or `c3: work | a |
+//! tomorrow | x` included): it is kept byte for byte (a recorded state is written as the first line
+//! above it, and `--clear` removes only that line) and the branch counts as having no recorded
+//! state. The value is read with NUL framing and never trimmed; a value C3 cannot read exactly (git
+//! fails, the value is not UTF-8, the key holds several values) is never written over, and the value
+//! is read again immediately before the write, which is skipped when it changed since C3's first
+//! read (the moment between that re-read and git's own write remains: a writer landing exactly there
+//! is not seen). Inside a child C3 started (`C3_CHILD`) nothing is written at all.
 //!
 //! The default branch is found independently of the invoking checkout ([`default_branch`]):
 //! `c3.defaultBranch` in the local config (`c3 branches --default <name>`) wins, then `origin/HEAD`,
@@ -25,16 +28,20 @@
 //! READS the repository - every git call runs with `GIT_OPTIONAL_LOCKS=0`, so `git status` never
 //! refreshes or locks the index - except [`set_state`], [`clear_state`] and [`set_default_branch`],
 //! which write one config value each. Nothing is ever merged; the only thing ever deleted is a stale
-//! throwaway worktree of a kimi review, by `c3 doctor --fix` ([`remove_stale_worktrees`]).
+//! throwaway worktree of a review, by `c3 doctor --fix` ([`remove_stale_worktrees`]): one whose
+//! owner record names a process that is gone, or one git calls prunable (its directory is gone).
+//! A throwaway path that is a link, one without an owner record and one whose owner cannot be
+//! checked are reported and left alone ([`stale_verdict`]).
 //!
 //! Cost: a scan is a fixed handful of git calls (independent of the number of branches), plus, in
 //! the full listing only, two per unmerged branch (`git cherry` and `git rev-list --count`) for at
 //! most [`PATCH_CHECK_CAP`] of them.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{Duration, SystemTime};
+use std::process::{Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
 
 /// The prefix that starts C3's record line.
 pub const RECORD_PREFIX: &str = "c3: ";
@@ -53,14 +60,24 @@ pub const DEFAULT_UNKNOWN: &str =
 /// branches without a recorded state are checked first; the rest are listed "patches not checked".
 pub const PATCH_CHECK_CAP: usize = 50;
 
-/// A throwaway worktree of a kimi review with no owner record counts as stale after this long.
-pub const STALE_AFTER: Duration = Duration::from_secs(6 * 3600);
-
-/// The file in a kimi throwaway worktree's git admin directory (`<repo>/.git/worktrees/<name>/`)
-/// that names the process owning it: `<pid> <start time>`. It is outside the worktree's files (the
-/// reviewer's tree stays the clean HEAD) and goes with the admin directory when git removes or
-/// prunes the worktree.
+/// The file in a reviewer's throwaway worktree's git admin directory
+/// (`<repo>/.git/worktrees/<name>/`) that names the process owning it: `<pid> <start time>`. It is
+/// outside the worktree's files (the reviewer's tree stays the clean revision) and goes with the
+/// admin directory when git removes or prunes the worktree. (0.2.5 R2, F13-8) It is not best effort:
+/// a worktree whose record cannot be written is not used ([`record_throwaway_owner`]).
 pub const THROWAWAY_OWNER_FILE: &str = "c3-owner";
+
+/// How `c3 branches` / `c3 doctor` report a throwaway path that is itself a link (never followed,
+/// never removed). On Windows every reparse point counts, so the words say so.
+pub const LINK_LEFT_ALONE: &str = if cfg!(windows) {
+    "a link or another reparse point, left alone"
+} else {
+    "a link, left alone"
+};
+
+/// How a throwaway worktree without an owner record is reported (never removed while its directory
+/// exists, whatever its age).
+pub const NO_OWNER_RECORD: &str = "no owner record - remove it by hand";
 
 /// The three recorded states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +148,8 @@ impl BranchRecord {
     }
 
     /// Parse a description. Only its FIRST line is the record; `None` when the description is not
-    /// C3's (no `c3: ` prefix) or the record is malformed (unknown state, missing fields).
+    /// C3's (no `c3: ` prefix) or the record is malformed (unknown state, missing fields, a date
+    /// field that is not a real `YYYY-MM-DD` - [`is_record_date`]).
     pub fn parse(description: &str) -> Option<BranchRecord> {
         let first = description.lines().next()?;
         let rest = first.strip_prefix(RECORD_PREFIX)?;
@@ -139,6 +157,9 @@ impl BranchRecord {
         let state = BranchState::parse(parts.next()?)?;
         let owner = parts.next()?.trim().to_string();
         let date = parts.next()?.trim().to_string();
+        if !is_record_date(&date) {
+            return None;
+        }
         let text = parts.next()?.trim().to_string();
         Some(BranchRecord {
             state,
@@ -161,6 +182,24 @@ impl BranchRecord {
             format!("{} ({who}): {}", self.state.as_str(), self.text)
         }
     }
+}
+
+/// (0.2.5 R2, F13-3) Whether a record's date field is a real date as C3 writes it: `YYYY-MM-DD` -
+/// four, two and two ASCII digits, the month 01-12, the day 01-31. A line whose third field is
+/// anything else (`tomorrow`, `2026-13-01`, `26-11-18`) is somebody's own note, never C3's record.
+pub fn is_record_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return false;
+    }
+    if ![0, 1, 2, 3, 5, 6, 8, 9]
+        .iter()
+        .all(|&i| b[i].is_ascii_digit())
+    {
+        return false;
+    }
+    let two = |i: usize| (b[i] - b'0') * 10 + (b[i + 1] - b'0');
+    (1..=12).contains(&two(5)) && (1..=31).contains(&two(8))
 }
 
 /// Whether a description is C3's: its first line parses as a full record. A foreign line that
@@ -192,6 +231,134 @@ pub fn description_with_record(existing: Option<&str>, record: &BranchRecord) ->
 // git plumbing
 // ---------------------------------------------------------------------------------------------
 
+/// (0.2.5 R2, F13-5) The git children of ONE deadline-bound scan - the SessionStart hook's branch
+/// line. While a thread is bound to a set ([`with_scan_children`]), every git process this module
+/// starts on that thread ([`run_registered`]) is registered in it for as long as it runs;
+/// [`ScanChildren::stop`] - the hook's deadline - kills the running ones and refuses every later
+/// start, so no git child of the scan outlives `c3 hook`. A thread bound to no set (every other
+/// caller) runs git exactly as `Command::output` does.
+#[derive(Default)]
+pub struct ScanChildren {
+    inner: Mutex<ScanChildrenInner>,
+}
+
+#[derive(Default)]
+struct ScanChildrenInner {
+    stopped: bool,
+    next_id: u64,
+    running: Vec<(u64, std::process::Child)>,
+    /// (tests) The pid of every child ever started through this set.
+    #[cfg(test)]
+    started: Vec<u32>,
+}
+
+impl ScanChildren {
+    fn lock(&self) -> std::sync::MutexGuard<'_, ScanChildrenInner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Kill every registered child that still runs (and reap it), and refuse every later start.
+    pub fn stop(&self) {
+        let mut g = self.lock();
+        g.stopped = true;
+        for (_, mut child) in g.running.drain(..) {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// (tests) The pids of the children running now.
+    #[cfg(test)]
+    pub(crate) fn running_pids(&self) -> Vec<u32> {
+        self.lock().running.iter().map(|(_, c)| c.id()).collect()
+    }
+
+    /// (tests) The pid of every child ever started through this set.
+    #[cfg(test)]
+    pub(crate) fn started_pids(&self) -> Vec<u32> {
+        self.lock().started.clone()
+    }
+}
+
+thread_local! {
+    /// The [`ScanChildren`] this thread's git children are registered in, if any.
+    static SCAN_CHILDREN: std::cell::RefCell<Option<Arc<ScanChildren>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` on this thread with `set` bound: every git child this module starts meanwhile is
+/// registered in it (and stopped with it).
+pub fn with_scan_children<T>(set: Arc<ScanChildren>, f: impl FnOnce() -> T) -> T {
+    SCAN_CHILDREN.with(|s| *s.borrow_mut() = Some(set));
+    let out = f();
+    SCAN_CHILDREN.with(|s| *s.borrow_mut() = None);
+    out
+}
+
+/// The error of a start refused, or a child killed, by [`ScanChildren::stop`].
+fn stopped_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "stopped by the scan's deadline",
+    )
+}
+
+/// Run `cmd` to its end and collect its output, as `Command::output` does - registered in this
+/// thread's [`ScanChildren`] when one is bound: then stdin is null, stdout and stderr are read from
+/// pipes, and a stop kills the child (`Err`); a start after a stop is refused (`Err`, nothing is
+/// started).
+pub(crate) fn run_registered(mut cmd: Command) -> std::io::Result<Output> {
+    let Some(set) = SCAN_CHILDREN.with(|s| s.borrow().clone()) else {
+        return cmd.output();
+    };
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let (id, out_pipe, err_pipe) = {
+        let mut g = set.lock();
+        if g.stopped {
+            return Err(stopped_error());
+        }
+        // started under the lock: a stop either sees this child or this start sees the stop
+        let mut child = cmd.spawn()?;
+        let out = child.stdout.take();
+        let err = child.stderr.take();
+        g.next_id += 1;
+        let id = g.next_id;
+        #[cfg(test)]
+        g.started.push(child.id());
+        g.running.push((id, child));
+        (id, out, err)
+    };
+    // stderr on a helper thread, stdout here: both end when the child exits or is killed
+    let err_reader = err_pipe.map(|mut e| {
+        std::thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = e.read_to_end(&mut b);
+            b
+        })
+    });
+    let mut stdout = Vec::new();
+    if let Some(mut o) = out_pipe {
+        let _ = o.read_to_end(&mut stdout);
+    }
+    let stderr = err_reader.and_then(|h| h.join().ok()).unwrap_or_default();
+    let child = {
+        let mut g = set.lock();
+        let pos = g.running.iter().position(|(i, _)| *i == id);
+        pos.map(|p| g.running.swap_remove(p).1)
+    };
+    match child {
+        Some(mut c) => Ok(Output {
+            status: c.wait()?,
+            stdout,
+            stderr,
+        }),
+        // the stop took it, killed and reaped it
+        None => Err(stopped_error()),
+    }
+}
+
 /// A git command in `repo` that never takes an optional lock (`GIT_OPTIONAL_LOCKS=0`: `git status`
 /// does not refresh or lock the index; a config write still takes its own required lock).
 fn git_cmd(repo: &Path) -> Command {
@@ -200,9 +367,16 @@ fn git_cmd(repo: &Path) -> Command {
     cmd
 }
 
+/// Run git in `repo` ([`run_registered`]); its output, or the spawn error.
+fn git_run(repo: &Path, args: &[&str]) -> std::io::Result<Output> {
+    let mut cmd = git_cmd(repo);
+    cmd.args(args);
+    run_registered(cmd)
+}
+
 /// Run git in `repo`; stdout on success, `None` on any failure (spawn error or non-zero exit).
 fn git_out(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = git_cmd(repo).args(args).output().ok()?;
+    let out = git_run(repo, args).ok()?;
     if !out.status.success() {
         return None;
     }
@@ -211,9 +385,7 @@ fn git_out(repo: &Path, args: &[&str]) -> Option<String> {
 
 /// Run git in `repo`; true when it exits 0.
 fn git_ok(repo: &Path, args: &[&str]) -> bool {
-    git_cmd(repo)
-        .args(args)
-        .output()
+    git_run(repo, args)
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -297,8 +469,10 @@ pub fn default_branch(repo: &Path) -> Result<String, String> {
 }
 
 /// `c3 branches --default <name>`: store the default branch in the local config
-/// ([`DEFAULT_BRANCH_KEY`]). Refuses an invalid name and one that is not a local branch.
+/// ([`DEFAULT_BRANCH_KEY`]). Refuses inside a C3 child (like `--set` / `--clear`), an invalid name
+/// and one that is not a local branch.
 pub fn set_default_branch(repo: &Path, name: &str) -> Result<(), String> {
+    refuse_in_child()?;
     check_branch_name(repo, name)?;
     if !branch_exists(repo, name) {
         return Err(format!("no local branch named '{name}'"));
@@ -411,7 +585,8 @@ pub struct BranchInfo {
     /// (a later revert is not seen). Only computed by a full scan, for at most [`PATCH_CHECK_CAP`]
     /// unmerged branches.
     pub patches_on_default: Option<bool>,
-    /// The full scan ran the patch check on this branch.
+    /// The full scan ran the patch check on this branch and both of its git calls (`git cherry`,
+    /// `git rev-list --count`) succeeded; a failed check leaves it `false` (F13-7).
     pub patches_checked: bool,
     /// Commits ahead of the default branch. Only computed by a full scan.
     pub ahead: Option<u64>,
@@ -440,12 +615,16 @@ pub struct WorktreeInfo {
     pub prunable: bool,
 }
 
-/// A throwaway worktree of a kimi review that no live run owns any more.
+/// A throwaway worktree of a review that `c3 branches` / `c3 doctor` report: one no live run owns
+/// (`removable`: `c3 doctor --fix` removes it), or one C3 cannot judge safely - its path is a link,
+/// it has no owner record, its owner cannot be checked - which is reported and left alone.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StaleWorktree {
     pub path: String,
-    /// Why it counts as stale.
+    /// Why it is reported.
     pub why: String,
+    /// `c3 doctor --fix` removes it ([`StaleVerdict::Remove`]); `false`: it is left alone.
+    pub removable: bool,
 }
 
 /// The start folder: the primary worktree.
@@ -476,9 +655,11 @@ pub struct BranchReport {
     pub branches: Vec<BranchInfo>,
     pub worktrees: Vec<WorktreeInfo>,
     pub start: Option<StartFolder>,
-    /// Unmerged branches the full listing did not patch-check ([`PATCH_CHECK_CAP`]).
+    /// Unmerged branches the full listing did not patch-check: beyond [`PATCH_CHECK_CAP`], or whose
+    /// check failed (a git call of it failed).
     pub patches_unchecked: usize,
-    /// Throwaway worktrees of kimi reviews that no live run owns ([`remove_stale_worktrees`]).
+    /// Throwaway worktrees of reviews that no live run is known to own ([`StaleWorktree`]; the
+    /// removable ones go with [`remove_stale_worktrees`]).
     pub stale_worktrees: Vec<StaleWorktree>,
 }
 
@@ -531,6 +712,30 @@ pub struct ScanOpts {
 /// or there is no default branch - then it is not known, never merged).
 pub fn merged_state(no_merged: Option<&BTreeSet<String>>, name: &str) -> Option<bool> {
     no_merged.map(|set| !set.contains(name))
+}
+
+/// (0.2.5 R2, F13-7) One branch's patch check from its two git answers (`None`: that call failed
+/// to start or exited non-zero): `git cherry`'s output and `git rev-list --count`'s. The branch
+/// counts as checked - `patches_checked`, `patches_on_default` set - only when BOTH succeeded; a
+/// failed check leaves it unchecked (the listing says "patches not checked"). The ahead count is
+/// kept whenever its own call succeeded. Returns whether the branch was checked.
+pub fn apply_patch_check(b: &mut BranchInfo, cherry: Option<&str>, ahead: Option<&str>) -> bool {
+    let ahead = ahead.and_then(|s| s.trim().parse::<u64>().ok());
+    if ahead.is_some() {
+        b.ahead = ahead;
+    }
+    match (cherry, ahead) {
+        (Some(c), Some(_)) => {
+            b.patches_on_default = Some(!c.lines().any(|l| l.trim_start().starts_with('+')));
+            b.patches_checked = true;
+            true
+        }
+        _ => {
+            b.patches_on_default = None;
+            b.patches_checked = false;
+            false
+        }
+    }
 }
 
 /// Scan the repository at `repo`. `None` outside a git repository or in one without any local
@@ -638,17 +843,17 @@ pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
         for &i in order.iter().take(PATCH_CHECK_CAP) {
             let b = &mut branches[i];
             let head = format!("refs/heads/{}", b.name);
-            b.patches_on_default = git_out(repo, &["cherry", &base, &head])
-                .map(|c| !c.lines().any(|l| l.trim_start().starts_with('+')));
-            b.ahead = git_out(repo, &["rev-list", "--count", &format!("{base}..{head}")])
-                .and_then(|s| s.trim().parse::<u64>().ok());
-            b.patches_checked = true;
+            let cherry = git_out(repo, &["cherry", &base, &head]);
+            let ahead = git_out(repo, &["rev-list", "--count", &format!("{base}..{head}")]);
+            if !apply_patch_check(b, cherry.as_deref(), ahead.as_deref()) {
+                patches_unchecked += 1;
+            }
         }
     }
 
     // Worktrees: all but the primary and the default branch's one; bare entries skipped. C3's own
-    // throwaway worktree of a kimi review is never a finding while a live run owns it; one no live
-    // run owns is reported as stale.
+    // throwaway worktree of a review is never a finding while a live run owns it; any other is
+    // reported ([`stale_verdict`]: removable, or left alone).
     let mut wts = Vec::new();
     let mut stale_worktrees = Vec::new();
     for w in worktrees.iter().skip(1) {
@@ -656,10 +861,15 @@ pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
             continue;
         }
         if is_c3_throwaway_worktree(&w.path) {
-            if let Some(why) = throwaway_stale_reason(Path::new(&w.path), SystemTime::now()) {
+            if let Some(v) = throwaway_verdict(Path::new(&w.path), w.prunable) {
+                let (why, removable) = match v {
+                    StaleVerdict::Remove(why) => (why, true),
+                    StaleVerdict::LeaveAlone(why) => (why, false),
+                };
                 stale_worktrees.push(StaleWorktree {
                     path: w.path.clone(),
                     why,
+                    removable,
                 });
             }
             continue;
@@ -785,55 +995,153 @@ pub fn parse_owner_record(text: &str) -> Option<(u32, String)> {
     Some((pid, start.trim().to_string()))
 }
 
-/// (kimi engine) Record THIS process as the owner of a fresh throwaway worktree
-/// ([`THROWAWAY_OWNER_FILE`] in its git admin directory). Best effort: without the record the
-/// worktree counts as stale only once it is older than [`STALE_AFTER`].
-pub(crate) fn record_throwaway_owner(worktree: &Path) {
-    let Some(admin) = worktree_admin_dir(worktree) else {
-        return;
-    };
+/// (0.2.5 R2, F13-8) Record THIS process as the owner of a fresh throwaway worktree
+/// ([`THROWAWAY_OWNER_FILE`] in its git admin directory, read back after the write). Not best
+/// effort: `Err` (why) when the admin directory cannot be found or the record cannot be written -
+/// the caller then removes the worktree and fails the run, since `c3 doctor` could not tell this
+/// live run's worktree from a crashed run's leftover.
+pub(crate) fn record_throwaway_owner(worktree: &Path) -> Result<(), String> {
+    let admin = worktree_admin_dir(worktree)
+        .ok_or_else(|| "its git admin directory cannot be read from its .git file".to_string())?;
     let pid = std::process::id();
     let start = crate::liveness::proc::process_start_iso(pid).unwrap_or_default();
-    let _ = std::fs::write(admin.join(THROWAWAY_OWNER_FILE), format!("{pid} {start}\n"));
+    let file = admin.join(THROWAWAY_OWNER_FILE);
+    std::fs::write(&file, format!("{pid} {start}\n"))
+        .map_err(|e| format!("{} could not be written ({e})", file.display()))?;
+    match std::fs::read_to_string(&file)
+        .ok()
+        .as_deref()
+        .and_then(parse_owner_record)
+    {
+        Some((p, _)) if p == pid => Ok(()),
+        _ => Err(format!("{} did not read back as written", file.display())),
+    }
 }
 
-/// The stale verdict, from what was found: `None` while a live run may own the worktree. Its
-/// directory gone -> stale. An owner record -> stale exactly when that process (pid + start time)
-/// is gone. No record -> stale once the directory is older than [`STALE_AFTER`].
-pub fn stale_verdict(
-    dir_exists: bool,
-    owner: Option<(u32, String)>,
-    owner_alive: impl Fn(u32, &str) -> bool,
-    age: Option<Duration>,
-) -> Option<String> {
-    if !dir_exists {
-        return Some("its directory is gone".to_string());
-    }
-    match owner {
-        Some((pid, start)) => {
-            (!owner_alive(pid, &start)).then(|| format!("the run that made it (pid {pid}) is gone"))
+/// What a throwaway worktree's path is, read WITHOUT following it (`symlink_metadata`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThrowawayPath {
+    /// Nothing is there.
+    Gone,
+    /// A real directory.
+    Dir,
+    /// A symlink or junction - on Windows any reparse point
+    /// (`crate::engines::worktree::is_link`) - never followed.
+    Link,
+    /// Something else (a regular file).
+    NotADir,
+    /// It cannot be read (why).
+    Unreadable(String),
+}
+
+impl ThrowawayPath {
+    /// Read `path` itself, never what it points to.
+    pub fn of(path: &Path) -> ThrowawayPath {
+        match std::fs::symlink_metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => ThrowawayPath::Gone,
+            Err(e) => ThrowawayPath::Unreadable(e.to_string()),
+            Ok(m) if crate::engines::worktree::is_link(&m) => ThrowawayPath::Link,
+            Ok(m) if m.is_dir() => ThrowawayPath::Dir,
+            Ok(_) => ThrowawayPath::NotADir,
         }
-        None => age
-            .filter(|a| *a > STALE_AFTER)
-            .map(|a| format!("no owner record and {} h old", a.as_secs() / 3600)),
     }
 }
 
-/// Why a throwaway worktree is stale (`None` while a live run may own it). The age is that of the
-/// newer of the directory's creation and modification times.
-fn throwaway_stale_reason(path: &Path, now: SystemTime) -> Option<String> {
-    let meta = std::fs::metadata(path).ok();
-    let owner = worktree_admin_dir(path)
-        .and_then(|a| std::fs::read_to_string(a.join(THROWAWAY_OWNER_FILE)).ok())
-        .and_then(|t| parse_owner_record(&t));
-    let age = meta.as_ref().and_then(|m| {
-        let newest = [m.created().ok(), m.modified().ok()]
-            .into_iter()
-            .flatten()
-            .max()?;
-        Some(now.duration_since(newest).unwrap_or_default())
-    });
-    stale_verdict(meta.is_some(), owner, crate::liveness::proc::pid_alive, age)
+/// (0.2.5 R2, F12-1) Whether the process an owner record names still runs - three answers, never
+/// a guess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnerLiveness {
+    /// A process has the pid, with the recorded start time (or none was recorded).
+    Alive,
+    /// No process has the pid, or one with another start time (the pid was reused).
+    Gone,
+    /// A process has the pid but its start time cannot be read (permission: another user's or an
+    /// elevated process) - it may be the owner.
+    CannotTell,
+}
+
+/// The owner's [`OwnerLiveness`] from the live process table.
+pub fn owner_liveness(pid: u32, start: &str) -> OwnerLiveness {
+    match crate::liveness::proc::process_start_iso(pid) {
+        None => OwnerLiveness::Gone,
+        Some(live) if live.is_empty() => OwnerLiveness::CannotTell,
+        Some(live)
+            if !start.is_empty() && !crate::liveness::proc::same_start_time(&live, start) =>
+        {
+            OwnerLiveness::Gone
+        }
+        Some(_) => OwnerLiveness::Alive,
+    }
+}
+
+/// What `c3 doctor` makes of a throwaway worktree no live run is known to own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StaleVerdict {
+    /// No live run owns it: `c3 doctor --fix` removes it (why).
+    Remove(String),
+    /// Reported, never removed by C3 (why).
+    LeaveAlone(String),
+}
+
+/// (0.2.5 R2, F13-1 / F13-8 / F12-1) The verdict on one throwaway worktree, from what was found;
+/// `None` while a live run owns it (no finding):
+///
+/// * its path is gone: removable when git calls it prunable, else left alone;
+/// * its path is a link (a symlink, a junction, any reparse point), not a directory, or unreadable:
+///   left alone - nothing is ever removed through it;
+/// * a real directory without an owner record (`owner` `None`): left alone, whatever its age
+///   ([`NO_OWNER_RECORD`]);
+/// * an owner record: removable when the owner is gone, left alone when it cannot be checked, no
+///   finding while it is alive.
+pub fn stale_verdict(
+    path: &ThrowawayPath,
+    prunable: bool,
+    owner: Option<(u32, String)>,
+    liveness: impl Fn(u32, &str) -> OwnerLiveness,
+) -> Option<StaleVerdict> {
+    match path {
+        ThrowawayPath::Gone if prunable => {
+            Some(StaleVerdict::Remove("its directory is gone".to_string()))
+        }
+        ThrowawayPath::Gone => Some(StaleVerdict::LeaveAlone(
+            "its directory is gone, but git does not call it prunable (locked?), left alone"
+                .to_string(),
+        )),
+        ThrowawayPath::Link => Some(StaleVerdict::LeaveAlone(LINK_LEFT_ALONE.to_string())),
+        ThrowawayPath::NotADir => Some(StaleVerdict::LeaveAlone(
+            "not a directory, left alone".to_string(),
+        )),
+        ThrowawayPath::Unreadable(e) => Some(StaleVerdict::LeaveAlone(format!(
+            "cannot be read ({e}), left alone"
+        ))),
+        ThrowawayPath::Dir => match owner {
+            None => Some(StaleVerdict::LeaveAlone(NO_OWNER_RECORD.to_string())),
+            Some((pid, start)) => match liveness(pid, &start) {
+                OwnerLiveness::Alive => None,
+                OwnerLiveness::Gone => Some(StaleVerdict::Remove(format!(
+                    "the run that made it (pid {pid}) is gone"
+                ))),
+                OwnerLiveness::CannotTell => Some(StaleVerdict::LeaveAlone(format!(
+                    "its owner (pid {pid}) cannot be checked (its start time cannot be read), left alone"
+                ))),
+            },
+        },
+    }
+}
+
+/// [`stale_verdict`] for one throwaway worktree of the listing: the path read without following
+/// it, the owner record read only from a real directory, the owner checked in the live process
+/// table.
+fn throwaway_verdict(path: &Path, prunable: bool) -> Option<StaleVerdict> {
+    let kind = ThrowawayPath::of(path);
+    let owner = if kind == ThrowawayPath::Dir {
+        worktree_admin_dir(path)
+            .and_then(|a| std::fs::read_to_string(a.join(THROWAWAY_OWNER_FILE)).ok())
+            .and_then(|t| parse_owner_record(&t))
+    } else {
+        None
+    };
+    stale_verdict(&kind, prunable, owner, owner_liveness)
 }
 
 /// One stale worktree `c3 doctor --fix` tried to remove.
@@ -845,8 +1153,10 @@ pub struct StaleRemoval {
     pub removed: bool,
 }
 
-/// `c3 doctor --fix`: remove every stale throwaway worktree of a review with the reviewer's
-/// own link-safe removal (links inside are unlinked first, never followed).
+/// `c3 doctor --fix`: remove every REMOVABLE throwaway worktree of a review ([`StaleVerdict::
+/// Remove`]: its owner is gone, or git calls it prunable) with the reviewer's own link-safe removal
+/// (links inside are unlinked first, never followed; a root that is a link is refused). One that
+/// is left alone (a link, no owner record, an owner that cannot be checked) is never touched.
 pub fn remove_stale_worktrees(repo_root: &Path) -> Vec<StaleRemoval> {
     let Some(report) = quick_scan(repo_root, false) else {
         return Vec::new();
@@ -854,6 +1164,7 @@ pub fn remove_stale_worktrees(repo_root: &Path) -> Vec<StaleRemoval> {
     report
         .stale_worktrees
         .iter()
+        .filter(|s| s.removable)
         .map(|s| {
             let p = Path::new(&s.path);
             // a refused removal (a link inside that could not be detached, a root that is a link)
@@ -1042,13 +1353,16 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 /// The `c3 hook` line: ONE line when a branch or worktree has no recorded state, the default branch
 /// is unknown, or the start folder is not on the default branch; else `None`. Cheap (ancestry only,
 /// no `git cherry`, no `git status`), read-only (no optional locks), every error swallowed; nothing
-/// inside a C3 child, outside a git repository or with the check off.
+/// inside a C3 child, outside a git repository or with the check off. Every git call - the root's
+/// `rev-parse --show-toplevel` included - goes through [`run_registered`], so the hook's deadline
+/// stops it ([`ScanChildren`]).
 pub fn hook_line() -> Option<String> {
     if !enabled() || crate::engines::in_c3_child() {
         return None;
     }
     let cwd = std::env::current_dir().ok()?;
-    let repo_root = crate::providers::resolve_repo_root(&cwd);
+    let top = git_out(&cwd, &["rev-parse", "--show-toplevel"]);
+    let repo_root = crate::providers::repo_root_from_toplevel(&cwd, top.as_deref());
     if !is_git_repo(&repo_root) {
         return None;
     }
@@ -1111,9 +1425,7 @@ pub fn nul_values(out: &str) -> Option<Vec<&str>> {
 /// never writes over a value it could not read.
 pub fn read_description(repo: &Path, branch: &str) -> Result<Option<String>, String> {
     let key = description_key(branch);
-    let out = git_cmd(repo)
-        .args(["config", "--local", "-z", "--get-all", &key])
-        .output()
+    let out = git_run(repo, &["config", "--local", "-z", "--get-all", &key])
         .map_err(|e| format!("could not run git config to read {key}: {e}"))?;
     match out.status.code() {
         Some(0) => {}
@@ -1138,9 +1450,7 @@ pub fn read_description(repo: &Path, branch: &str) -> Result<Option<String>, Str
 
 /// Write one value to the repository's own config.
 fn write_config(repo: &Path, key: &str, value: &str) -> Result<(), String> {
-    let out = git_cmd(repo)
-        .args(["config", "--local", key, value])
-        .output()
+    let out = git_run(repo, &["config", "--local", key, value])
         .map_err(|e| format!("git config: {e}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -1153,9 +1463,7 @@ fn write_config(repo: &Path, key: &str, value: &str) -> Result<(), String> {
 
 /// Remove one value from the repository's own config.
 fn unset_config(repo: &Path, key: &str) -> Result<(), String> {
-    let out = git_cmd(repo)
-        .args(["config", "--local", "--unset", key])
-        .output()
+    let out = git_run(repo, &["config", "--local", "--unset", key])
         .map_err(|e| format!("git config: {e}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -1166,8 +1474,22 @@ fn unset_config(repo: &Path, key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// (0.2.5 R2, F13-4) `--set` / `--clear` / `--default` inside a child C3 started (`C3_CHILD`): a reviewer is
+/// read-only and a worker's change is measured against its scope, so neither edits a branch's
+/// recorded state. The listing stays available.
+const REFUSED_IN_CHILD: &str =
+    "refused inside a C3 child (C3_CHILD is set): a reviewer or worker C3 started does not edit branch states or the default branch; nothing written";
+
+/// `Err` inside a C3 child ([`REFUSED_IN_CHILD`]).
+fn refuse_in_child() -> Result<(), String> {
+    if crate::engines::in_c3_child() {
+        return Err(REFUSED_IN_CHILD.to_string());
+    }
+    Ok(())
+}
+
 /// Re-read the description right before a write and refuse when it is no longer what was read:
-/// another writer got in between, and C3 never writes over a change it has not seen.
+/// another writer got in between. (The moment between this re-read and git's own write remains.)
 fn unchanged_since(repo: &Path, branch: &str, read: &Option<String>) -> Result<(), String> {
     // (test only) Another writer between C3's read and this re-read.
     if let Some(v) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_BRANCH_DESC_RACE") {
@@ -1182,10 +1504,10 @@ fn unchanged_since(repo: &Path, branch: &str, read: &Option<String>) -> Result<(
     Ok(())
 }
 
-/// Write a recorded state. Refuses an invalid branch name, an unknown branch, the default branch,
-/// an empty note for `waits` / `parked`, a description that cannot be read exactly and one that
-/// changes while C3 writes. A foreign description is kept, byte for byte, below the record line.
-/// Returns the line written.
+/// Write a recorded state. Refuses inside a C3 child, an invalid branch name, an unknown branch,
+/// the default branch, an empty note for `waits` / `parked`, a description that cannot be read
+/// exactly and one that changed since it was read (re-read immediately before the write). A
+/// foreign description is kept, byte for byte, below the record line. Returns the line written.
 pub fn set_state(
     repo: &Path,
     branch: &str,
@@ -1194,6 +1516,7 @@ pub fn set_state(
     owner: &str,
     date: &str,
 ) -> Result<String, String> {
+    refuse_in_child()?;
     check_branch_name(repo, branch)?;
     if !branch_exists(repo, branch) {
         return Err(format!("no local branch named '{branch}'"));
@@ -1237,8 +1560,10 @@ pub enum ClearOutcome {
 
 /// Remove C3's record line from a branch description, restoring the foreign rest byte for byte;
 /// never touches a foreign description (a `c3: ` line that is not a full record included). Refuses
-/// like [`set_state`] when the description cannot be read exactly or changes meanwhile.
+/// like [`set_state`] inside a C3 child, when the description cannot be read exactly or when it
+/// changed since it was read.
 pub fn clear_state(repo: &Path, branch: &str) -> Result<ClearOutcome, String> {
+    refuse_in_child()?;
     check_branch_name(repo, branch)?;
     if !branch_exists(repo, branch) {
         return Err(format!("no local branch named '{branch}'"));
@@ -1453,24 +1778,75 @@ mod tests {
         ));
     }
 
+    // (R2: F13-1, F13-8, F12-1) Only a gone owner or a prunable (gone) directory is removable; a
+    // link, a directory without an owner record (whatever its age) and an owner that cannot be
+    // checked are reported and left alone; a live owner is no finding.
     #[test]
-    fn the_stale_verdict_follows_the_owner_then_the_age() {
-        let alive = |_: u32, _: &str| true;
-        let dead = |_: u32, _: &str| false;
-        let young = Some(Duration::from_secs(60));
-        let old = Some(STALE_AFTER + Duration::from_secs(3600));
-        // Directory gone: stale whatever else.
-        assert!(stale_verdict(false, None, alive, young).is_some());
-        // An owner record decides alone: a live owner keeps even an old worktree.
-        assert_eq!(stale_verdict(true, Some((7, "s".into())), alive, old), None);
-        let v = stale_verdict(true, Some((7, "s".into())), dead, young).unwrap();
-        assert!(v.contains("pid 7"), "{v}");
-        // No record: the age decides.
-        assert_eq!(stale_verdict(true, None, dead, young), None);
-        assert_eq!(stale_verdict(true, None, dead, None), None);
-        assert!(stale_verdict(true, None, dead, old)
-            .unwrap()
-            .contains("7 h old"));
+    fn only_a_gone_owner_or_a_prunable_directory_is_removable() {
+        let alive = |_: u32, _: &str| OwnerLiveness::Alive;
+        let gone = |_: u32, _: &str| OwnerLiveness::Gone;
+        let unsure = |_: u32, _: &str| OwnerLiveness::CannotTell;
+        let owner = || Some((7, "s".to_string()));
+        let removable = |v: Option<StaleVerdict>| matches!(v, Some(StaleVerdict::Remove(_)));
+        let left_alone = |v: &Option<StaleVerdict>| match v {
+            Some(StaleVerdict::LeaveAlone(why)) => why.clone(),
+            other => panic!("not left alone: {other:?}"),
+        };
+        // the directory is gone: removable only when git calls it prunable
+        assert!(removable(stale_verdict(
+            &ThrowawayPath::Gone,
+            true,
+            None,
+            gone
+        )));
+        let why = left_alone(&stale_verdict(&ThrowawayPath::Gone, false, None, gone));
+        assert!(why.contains("not call it prunable"), "{why}");
+        // a link is never removed, whatever the owner says (the owner is not even asked)
+        for l in [alive, gone, unsure] {
+            let why = left_alone(&stale_verdict(&ThrowawayPath::Link, true, owner(), l));
+            assert_eq!(why, LINK_LEFT_ALONE);
+        }
+        assert!(LINK_LEFT_ALONE.starts_with("a link") && LINK_LEFT_ALONE.ends_with("left alone"));
+        left_alone(&stale_verdict(&ThrowawayPath::NotADir, true, owner(), gone));
+        let why = left_alone(&stale_verdict(
+            &ThrowawayPath::Unreadable("denied".into()),
+            true,
+            owner(),
+            gone,
+        ));
+        assert!(why.contains("denied"), "{why}");
+        // a real directory without an owner record: reported, never removed (no age rule)
+        assert_eq!(
+            left_alone(&stale_verdict(&ThrowawayPath::Dir, true, None, gone)),
+            NO_OWNER_RECORD
+        );
+        // an owner record: alive -> no finding; gone -> removable; cannot tell -> left alone
+        assert_eq!(
+            stale_verdict(&ThrowawayPath::Dir, false, owner(), alive),
+            None
+        );
+        match stale_verdict(&ThrowawayPath::Dir, false, owner(), gone) {
+            Some(StaleVerdict::Remove(why)) => assert!(why.contains("pid 7"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let why = left_alone(&stale_verdict(&ThrowawayPath::Dir, false, owner(), unsure));
+        assert!(
+            why.contains("pid 7") && why.contains("cannot be checked"),
+            "{why}"
+        );
+        // this process is alive; a start time it never had is a reused pid (gone); a pid nobody
+        // has is gone
+        let me = std::process::id();
+        let my_start = crate::liveness::proc::process_start_iso(me).unwrap_or_default();
+        assert_eq!(owner_liveness(me, &my_start), OwnerLiveness::Alive);
+        assert_eq!(owner_liveness(me, ""), OwnerLiveness::Alive);
+        if !my_start.is_empty() {
+            assert_eq!(
+                owner_liveness(me, "1999-01-01T00:00:00.0000000Z"),
+                OwnerLiveness::Gone
+            );
+        }
+        assert_eq!(owner_liveness(0, ""), OwnerLiveness::Gone);
         assert_eq!(
             parse_owner_record("123 2026-11-22T10:00:00Z\n"),
             Some((123, "2026-11-22T10:00:00Z".into()))
@@ -1478,6 +1854,194 @@ mod tests {
         assert_eq!(parse_owner_record("123 \n"), Some((123, String::new())));
         assert_eq!(parse_owner_record("0 x"), None);
         assert_eq!(parse_owner_record("junk"), None);
+    }
+
+    // (R2, F13-1) The path is read without following it: a directory link with the throwaway name
+    // is a Link (its target's own metadata never counts), a file is NotADir, nothing is Gone.
+    #[test]
+    fn a_throwaway_path_is_read_without_following_it() {
+        let base = std::env::temp_dir().join(format!(
+            "c3-branches-path-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let target = base.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("sentinel.txt"), "keep\n").unwrap();
+        assert_eq!(ThrowawayPath::of(&target), ThrowawayPath::Dir);
+        assert_eq!(ThrowawayPath::of(&base.join("none")), ThrowawayPath::Gone);
+        std::fs::write(base.join("file"), "x").unwrap();
+        assert_eq!(
+            ThrowawayPath::of(&base.join("file")),
+            ThrowawayPath::NotADir
+        );
+        let link = base.join("link");
+        #[cfg(windows)]
+        {
+            let ok = Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(&link)
+                .arg(&target)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            assert!(ok, "mklink /J failed");
+        }
+        #[cfg(not(windows))]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(
+            link.join("sentinel.txt").exists(),
+            "the link does not resolve"
+        );
+        assert_eq!(ThrowawayPath::of(&link), ThrowawayPath::Link);
+        #[cfg(windows)]
+        let _ = std::fs::remove_dir(&link);
+        #[cfg(not(windows))]
+        let _ = std::fs::remove_file(&link);
+        assert!(target.join("sentinel.txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (R2, F13-3) A record needs a real YYYY-MM-DD date; anything else is a foreign note, kept
+    // byte for byte by `--set` and left alone by `--clear`.
+    #[test]
+    fn a_record_needs_a_real_date() {
+        for ok in ["2026-11-18", "1999-01-31", "2026-12-01"] {
+            assert!(is_record_date(ok), "{ok}");
+        }
+        for bad in [
+            "tomorrow",
+            "",
+            "2026-13-01",
+            "2026-00-10",
+            "2026-11-00",
+            "2026-11-32",
+            "26-11-18",
+            "2026-1-18",
+            "2026/11/18",
+            "2026-11-18x",
+            "２０２６-11-18",
+        ] {
+            assert!(!is_record_date(bad), "{bad}");
+        }
+        let foreign = "c3: work | alice | tomorrow | keep me";
+        assert_eq!(BranchRecord::parse(foreign), None);
+        assert!(!is_c3_description(foreign));
+        assert_eq!(foreign_part(foreign), Some(foreign));
+        let r = rec(BranchState::Waits, "o", "q?");
+        let d = description_with_record(Some(foreign), &r);
+        assert_eq!(d, format!("{}\n{foreign}", r.format()));
+        assert_eq!(foreign_part(&d), Some(foreign));
+        assert!(BranchRecord::parse("c3: work | alice | 2026-11-18 | keep me").is_some());
+    }
+
+    // (R2, F13-7) A failed `git cherry` (or rev-list) leaves the branch unchecked: no
+    // `patches_checked`, no `patches_on_default`; the listing then says "patches not checked".
+    #[test]
+    fn a_failed_patch_check_is_not_checked() {
+        let fresh = || BranchInfo {
+            name: "b".into(),
+            merged: Some(false),
+            ..Default::default()
+        };
+        let mut b = fresh();
+        assert!(apply_patch_check(&mut b, Some("- abc\n"), Some("1\n")));
+        assert!(b.patches_checked);
+        assert_eq!(b.patches_on_default, Some(true));
+        assert_eq!(b.ahead, Some(1));
+        let mut b = fresh();
+        assert!(apply_patch_check(&mut b, Some("+ abc\n"), Some("2")));
+        assert_eq!(b.patches_on_default, Some(false));
+        // cherry failed: unchecked, the ahead count still kept
+        let mut b = fresh();
+        assert!(!apply_patch_check(&mut b, None, Some("3")));
+        assert!(!b.patches_checked);
+        assert_eq!(b.patches_on_default, None);
+        assert_eq!(b.ahead, Some(3));
+        // rev-list failed (or printed garbage): unchecked too
+        for ahead in [None, Some("x")] {
+            let mut b = fresh();
+            assert!(!apply_patch_check(&mut b, Some(""), ahead));
+            assert!(!b.patches_checked);
+            assert_eq!(b.patches_on_default, None);
+            assert_eq!(b.ahead, None);
+        }
+    }
+
+    /// A child that sleeps for 30 s (a cross-platform sleeper, as the liveness tests use).
+    fn sleeper() -> Command {
+        if cfg!(windows) {
+            let mut c = Command::new("ping");
+            c.args(["-n", "30", "127.0.0.1"]);
+            c
+        } else {
+            let mut c = Command::new("sleep");
+            c.arg("30");
+            c
+        }
+    }
+
+    // (R2, F13-5) A stopped scan kills the child it is running (no process outlives the stop) and
+    // refuses every later start; a thread bound to no set runs its command plainly.
+    #[test]
+    fn a_stopped_scan_kills_its_running_child_and_starts_no_other() {
+        let set = Arc::new(ScanChildren::default());
+        let bound = Arc::clone(&set);
+        let worker =
+            std::thread::spawn(move || with_scan_children(bound, || run_registered(sleeper())));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let pid = loop {
+            if let Some(p) = set.running_pids().first() {
+                break *p;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "the sleeper never started"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        let t = std::time::Instant::now();
+        set.stop();
+        let r = worker.join().unwrap();
+        assert!(r.is_err(), "a stopped child is an error: {r:?}");
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            t.elapsed()
+        );
+        assert!(
+            crate::liveness::proc::process_start_iso(pid).is_none(),
+            "the scan's child {pid} outlived the stop"
+        );
+        assert!(set.running_pids().is_empty());
+        // a later start is refused: nothing is started
+        let bound = Arc::clone(&set);
+        let r = std::thread::spawn(move || {
+            with_scan_children(bound, || {
+                let mut g = Command::new("git");
+                g.arg("--version");
+                run_registered(g)
+            })
+        })
+        .join()
+        .unwrap();
+        assert!(r.is_err());
+        assert_eq!(set.started_pids(), vec![pid]);
+        // unbound: as Command::output
+        let mut g = Command::new("git");
+        g.arg("--version");
+        assert!(run_registered(g).unwrap().status.success());
+        // bound and not stopped: the output is collected as Command::output collects it
+        let fresh = Arc::new(ScanChildren::default());
+        let out = with_scan_children(Arc::clone(&fresh), || {
+            let mut g = Command::new("git");
+            g.arg("--version");
+            run_registered(g)
+        })
+        .unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).starts_with("git version"));
+        assert!(fresh.running_pids().is_empty());
     }
 
     fn sample() -> BranchReport {

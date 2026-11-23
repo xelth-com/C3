@@ -67,6 +67,7 @@ use kill::{
     KillSite,
 };
 pub(crate) use ledger::build_reviewer;
+pub(crate) use ledger::reply_kept_kind;
 use ledger::{build_entry, build_finding, BuildEntry};
 pub(crate) use member::build_member_panel;
 use member::{
@@ -1019,6 +1020,9 @@ pub(crate) struct Context {
     /// (B1) That worktree, once `run_live` made and staged it: every turn of the run runs there; it
     /// is removed when the context drops (after the last turn and the commit).
     pub(crate) review_tree: Option<super::reviewed::ReviewTree>,
+    /// (F11-11) This run's own recovery record (set by `run_live` once it is known): every turn
+    /// transition names its stream there ([`note_turn_stream`]).
+    pub(crate) pending_ref: Option<PendingRef>,
     /// (B1) The `--diff` patch: planned here, written (and its sha256 taken) by `run_live`.
     pub(crate) diff: Option<super::reviewed::DiffPlan>,
     // paths
@@ -2370,6 +2374,9 @@ fn build_context(
         }
         brief_ref =
             c3_core::paths::repo_relative(&repo_root, &bp).unwrap_or_else(|| o.brief.clone());
+        // (F11-4) an in-repo reference with `..` (`sub/../brief.md`) is normalised to the same
+        // file's plain repo-relative path, so a worktree-isolated reviewer gets it staged.
+        brief_ref = crate::engines::worktree::normalized_brief_ref(&repo_root, &bp, &brief_ref);
         brief_path = Some(bp);
     }
     let brief_sha = brief_path
@@ -2571,9 +2578,14 @@ fn build_context(
 
     // Open findings snapshot. A panel member lists only what was open when the panel started —
     // the same set for every member (`listed_ids`), never a sibling's mid-wave answer.
+    // (F11-6) ... and shows each listed finding as it was at panel start (the spec's immutable
+    // records), not as the store says when the member builds its prompt.
     let (mut open_findings, mut open_findings_count) = read_open_findings(&store, &task);
     if let Some(m) = member {
-        open_findings.retain(|f| m.listed_ids.contains(&f.id));
+        match member_records(Some(m)) {
+            Some(records) => open_findings = records.iter().map(open_finding_of).collect(),
+            None => open_findings.retain(|f| m.listed_ids.contains(&f.id)),
+        }
         open_findings_count = open_findings.len();
     }
 
@@ -3088,6 +3100,7 @@ fn build_context(
         fork_guard,
         isolation,
         review_tree: None,
+        pending_ref: None,
         diff: diff_plan,
         handoffs_dir,
         reply_path,
@@ -3599,11 +3612,12 @@ fn resolve_artifacts(
     Ok(out)
 }
 
-fn read_open_findings(store: &FilesStore, task: &TaskSlug) -> (Vec<OpenFinding>, usize) {
-    let findings = match store.read_findings(task) {
-        Ok(Some(f)) => f,
-        _ => return (Vec::new(), 0),
-    };
+/// (F11-6) The open findings (`proposed` / `implemented`) of a findings file as a reviewer is shown
+/// them: the records a panel run freezes into every member's spec at panel start, and the source
+/// of a single run's open-findings list.
+pub(crate) fn listed_findings(
+    findings: &c3_core::findings::FindingsFile,
+) -> Vec<crate::panel::member::ListedFinding> {
     let mut out = Vec::new();
     for f in &findings.findings {
         let status = f.status().as_str().to_string();
@@ -3618,15 +3632,60 @@ fn read_open_findings(store: &FilesStore, task: &TaskSlug) -> (Vec<OpenFinding>,
                 line: l.line,
             })
             .collect();
-        out.push(OpenFinding {
+        let first_location = f
+            .locations
+            .first()
+            .map(|l| match l.line {
+                Some(n) => format!("`{}:{}`", l.path, n),
+                None => format!("`{}`", l.path),
+            })
+            .unwrap_or_default();
+        out.push(crate::panel::member::ListedFinding {
             id: f.id.clone(),
             status,
+            severity: f.severity.clone(),
             locations: section::format_locations(&locs, true),
+            first_location,
             claim: f.claim.clone(),
             trigger: f.trigger.clone(),
             verification: f.verification.clone(),
         });
     }
+    out
+}
+
+/// A listed finding as the prompt renders it.
+fn open_finding_of(f: &crate::panel::member::ListedFinding) -> OpenFinding {
+    OpenFinding {
+        id: f.id.clone(),
+        status: f.status.clone(),
+        locations: f.locations.clone(),
+        claim: f.claim.clone(),
+        trigger: f.trigger.clone(),
+        verification: f.verification.clone(),
+    }
+}
+
+/// (F11-6) The immutable records a panel member was shown, when its spec carries them (a spec
+/// without records - none open at panel start, or an older wire - has `listed_ids` only: `None`
+/// unless that list is empty too, so the live store narrowed by the ids stays the fallback).
+fn member_records(
+    member: Option<&crate::panel::member::MemberSpec>,
+) -> Option<&[crate::panel::member::ListedFinding]> {
+    member
+        .filter(|m| !m.listed.is_empty() || m.listed_ids.is_empty())
+        .map(|m| m.listed.as_slice())
+}
+
+fn read_open_findings(store: &FilesStore, task: &TaskSlug) -> (Vec<OpenFinding>, usize) {
+    let findings = match store.read_findings(task) {
+        Ok(Some(f)) => f,
+        _ => return (Vec::new(), 0),
+    };
+    let out: Vec<OpenFinding> = listed_findings(&findings)
+        .iter()
+        .map(open_finding_of)
+        .collect();
     let n = out.len();
     (out, n)
 }
@@ -3799,6 +3858,8 @@ fn run_live(mut ctx: Context) -> i32 {
         task_lock = None;
     }
     let _task_lock = task_lock;
+    // (F11-11) every turn transition names its stream in this run's own record
+    ctx.pending_ref = Some(pending.clone());
 
     // The plugin fingerprints the tree AFTER the lock and recovery record exist, so the
     // `.consult.*` files under the collab dir are counted among the excluded entries
@@ -3849,6 +3910,25 @@ fn run_live(mut ctx: Context) -> i32 {
             ctx.engine
         ));
     }
+
+    // (B1) The `--diff` patch and the run's throwaway worktree (the brief and the task's handoffs
+    // staged into it), made ONCE before the first turn: every turn of the run - primary, read-insist,
+    // continuation, repair - runs in that worktree, which is removed when the context drops after
+    // the commit. A patch or worktree that cannot be made is the run's capability failure (no
+    // reviewer is started). (F11-3, F11-4) A STAGING failure is a typed pre-start refusal instead,
+    // made while the record is still `reserved`: the run refuses with preflight-class wording, a
+    // single run withdraws its reservation, and a panel member leaves its reserved record untouched,
+    // so the panel re-seats an optional seat from its reserve exactly as for a preflight refusal.
+    let setup_failure = match prepare_review_inputs(&mut ctx) {
+        Ok(()) => None,
+        Err(super::reviewed::SetupError::Capability(msg)) => Some(msg),
+        Err(super::reviewed::SetupError::Refused(msg)) => {
+            if !is_member {
+                let _ = std::fs::remove_file(store_pending_path(&store, &pending));
+            }
+            return refuse(&msg);
+        }
+    };
 
     // (3) launching — from here on a crash may leave a codex process whose pid is not yet
     // recorded; the next run then scans the tree (`codex-consult.ps1:3299`).
@@ -3981,12 +4061,6 @@ fn run_live(mut ctx: Context) -> i32 {
         })
     };
 
-    // (B1) The `--diff` patch and the run's throwaway worktree (the brief and the task's handoffs
-    // staged into it), made ONCE before the first turn: every turn of the run - primary, read-insist,
-    // continuation, repair - runs in that worktree, which is removed when the context drops after
-    // the commit. A failure is the run's capability failure: no reviewer is started.
-    let setup_failure = prepare_review_inputs(&mut ctx);
-
     // The consultation's start time (`$startedAt`, `codex-consult.ps1:3992`), captured just before
     // the turn launches — the ledger's `when`. A panel member captures its OWN start here, so
     // concurrent members share a close `when` while the slower one commits (`finished_at`) later.
@@ -4042,7 +4116,10 @@ fn run_live(mut ctx: Context) -> i32 {
     let main_kill_hook = kill_site.hook("main turn");
     let primary = match &setup_failure {
         Some(msg) => Ok(setup_failure_outcome(msg)),
-        None => run_primary_turn(&ctx, Some(on_running), Some(main_kill_hook)),
+        None => {
+            note_turn_stream(&ctx, "main", "events.jsonl");
+            run_primary_turn(&ctx, Some(on_running), Some(main_kill_hook))
+        }
     };
     let (outcome, detail) = match primary {
         Ok(r) => r,
@@ -4079,14 +4156,49 @@ fn run_live(mut ctx: Context) -> i32 {
     code
 }
 
-/// (B1) Write the `--diff` patch (its sha256 then known) and make + stage the run's throwaway
-/// worktree. `Some(why)` when either fails: the run records it as a capability failure and starts
-/// no reviewer.
-fn prepare_review_inputs(ctx: &mut Context) -> Option<String> {
-    if let Some(d) = ctx.diff.as_mut() {
-        if let Err(e) = super::reviewed::write_patch(d, &ctx.repo_root, &ctx.collab_root) {
-            return Some(e);
+/// (F11-11) A turn of the run starts: its event stream (`suffix`: the handoff file suffix, e.g.
+/// `continue.events.jsonl`) is named, on disk, wherever a death record of THIS run looks for it -
+/// the run's own recovery record (its `events`, only when the record is this run's: same consult
+/// id; a panel member's record is keyed by its seat) and, for a detached single run, its status
+/// record ([`super::detach::note_engine_stream`]). Best-effort: a failed write changes nothing
+/// else.
+pub(super) fn note_turn_stream(ctx: &Context, turn: &str, suffix: &str) {
+    let rel = ctx.hf(suffix);
+    let abs = ctx.hpath(suffix).to_string_lossy().to_string();
+    if let Some(p) = &ctx.pending_ref {
+        let store = FilesStore::new(ctx.collab_root.clone());
+        let path = store_pending_path(&store, p);
+        if let Some(mut rec) = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<PendingRecord>(&b).ok())
+        {
+            if rec.consult_id == ctx.consult_id && rec.events != rel {
+                rec.events = rel;
+                let _ = store.write_pending(p, &rec);
+            }
         }
+    }
+    if super::detach::is_active() && ctx.panel_member.is_none() {
+        super::detach::note_engine_stream(super::detached::StreamNote {
+            consult_id: ctx.consult_id.clone(),
+            handoff: format!("{:02}", ctx.nn),
+            turn: turn.to_string(),
+            events_file: abs.clone(),
+            partial_hint: format!(
+                "the raw event stream of the {turn} turn is at {abs} (it may hold a usable reply)"
+            ),
+        });
+    }
+}
+
+/// (B1) Write the `--diff` patch (its sha256 then known) and make + stage the run's throwaway
+/// worktree. `Err(Capability)` when the patch or the worktree cannot be made (the run records a
+/// capability failure and starts no reviewer); `Err(Refused)` when staging cannot be done safely
+/// (F11-3, F11-4: the run is refused before launch with preflight-class wording).
+fn prepare_review_inputs(ctx: &mut Context) -> Result<(), super::reviewed::SetupError> {
+    if let Some(d) = ctx.diff.as_mut() {
+        super::reviewed::write_patch(d, &ctx.repo_root, &ctx.collab_root)
+            .map_err(super::reviewed::SetupError::Capability)?;
     }
     if let Some(plan) = &ctx.isolation {
         let inputs = super::reviewed::StageInputs {
@@ -4095,13 +4207,11 @@ fn prepare_review_inputs(ctx: &mut Context) -> Option<String> {
             task: ctx.task.as_str(),
             brief_ref: &ctx.brief_ref,
             brief_path: ctx.brief_path.as_deref(),
+            engine: &ctx.engine,
         };
-        match super::reviewed::setup_review_tree(plan, &inputs) {
-            Ok(t) => ctx.review_tree = Some(t),
-            Err(e) => return Some(e),
-        }
+        ctx.review_tree = Some(super::reviewed::setup_review_tree(plan, &inputs)?);
     }
-    None
+    Ok(())
 }
 
 /// (B1) The primary "turn" of a run whose patch or worktree could not be made: a capability
@@ -4565,6 +4675,47 @@ fn run_open_priors(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// (F11-6) What a reply's prior findings are judged against.
+struct PriorView {
+    /// The prior findings of the semantics (status and severity as the reviewer was shown them).
+    open_priors: Vec<super::semantics::OpenPrior>,
+    /// The ids a prior report may name (`None`: every id of the store, a single run).
+    reportable: Option<Vec<String>>,
+    /// The records a panel member was shown (empty for a single run / a spec without records).
+    records: Vec<crate::panel::member::ListedFinding>,
+}
+
+/// (F11-6, F10-4) The prior view of a run: a panel member whose spec carries the immutable records
+/// of its listed findings is judged against THOSE - the status and severity it was shown, whatever
+/// a sibling or another process wrote to the store since - and may report only on those ids; a spec
+/// without records narrows the live store by `listed_ids` ([`run_open_priors`]); a single run sees
+/// the whole store.
+fn member_prior_view(
+    member: Option<&crate::panel::member::MemberSpec>,
+    existing: Option<&c3_core::findings::FindingsFile>,
+) -> PriorView {
+    if let Some(records) = member_records(member) {
+        return PriorView {
+            open_priors: records
+                .iter()
+                .map(|r| super::semantics::OpenPrior {
+                    id: r.id.clone(),
+                    severity: r.severity.clone(),
+                    status: r.status.clone(),
+                })
+                .collect(),
+            reportable: Some(records.iter().map(|r| r.id.clone()).collect()),
+            records: records.to_vec(),
+        };
+    }
+    let listed = member.map(|m| m.listed_ids.as_slice());
+    PriorView {
+        open_priors: run_open_priors(existing, listed),
+        reportable: listed.map(|ids| ids.to_vec()),
+        records: Vec::new(),
+    }
 }
 
 /// (Muse, review-2026-10-30) What a claude run's init event proves for the tree decision, read from
@@ -5171,7 +5322,10 @@ fn finish(args: Finish) -> i32 {
     if main_timed_out {
         // (wave 27c, D2) the continuation turn registers its own child in the pending record, so a
         // concurrent `--kick` during it finds a live child of this run.
-        let cont_on_running = continuation_on_running(&store, &pending, &base_record);
+        // (F11-11) ... and names the CONTINUATION's stream, not the killed main turn's
+        let mut cont_base = base_record.clone();
+        cont_base.events = ctx.hf("continue.events.jsonl");
+        let cont_on_running = continuation_on_running(&store, &pending, &cont_base);
         // (wave 29) a claude killed turn's session is a candidate: the continuation resumes it
         let continue_candidate = if ctx.engine == "claude" {
             thread_candidate.clone()
@@ -5508,16 +5662,27 @@ fn finish(args: Finish) -> i32 {
     if let Some(s) = &structured {
         // The findings store as it stands (read fresh; the commit re-reads under the lock).
         let existing = store.read_findings(&ctx.task).ok().flatten();
-        let known: std::collections::HashSet<String> = existing
+        let known_in_store: std::collections::HashSet<String> = existing
             .as_ref()
             .map(|f| f.findings.iter().map(|fd| fd.id.clone()).collect())
             .unwrap_or_default();
         // (A1) a panel member is judged against the findings it was SHOWN - the pre-panel snapshot
         // (`listed_ids`) - never against a sibling's finding committed while it ran (xelixir panel
         // 47cf7308: a sibling's F04-1 appeared as "(prior, not-checked)" in members that were
-        // already running when it was filed).
-        let listed = ctx.panel_member.as_ref().map(|m| m.listed_ids.as_slice());
-        let open_priors = run_open_priors(existing.as_ref(), listed);
+        // already running when it was filed). (F11-6, F10-4) With the spec's immutable records,
+        // the status, severity and text it was shown decide, and only a listed id is accepted as
+        // a prior report; its checks still merge into the current store at the commit, under the
+        // task lock.
+        let view = member_prior_view(ctx.panel_member.as_ref(), existing.as_ref());
+        let open_priors = view.open_priors;
+        let known: std::collections::HashSet<String> = match &view.reportable {
+            Some(ids) => ids
+                .iter()
+                .filter(|id| known_in_store.contains(*id))
+                .cloned()
+                .collect(),
+            None => known_in_store.clone(),
+        };
         let now = iso_now();
         for p in &s.prior_findings {
             let status = match p.status {
@@ -5552,7 +5717,7 @@ fn finish(args: Finish) -> i32 {
         for (k, rf) in s.findings.iter().enumerate() {
             let new_id = c3_core::findings::finding_id(ctx.nn, k + 1);
             for old in &rf.supersedes {
-                if known.contains(old) {
+                if known_in_store.contains(old) {
                     delta.superseded_by.push((old.clone(), new_id.clone()));
                 } else if !unknown_supersedes.contains(old) {
                     unknown_supersedes.push(old.clone());
@@ -5560,24 +5725,36 @@ fn finish(args: Finish) -> i32 {
             }
         }
         semantics = super::semantics::test_reply_semantics(s, &ctx.o.purpose, &open_priors);
-        if let Some(ff) = &existing {
-            for pb in super::semantics::prior_blocker_dispositions(s, &open_priors) {
-                if let Some(fd) = ff.findings.iter().find(|f| f.id == pb.id) {
-                    let location = fd
-                        .locations
-                        .first()
-                        .map(|l| match l.line {
-                            Some(n) => format!("`{}:{}`", l.path, n),
-                            None => format!("`{}`", l.path),
+        for pb in super::semantics::prior_blocker_dispositions(s, &open_priors) {
+            // a member's line shows the finding as it was shown; a single run's the store's
+            let shown = view
+                .records
+                .iter()
+                .find(|r| r.id == pb.id)
+                .map(|r| (r.first_location.clone(), r.claim.clone()))
+                .or_else(|| {
+                    existing
+                        .as_ref()
+                        .and_then(|ff| ff.findings.iter().find(|f| f.id == pb.id))
+                        .map(|fd| {
+                            let location = fd
+                                .locations
+                                .first()
+                                .map(|l| match l.line {
+                                    Some(n) => format!("`{}:{}`", l.path, n),
+                                    None => format!("`{}`", l.path),
+                                })
+                                .unwrap_or_default();
+                            (location, fd.claim.clone())
                         })
-                        .unwrap_or_default();
-                    prior_blocker_lines.push(section::PriorBlockerLine {
-                        id: pb.id,
-                        disposition: pb.disposition,
-                        location,
-                        claim: fd.claim.clone(),
-                    });
-                }
+                });
+            if let Some((location, claim)) = shown {
+                prior_blocker_lines.push(section::PriorBlockerLine {
+                    id: pb.id,
+                    disposition: pb.disposition,
+                    location,
+                    claim,
+                });
             }
         }
     }
@@ -6202,10 +6379,25 @@ fn finish(args: Finish) -> i32 {
     // failed run's death record carries `events_file`/`last_event`/`events_mtime`/`partial_hint`
     // although the commit removed its `.consult.pending*` record (a re-ask writes none).
     if super::detach::is_active() && ctx.panel_member.is_none() {
-        let events_abs = sec
-            .read_insist_dead_events
-            .clone()
-            .unwrap_or_else(|| ctx.events_path.to_string_lossy().to_string());
+        // (F11-11) the turn that ENDED the run: a dead read-insist re-ask, else the last secondary
+        // turn that wrote a stream (the format repair, then the timeout continuation), else the
+        // primary - never the primary when a later turn has its own stream.
+        let kept = |rel: &Option<String>| {
+            rel.as_ref()
+                .map(|r| ctx.collab_root.join(ctx.task.as_str()).join(r))
+                .filter(|p| p.is_file())
+                .map(|p| p.to_string_lossy().to_string())
+        };
+        let (turn, events_abs) = match sec.read_insist_dead_events.clone() {
+            Some(e) => ("read-insist", e),
+            None => match kept(&sec.repair_events_rel) {
+                Some(e) => ("format repair", e),
+                None => match kept(&sec.continue_events_rel) {
+                    Some(e) => ("timeout continuation", e),
+                    None => ("main", ctx.events_path.to_string_lossy().to_string()),
+                },
+            },
+        };
         let mut hint: Vec<String> = Vec::new();
         if !partial_abs.is_empty() {
             hint.push(format!(
@@ -6221,7 +6413,13 @@ fn finish(args: Finish) -> i32 {
         hint.push(format!(
             "the raw event stream of the turn that ended it is at {events_abs} (it may hold a usable reply)"
         ));
-        super::detach::note_engine_stream(&events_abs, &hint.join("; "));
+        super::detach::note_engine_stream(super::detached::StreamNote {
+            consult_id: ctx.consult_id.clone(),
+            handoff: format!("{:02}", ctx.nn),
+            turn: turn.to_string(),
+            events_file: events_abs,
+            partial_hint: hint.join("; "),
+        });
     }
     // The summary/handoff show the reviewer lineage with the engine tag (`... [agy]`); the ledger
     // `lineage` field stays bare.
@@ -6740,6 +6938,113 @@ mod telemetry_tests {
 #[cfg(test)]
 mod engine_tests {
     use super::tree::{cut_files, engine_tree_note, engine_tree_outcome, AgyToolLog, TreeChanges};
+
+    // (F11-6, F10-4) a panel member is judged against the records it was shown: a listed blocker
+    // resolved in the store mid-panel stays the open blocker it was shown, a sibling's new finding
+    // is not reportable; without records the live store narrowed by the ids decides; a single run
+    // sees the whole store.
+    #[test]
+    fn a_member_is_judged_against_the_findings_it_was_shown() {
+        use crate::panel::member::{ListedFinding, MemberSpec};
+        let store: c3_core::findings::FindingsFile = serde_json::from_str(
+            r#"{"task_id":"t","findings":[
+                {"id":"F01-1","status":"fixed","severity":"blocker","claim":"resolved since"},
+                {"id":"F02-1","status":"proposed","severity":"major","claim":"a sibling's new one"}]}"#,
+        )
+        .unwrap();
+        let shown = ListedFinding {
+            id: "F01-1".into(),
+            status: "proposed".into(),
+            severity: "blocker".into(),
+            first_location: "`a.rs:3`".into(),
+            claim: "as shown".into(),
+            ..Default::default()
+        };
+        let spec = MemberSpec {
+            listed_ids: vec!["F01-1".into()],
+            listed: vec![shown],
+            ..Default::default()
+        };
+        let v = member_prior_view(Some(&spec), Some(&store));
+        assert_eq!(v.open_priors.len(), 1);
+        assert_eq!(
+            (
+                v.open_priors[0].id.as_str(),
+                v.open_priors[0].status.as_str(),
+                v.open_priors[0].severity.as_str()
+            ),
+            ("F01-1", "proposed", "blocker")
+        );
+        assert_eq!(v.reportable, Some(vec!["F01-1".to_string()]));
+        assert_eq!(v.records[0].claim, "as shown");
+        // a spec with ids only: the live store narrowed by them
+        let ids_only = MemberSpec {
+            listed_ids: vec!["F01-1".into()],
+            ..Default::default()
+        };
+        let v = member_prior_view(Some(&ids_only), Some(&store));
+        assert_eq!(v.open_priors.len(), 1);
+        assert_eq!(v.open_priors[0].status, "fixed");
+        assert_eq!(v.reportable, Some(vec!["F01-1".to_string()]));
+        // a single run: the whole store, every id reportable
+        let v = member_prior_view(None, Some(&store));
+        assert_eq!(v.open_priors.len(), 2);
+        assert_eq!(v.reportable, None);
+        // the records a panel freezes: the open findings with their text
+        let frozen = listed_findings(&store);
+        assert_eq!(frozen.len(), 1);
+        assert_eq!(
+            (frozen[0].id.as_str(), frozen[0].severity.as_str()),
+            ("F02-1", "major")
+        );
+    }
+
+    // (F11-2) a changed BOUND input fails the check naming the input (a warned or clean check
+    // becomes failed; a failed one carries both problems); no bound change leaves it as it was.
+    #[test]
+    fn a_changed_bound_input_withholds_the_reply() {
+        use super::tree::{with_bound_input_change, EngineTreeCheck};
+        let warned = || EngineTreeCheck {
+            outcome: "warned".into(),
+            problem: String::new(),
+            warnings: vec!["the working tree changed during the run (1 file: x)".into()],
+            files: vec!["x".into()],
+        };
+        let same = with_bound_input_change(warned(), &[]);
+        assert_eq!(
+            (same.outcome.as_str(), same.problem.as_str()),
+            ("warned", "")
+        );
+        let c = with_bound_input_change(
+            warned(),
+            &[
+                "the brief `b.md`".to_string(),
+                "the artifact `a.rs`".to_string(),
+            ],
+        );
+        assert_eq!(c.outcome, "failed");
+        assert!(
+            c.problem.starts_with(
+                "a bound input changed during the run: the brief `b.md`, the artifact `a.rs` - "
+            ),
+            "{}",
+            c.problem
+        );
+        assert!(c.files.contains(&"the brief `b.md`".to_string()));
+        let failed = EngineTreeCheck {
+            outcome: "failed".into(),
+            problem: "agy called a writing tool".into(),
+            warnings: Vec::new(),
+            files: Vec::new(),
+        };
+        let both = with_bound_input_change(failed, &["the brief".to_string()]);
+        assert!(
+            both.problem
+                .starts_with("agy called a writing tool; a bound input changed"),
+            "{}",
+            both.problem
+        );
+    }
     use super::*;
 
     #[test]

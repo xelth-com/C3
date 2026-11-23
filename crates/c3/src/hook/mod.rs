@@ -75,7 +75,7 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // / `"branch_check": false`). Read-only (git's optional locks off) and cheap (ancestry only, no
     // `git cherry`, no `git status`), every error swallowed, nothing inside a C3 child or outside a
     // git repository - and (0.2.5, F02-6) all of its git calls share ONE deadline: past it the line
-    // is dropped and the hook goes on.
+    // is dropped, its git children are killed (R2, F13-5) and the hook goes on.
     if let Some(l) = branch_line_within(BRANCH_LINE_DEADLINE) {
         println!("{l}");
     }
@@ -97,9 +97,38 @@ pub const BRANCH_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_
 
 /// The branch line, or `None` when it is not ready within `deadline` (a slow or stalled git, a slow
 /// file system): the scan runs on a thread of its own, and one that misses the deadline is left
-/// behind - its result is never printed, and the process ends without waiting for it.
+/// behind - its result is never printed, and the process ends without waiting for it. (0.2.5 R2,
+/// F13-5) Its git children are stopped first: killed, and no further one started, before the hook
+/// goes on, so none outlives `c3 hook`.
 fn branch_line_within(deadline: std::time::Duration) -> Option<String> {
-    line_within(deadline, crate::setup::branches::hook_line)
+    let children = std::sync::Arc::new(crate::setup::branches::ScanChildren::default());
+    line_within_stopping(deadline, crate::setup::branches::hook_line, children)
+}
+
+/// [`line_within`] whose work registers its git children in `children`
+/// ([`crate::setup::branches::with_scan_children`]); when the deadline passes they are stopped
+/// ([`crate::setup::branches::ScanChildren::stop`]) before `None` is returned.
+fn line_within_stopping(
+    deadline: std::time::Duration,
+    f: fn() -> Option<String>,
+    children: std::sync::Arc<crate::setup::branches::ScanChildren>,
+) -> Option<String> {
+    std_handles_not_inheritable();
+    let bound = std::sync::Arc::clone(&children);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("c3-hook-line".to_string())
+        .spawn(move || {
+            let _ = tx.send(crate::setup::branches::with_scan_children(bound, f));
+        })
+        .ok()?;
+    match rx.recv_timeout(deadline) {
+        Ok(line) => line,
+        Err(_) => {
+            children.stop();
+            None
+        }
+    }
 }
 
 /// `f()` on a thread of its own, its result when it is ready within `deadline`, else `None`.
@@ -329,6 +358,49 @@ mod tests {
             start.elapsed()
         );
         assert_eq!(BRANCH_LINE_DEADLINE, std::time::Duration::from_secs(2));
+    }
+
+    /// A line whose work is a stalled git-like child, started through the branch scan's runner.
+    fn stalled_child_line() -> Option<String> {
+        let cmd = if cfg!(windows) {
+            let mut c = std::process::Command::new("ping");
+            c.args(["-n", "30", "127.0.0.1"]);
+            c
+        } else {
+            let mut c = std::process::Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        let _ = crate::setup::branches::run_registered(cmd);
+        Some("c3: too late".to_string())
+    }
+
+    // (0.2.5 R2, F13-5) When the branch line's deadline fires, the scan's child is killed before
+    // the hook goes on: nothing it started is still running, and the line is dropped.
+    #[test]
+    fn the_branch_deadline_stops_the_scans_children() {
+        let children = std::sync::Arc::new(crate::setup::branches::ScanChildren::default());
+        let start = std::time::Instant::now();
+        let line = line_within_stopping(
+            std::time::Duration::from_millis(1500),
+            stalled_child_line,
+            std::sync::Arc::clone(&children),
+        );
+        assert_eq!(line, None);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            start.elapsed()
+        );
+        let started = children.started_pids();
+        assert_eq!(started.len(), 1, "the child never started: {started:?}");
+        for pid in started {
+            assert!(
+                crate::liveness::proc::process_start_iso(pid).is_none(),
+                "the scan's child {pid} outlived the deadline"
+            );
+        }
+        assert!(children.running_pids().is_empty());
     }
 
     #[test]

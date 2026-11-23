@@ -560,6 +560,7 @@ mod member_tests {
             engine: String::new(),
             skipped: json!([]),
             listed_ids: listed,
+            listed: Vec::new(),
             n: 12,
             nn: 7,
             consult_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
@@ -649,6 +650,74 @@ mod member_tests {
         std::env::remove_var("CODEX_CONSULT_ROSTER");
         std::env::remove_var("CODEX_CONSULT_TELEMETRY");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    // (F11-6) a member's prompt shows each listed finding as its spec's immutable record says (as
+    // it was at panel start), not as the store says when the member starts.
+    #[test]
+    fn a_member_prompt_shows_the_findings_as_they_were_at_panel_start() {
+        let _g = super::telemetry_tests::ENV_LOCK.lock().unwrap();
+        let root = scratch();
+        let roster_path = root.join("roster.json");
+        std::fs::write(
+            &roster_path,
+            r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-6-astra"}]}"#,
+        )
+        .unwrap();
+        // the store now: F01-1 was resolved by another process, a sibling filed F02-1
+        std::fs::write(
+            root.join("t").join("findings.json"),
+            r#"{"task_id":"t","findings":[{"id":"F01-1","status":"fixed","severity":"blocker","claim":"changed since"},{"id":"F02-1","status":"proposed","claim":"a sibling's"}]}"#,
+        )
+        .unwrap();
+        std::env::set_var("CODEX_CONSULT_ROSTER", &roster_path);
+        std::env::set_var("CODEX_CONSULT_TELEMETRY", "off");
+        let mut spec = sample_spec(root.to_str().unwrap(), vec!["F01-1".into()], "");
+        spec.listed = vec![crate::panel::member::ListedFinding {
+            id: "F01-1".into(),
+            status: "proposed".into(),
+            severity: "blocker".into(),
+            claim: "the claim as shown at panel start".into(),
+            ..Default::default()
+        }];
+        let mo = member_options("t", &spec);
+        let r = args::validate(&mo, None).expect("member options validate");
+        let ctx = build_context(mo, r, Some(&spec)).expect("member build_context");
+        std::env::remove_var("CODEX_CONSULT_ROSTER");
+        std::env::remove_var("CODEX_CONSULT_TELEMETRY");
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(ctx.open_findings_count, 1);
+        assert!(
+            ctx.prompt_text
+                .contains("the claim as shown at panel start"),
+            "{}",
+            ctx.prompt_text
+        );
+        assert!(!ctx.prompt_text.contains("changed since"));
+        assert!(!ctx.prompt_text.contains("a sibling's"));
+        // (F11-10) the follow-up turns carry the role constraint too
+        let c = super::secondary::continuation_prompt(&ctx, None);
+        assert!(
+            c.contains(crate::consult::prompt::REVIEWER_NOT_COORDINATOR),
+            "{c}"
+        );
+        assert!(super::secondary::continuation_prompt(&ctx, Some(9))
+            .contains(crate::consult::prompt::REVIEWER_NOT_COORDINATOR));
+    }
+
+    // (F11-10) the format repair and both same-thread read-insist prompts carry the
+    // reviewer-is-not-a-coordinator instruction of every review prompt.
+    #[test]
+    fn the_secondary_prompts_carry_the_role_constraint() {
+        let s = crate::consult::prompt::REVIEWER_NOT_COORDINATOR;
+        for p in [
+            super::secondary::format_repair_prompt("id-1"),
+            super::secondary::read_insist_prompt("id-1", 1),
+            super::secondary::read_insist_other_prompt("id-1"),
+        ] {
+            assert!(p.contains(s), "{p}");
+            assert!(p.ends_with("Consultation id: id-1"), "{p}");
+        }
     }
 
     // (muse PANEL) a panel passes -MaxModelSteps to every member; a codex member (no step cap)

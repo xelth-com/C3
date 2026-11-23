@@ -244,6 +244,48 @@ fn a_post_update_smoke_failure_rolls_back() {
     );
 }
 
+// (F11-7) a post-update smoke that could not PROVE what it must (the sub-agent switch on both
+// turns) holds the update exactly like a failed one: rolled back, never "ok".
+#[test]
+fn an_unproven_post_update_smoke_rolls_back_like_a_failure() {
+    let e = setup("unproven-rb");
+    let env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass-then-unproven");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("smoke unproven, rolled back"),
+        "the unproven smoke rolled the update back: {t}"
+    );
+    assert!(!t.contains("1.0.80 ok"), "never reported as ok: {t}");
+    assert_eq!(
+        verfile(&e.grok_verfile),
+        "1.0.77",
+        "rolled back to the old version\n--- fake invocations ---\n{}",
+        e.mnt_log()
+    );
+}
+
+// (F11-7) an unproven recovery smoke of an interrupted update is never "verified": the update is
+// rolled back to the recorded previous version.
+#[test]
+fn an_unproven_recovery_smoke_is_never_recorded_verified() {
+    let e = setup("pend-unproven");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let env = e.grok_env("1.0.80", "1.0.80", "grok::grok-4.7=unproven");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(!t.contains("verified"), "never recorded as verified: {t}");
+    assert!(
+        t.contains("rolled back to 1.0.77") && t.contains("scripted unproven smoke"),
+        "the unproven update is rolled back: {t}"
+    );
+    assert_eq!(verfile(&e.grok_verfile), "1.0.77");
+}
+
 // ------------------------------------------------------------------ held when too fresh (codex / npm)
 
 #[test]

@@ -70,10 +70,17 @@ fn print_branch_findings(b: &BranchReport) {
         );
     }
     for s in &b.stale_worktrees {
-        println!(
-            "[!] stale c3 worktree {}: {} - c3 doctor --fix removes it",
-            s.path, s.why
-        );
+        if s.removable {
+            println!(
+                "[!] stale c3 worktree {}: {} - c3 doctor --fix removes it",
+                s.path, s.why
+            );
+        } else {
+            println!(
+                "[!] c3 worktree {}: {} (c3 doctor --fix does not remove it)",
+                s.path, s.why
+            );
+        }
     }
     if let Some(s) = &b.start {
         if !s.on_default && b.default_branch.is_some() {

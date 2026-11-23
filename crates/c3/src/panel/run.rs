@@ -953,21 +953,16 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
         }
     };
 
-    // The findings every member is shown (open when the panel starts).
-    let listed_ids: Vec<String> = if r.raw {
+    // The findings every member is shown (open when the panel starts) - (F11-6) as immutable
+    // records: what each member is shown and later judged against.
+    let listed_ids: Vec<super::member::ListedFinding> = if r.raw {
         Vec::new()
     } else {
         store
             .read_findings(&b.task)
             .ok()
             .flatten()
-            .map(|f| {
-                f.findings
-                    .iter()
-                    .filter(|fd| matches!(fd.status().as_str(), "proposed" | "implemented"))
-                    .map(|fd| fd.id.clone())
-                    .collect()
-            })
+            .map(|f| crate::consult::orchestrate::listed_findings(&f))
             .unwrap_or_default()
     };
 
@@ -2124,7 +2119,7 @@ struct MemberStart<'a> {
     b: &'a Built,
     parent_pid: u32,
     panel_tmp: &'a Path,
-    listed: &'a [String],
+    listed: &'a [super::member::ListedFinding],
 }
 
 /// Launch one member as a child `c3 consult --task <t> --panel-spec <b64>` process.
@@ -2212,7 +2207,7 @@ fn build_spec(
     r: &Resolved,
     b: &Built,
     parent_pid: u32,
-    listed: &[String],
+    listed: &[super::member::ListedFinding],
 ) -> MemberSpec {
     let s = &slots[i];
     let ru = &b.runners[s.runner];
@@ -2283,7 +2278,8 @@ fn build_spec(
         model: ru.entry.model.clone(),
         engine: ru.entry.engine.clone(),
         skipped: b.skipped_record.clone(),
-        listed_ids: listed.to_vec(),
+        listed_ids: listed.iter().map(|f| f.id.clone()).collect(),
+        listed: listed.to_vec(),
         n: s.n,
         nn: s.nn as i64,
         consult_id: s.consult_id.clone(),

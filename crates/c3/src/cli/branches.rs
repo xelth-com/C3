@@ -1,7 +1,8 @@
 //! `c3 branches` — every local branch and worktree with its recorded state, and the start folder.
 //! The scan and the record format live in [`crate::setup::branches`]. The listing is a report and
 //! always exits 0; `--set` / `--clear` / `--default` write one config value and exit 1 on a
-//! refusal. Nothing is ever deleted or merged.
+//! refusal (all three always refuse inside a child C3 started, `C3_CHILD`). Nothing is
+//! ever deleted or merged.
 
 use std::path::{Path, PathBuf};
 
@@ -180,9 +181,10 @@ pub fn worktree_json(w: &WorktreeInfo) -> Value {
     })
 }
 
-/// The JSON of one stale throwaway worktree.
+/// The JSON of one reported throwaway worktree (`removable`: `c3 doctor --fix` removes it; `false`:
+/// it is left alone - a link, no owner record, an owner that cannot be checked).
 pub fn stale_json(s: &StaleWorktree) -> Value {
-    json!({ "path": s.path, "why": s.why })
+    json!({ "path": s.path, "why": s.why, "removable": s.removable })
 }
 
 /// The JSON of the start folder.
@@ -288,7 +290,7 @@ fn print_report(r: &BranchReport) {
         }
         if r.patches_unchecked > 0 {
             println!(
-                "patch check (git cherry, two git calls per branch) capped at {PATCH_CHECK_CAP} unmerged branches: {} more not checked",
+                "patches not checked for {} unmerged branch(es): the patch check (git cherry, two git calls per branch) runs for at most {PATCH_CHECK_CAP}, and a check whose git call failed counts here too",
                 r.patches_unchecked
             );
         }
@@ -307,9 +309,17 @@ fn print_report(r: &BranchReport) {
         }
     }
 
-    if !r.stale_worktrees.is_empty() {
-        println!("stale c3 worktrees (a kimi review's throwaway no live run owns; c3 doctor --fix removes them):");
-        for s in &r.stale_worktrees {
+    let (removable, left_alone): (Vec<&StaleWorktree>, Vec<&StaleWorktree>) =
+        r.stale_worktrees.iter().partition(|s| s.removable);
+    if !removable.is_empty() {
+        println!("stale c3 worktrees (a review's throwaway no live run owns; c3 doctor --fix removes them):");
+        for s in &removable {
+            println!("[!] {}: {}", s.path, s.why);
+        }
+    }
+    if !left_alone.is_empty() {
+        println!("c3 worktrees c3 doctor --fix leaves alone (a review's throwaway it cannot judge safely):");
+        for s in &left_alone {
             println!("[!] {}: {}", s.path, s.why);
         }
     }
@@ -324,11 +334,11 @@ fn print_report(r: &BranchReport) {
         r.worktrees.len(),
         unrec
     );
-    if !r.stale_worktrees.is_empty() {
-        summary.push_str(&format!(
-            "; {} stale c3 worktree(s)",
-            r.stale_worktrees.len()
-        ));
+    if !removable.is_empty() {
+        summary.push_str(&format!("; {} stale c3 worktree(s)", removable.len()));
+    }
+    if !left_alone.is_empty() {
+        summary.push_str(&format!("; {} c3 worktree(s) left alone", left_alone.len()));
     }
     println!("{summary}");
     if unknown > 0 || unrec > 0 {

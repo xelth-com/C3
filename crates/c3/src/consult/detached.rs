@@ -127,6 +127,27 @@ pub struct DetachedRecord {
     /// `died` because its background was killed and never wrote one. Absent on a clean run.
     #[serde(default)]
     pub death: Option<DeathRecord>,
+    /// (F11-11) The engine stream of the turn the run is in (or ended in), persisted on every turn
+    /// transition of a detached single run - so a reader of a run whose bridge was killed still
+    /// finds it. Absent until the first turn starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<StreamNote>,
+}
+
+/// (F11-11) The engine stream a run names for its current turn: whose run it is (its consult id and
+/// handoff number), which turn, the stream file and a hint where its reply or salvage lies.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct StreamNote {
+    #[serde(default)]
+    pub consult_id: String,
+    #[serde(default)]
+    pub handoff: String,
+    #[serde(default)]
+    pub turn: String,
+    #[serde(default)]
+    pub events_file: String,
+    #[serde(default)]
+    pub partial_hint: String,
 }
 
 /// (bridge reliability) The post-mortem of a detached run: what is known about how it ended, so a
@@ -265,6 +286,7 @@ impl Default for DetachedRecord {
             log: String::new(),
             args: None,
             death: None,
+            stream: None,
         }
     }
 }

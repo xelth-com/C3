@@ -702,9 +702,18 @@ fn describe_install_kind(checkout: &Checkout, index_surreal: bool) -> String {
 
 // --------------------------------------------------------------------------- git helpers / runner
 
+/// (0.2.5 R2, F13-4) A child of `c3 update`, MARKED as one C3 started (`C3_CHILD=1`): `claude plugin
+/// update` starts Claude Code, whose SessionStart hook would otherwise repair the repository it
+/// runs in, and the mark keeps every `c3` that runs inside any of these children hands-off.
+fn update_command(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    cmd.env(crate::engines::C3_CHILD_ENV, "1");
+    cmd
+}
+
 /// Run git in `dir`, returning trimmed stdout on success (exit 0), `Err(stderr)` otherwise.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new("git")
+    let out = update_command("git")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -795,13 +804,19 @@ fn claude_on_path() -> bool {
     false
 }
 
-/// Run a child, inheriting stdio so its output streams to the user.
-fn stream(program: &str, args: &[&str], dir: Option<&Path>) -> Result<(), String> {
-    let mut cmd = std::process::Command::new(program);
+/// The command [`stream`] runs: `program` with `args` (in `dir`), marked `C3_CHILD=1`.
+fn stream_command(program: &str, args: &[&str], dir: Option<&Path>) -> std::process::Command {
+    let mut cmd = update_command(program);
     cmd.args(args);
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
+    cmd
+}
+
+/// Run a child, inheriting stdio so its output streams to the user.
+fn stream(program: &str, args: &[&str], dir: Option<&Path>) -> Result<(), String> {
+    let mut cmd = stream_command(program, args, dir);
     println!("c3 update: $ {program} {}", args.join(" "));
     let status = cmd
         .status()
@@ -1154,6 +1169,40 @@ mod tests {
         };
         let steps = plan("v9.9.9", "abc123", false, &dirty, true);
         assert!(matches!(steps[1], Step::GitSyncSkipped { .. }));
+    }
+
+    // (0.2.5 R2, F13-4) Every child `c3 update` starts is marked `C3_CHILD=1`: the streamed steps
+    // (`claude plugin update c3@c3`, `cargo install`) and its git calls - the latter observed in a
+    // real child (a git alias that echoes the variable).
+    #[test]
+    fn every_child_c3_update_starts_is_marked() {
+        let mark = |cmd: &std::process::Command| -> Vec<Option<String>> {
+            cmd.get_envs()
+                .filter(|(k, _)| *k == "C3_CHILD")
+                .map(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+                .collect()
+        };
+        let one = vec![Some("1".to_string())];
+        assert_eq!(
+            mark(&stream_command(
+                "claude",
+                &["plugin", "update", "c3@c3"],
+                None
+            )),
+            one
+        );
+        assert_eq!(
+            mark(&stream_command("cargo", &["install", "c3-cli"], None)),
+            one
+        );
+        assert_eq!(mark(&update_command("git")), one);
+        let dir = std::env::temp_dir();
+        let out = git(
+            &dir,
+            &["-c", "alias.c3child=!echo C3_CHILD=[$C3_CHILD]", "c3child"],
+        )
+        .unwrap();
+        assert_eq!(out.trim(), "C3_CHILD=[1]", "{out}");
     }
 
     // ------------------------------------------------------------------- git checkout inspection

@@ -27,9 +27,12 @@ fn schema_text_crlf() -> String {
 
 /// The convert-only format-repair prompt (the plugin's repair turn text). Shared by the codex/engine
 /// format repair and the http seat's format-repair replay so both send the exact same instruction.
+/// (F11-10) It carries the reviewer-is-not-a-coordinator instruction of every review prompt
+/// ([`prompt::REVIEWER_NOT_COORDINATOR`]): a follow-up turn reads the same instruction files.
 pub(crate) fn format_repair_prompt(consult_id: &str) -> String {
     format!(
-        "Your last message was prose, not the required JSON. Reply with exactly one bare JSON object satisfying the JSON Schema below - no fence, nothing before or after it. Convert, do not re-answer: copy your previous content unchanged (the same Q1..Qn answers verbatim inside reply_markdown, the same findings, the same Requested checks, the same prior-finding statuses and the same verdict); add or omit nothing.\r\n\r\nJSON Schema of the reply:\r\n{}\r\n\r\nConsultation id: {}",
+        "Your last message was prose, not the required JSON. Reply with exactly one bare JSON object satisfying the JSON Schema below - no fence, nothing before or after it. Convert, do not re-answer: copy your previous content unchanged (the same Q1..Qn answers verbatim inside reply_markdown, the same findings, the same Requested checks, the same prior-finding statuses and the same verdict); add or omit nothing. {}\r\n\r\nJSON Schema of the reply:\r\n{}\r\n\r\nConsultation id: {}",
+        prompt::REVIEWER_NOT_COORDINATOR,
         schema_text_crlf(),
         consult_id
     )
@@ -39,19 +42,56 @@ pub(crate) fn format_repair_prompt(consult_id: &str) -> String {
 /// diff-review, checkpoint) that answered with zero tool calls; re-asked on the same thread.
 /// `attempt` is the 1-based attempt number (carried for the caller's accounting; the insist text
 /// itself is the same each time). Shared by every engine that counts tool calls (grok, kimi).
+/// (F11-10) It carries [`prompt::REVIEWER_NOT_COORDINATOR`].
 pub(crate) fn read_insist_prompt(consult_id: &str, _attempt: usize) -> String {
     format!(
-        "Your reply is rejected: you read no file (0 tool calls). This is a code review; a verdict without reading the code is worthless. Before answering again, run `git diff <range> --stat` (the range is in the brief) and read the changed hunks of each path with your file-reading tool, one path at a time; where the brief names documents, read them too. Then answer again, in full, in the required format. A second reply without tool calls will be discarded.\r\n\r\nConsultation id: {consult_id}"
+        "Your reply is rejected: you read no file (0 tool calls). This is a code review; a verdict without reading the code is worthless. Before answering again, run `git diff <range> --stat` (the range is in the brief) and read the changed hunks of each path with your file-reading tool, one path at a time; where the brief names documents, read them too. Then answer again, in full, in the required format. A second reply without tool calls will be discarded. {}\r\n\r\nConsultation id: {consult_id}",
+        prompt::REVIEWER_NOT_COORDINATOR
     )
 }
 
 /// (C3) The read-insist re-ask prompt for a NON-review grok purpose (framing, decision, stuck,
 /// chore, ...) whose primary turn answered with zero tool calls: it cannot have read the brief. The
-/// re-ask tells it to open the brief, then the files it names.
+/// re-ask tells it to open the brief, then the files it names. (F11-10) It carries
+/// [`prompt::REVIEWER_NOT_COORDINATOR`].
 pub(crate) fn read_insist_other_prompt(consult_id: &str) -> String {
     format!(
-        "Your reply is rejected: you read no file (0 tool calls), so you cannot have read the brief. Open the brief with your file-reading tool, then open the files and documents it names and check its claims against the code (read_file, list_dir, grep). Then answer again, in full, in the required format. A second reply without tool calls will be discarded.\r\n\r\nConsultation id: {consult_id}"
+        "Your reply is rejected: you read no file (0 tool calls), so you cannot have read the brief. Open the brief with your file-reading tool, then open the files and documents it names and check its claims against the code (read_file, list_dir, grep). Then answer again, in full, in the required format. A second reply without tool calls will be discarded. {}\r\n\r\nConsultation id: {consult_id}",
+        prompt::REVIEWER_NOT_COORDINATOR
     )
+}
+
+/// (F11-10) The timeout / stall continuation prompt: the main turn's contract (structured runs),
+/// why the previous turn stopped, the schema again for a prompt-only transport, the
+/// reviewer-is-not-a-coordinator instruction ([`prompt::REVIEWER_NOT_COORDINATOR`]) and the
+/// consultation id.
+pub(crate) fn continuation_prompt(ctx: &Context, stalled_secs: Option<i64>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !ctx.r.raw {
+        parts.push(prompt::FINAL_OUTPUT_CONTRACT.to_string());
+    }
+    // (wave 26c, D3) a stall kill names the silence outside a tool call; a timeout names the limit.
+    let stopped_reason = match stalled_secs {
+        Some(n) => format!("stopped after no output for {n} s outside a tool call"),
+        None => format!("stopped by a time limit after {} s", ctx.r.timeout_sec),
+    };
+    parts.push(format!(
+        "Your previous turn was {stopped_reason}. Do not start over and do not read more files than you must: finish now and output your final answer in the required format.",
+    ));
+    if !ctx.r.raw && ctx.transport.transport == "prompt-only" {
+        parts.push(prompt::schema_lines(
+            &ctx.o.purpose,
+            ctx.open_findings_count > 0,
+            true,
+        ));
+        parts.push(format!(
+            "JSON Schema of the reply:\r\n{}",
+            schema_text_crlf()
+        ));
+    }
+    parts.push(prompt::REVIEWER_NOT_COORDINATOR.to_string());
+    parts.push(format!("Consultation id: {}", ctx.consult_id));
+    parts.join("\r\n\r\n")
 }
 
 /// (C3) The one short insisting line prepended to the ORIGINAL primary prompt when a grok read-insist
@@ -469,31 +509,7 @@ pub(super) fn run_timeout_continuation(args: TimeoutContinuation) {
     }
 
     // The continuation prompt (the main turn's contract; prompt-only re-sends the schema).
-    let mut parts: Vec<String> = Vec::new();
-    if !ctx.r.raw {
-        parts.push(prompt::FINAL_OUTPUT_CONTRACT.to_string());
-    }
-    // (wave 26c, D3) a stall kill names the silence outside a tool call; a timeout names the limit.
-    let stopped_reason = match stalled_secs {
-        Some(n) => format!("stopped after no output for {n} s outside a tool call"),
-        None => format!("stopped by a time limit after {} s", ctx.r.timeout_sec),
-    };
-    parts.push(format!(
-        "Your previous turn was {stopped_reason}. Do not start over and do not read more files than you must: finish now and output your final answer in the required format.",
-    ));
-    if !ctx.r.raw && ctx.transport.transport == "prompt-only" {
-        parts.push(prompt::schema_lines(
-            &ctx.o.purpose,
-            ctx.open_findings_count > 0,
-            true,
-        ));
-        parts.push(format!(
-            "JSON Schema of the reply:\r\n{}",
-            schema_text_crlf()
-        ));
-    }
-    parts.push(format!("Consultation id: {}", ctx.consult_id));
-    let continue_prompt = parts.join("\r\n\r\n");
+    let continue_prompt = continuation_prompt(ctx, stalled_secs);
 
     let tmp = std::env::temp_dir();
     let id = uuid::Uuid::new_v4().simple().to_string();
@@ -528,6 +544,8 @@ pub(super) fn run_timeout_continuation(args: TimeoutContinuation) {
     sec.continue_ran = true;
     // The continuation event stream is a further turn (added before the run, like the plugin).
     sec.continue_events_rel = Some(continue_events_rel.clone());
+    // (F11-11) the turn transition names its stream where a death record of this run looks
+    note_turn_stream(ctx, "timeout continuation", "continue.events.jsonl");
 
     let (outcome, wall, engine_outcome, claude_run) = run_codex_secondary(RunSecondary {
         ctx,
@@ -779,6 +797,10 @@ pub(super) fn run_format_repair(args: FormatRepair) {
         tmp.join(format!("codex-consult-repair-events-{id}.jsonl"))
     };
     let repair_events_rel = ctx.hf("repair.events.jsonl");
+    // (F11-11) an engine keeps its repair stream: the turn transition names it
+    if is_engine {
+        note_turn_stream(ctx, "format repair", "repair.events.jsonl");
+    }
     let repair_stderr = tmp.join(format!("codex-consult-repair-stderr-{id}.txt"));
     // An engine on a native transport passes the schema flag on the repair turn too (codex is
     // always prompt-only on a repair turn — no schema flag).
@@ -1259,6 +1281,8 @@ pub(super) fn run_engine_denial_retry(args: DenialRetry) {
 
     let thread_id = thread.clone();
     let timeout = ctx.r.timeout_sec.min(300);
+    // (F11-11) the turn transition names its stream where a death record of this run looks
+    note_turn_stream(ctx, "denial retry", "denial-retry.events.jsonl");
     let (outcome, det, wall, events_rel) = run_engine_secondary(
         ctx,
         TurnKind::DenialRetry,
@@ -1415,6 +1439,8 @@ pub(super) fn run_read_insist(args: ReadInsist) {
             read_insist_other_prompt(&ctx.consult_id)
         };
         let suffix = format!("read-insist-{attempt}.events.jsonl");
+        // (F11-11) the turn transition names its stream where a death record of this run looks
+        note_turn_stream(ctx, "read-insist", &suffix);
         let (outcome, det, wall, events_rel) = run_engine_secondary(
             ctx,
             TurnKind::ReadInsist,

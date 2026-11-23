@@ -4,9 +4,11 @@
 //! Turn 1 is a raw "reply with exactly OK"; turn 2 asks for the exact content of a `token.txt`
 //! holding a random token, which forces a read (a tool call). The pass is: both turns exit 0 and the
 //! reply of turn 2 contains the token (so the file was actually read). (C3 0.2.5) A codex smoke must
-//! also prove the sub-agent switch: the run's own rollouts must show `multi_agent_version`
-//! `disabled` and no multi-agent tool ([`subagent_switch_check`]) - otherwise it fails, and a
-//! post-update smoke failure rolls the update back.
+//! also prove the sub-agent switch: the rollouts of BOTH turns must show `multi_agent_version`
+//! `disabled` and no multi-agent tool ([`subagent_switch_check`]) - a shown surface fails the
+//! smoke, and (F11-7) a proof that could not be made (a turn without a thread id, a rollout that
+//! cannot be found, read or identified, a seat that opts into sub-agents) leaves it
+//! [`Smoke::Unproven`]; a post-update smoke that fails or is unproven rolls the update back.
 //!
 //! (F02-16) A roster seat's smoke is bound to that exact entry ([`Bind::Entry`]): both turns see a
 //! one-entry roster holding it ([`bound_roster`]), so the label can never resolve to another entry
@@ -26,6 +28,25 @@ use c3_core::roster::{Roster, RosterEntry};
 pub enum Smoke {
     Pass,
     Fail(String),
+    /// (F11-7) The turns ran, but what the smoke must prove was not proven: a codex turn without a
+    /// thread id, a rollout that cannot be found, read or identified, or that holds no terminal
+    /// record for the turn, a seat that opts into sub-agents. NOT a pass: an automatic update holds
+    /// on it exactly as on a failed smoke (rolled back where supported, never recorded as
+    /// verified).
+    Unproven(String),
+}
+
+impl Smoke {
+    /// Why an automatic update must hold on this smoke (`None` for a pass): the failure, or the
+    /// unproven reason. The first part of the pair is the word a report line uses (`failed` /
+    /// `unproven`).
+    pub fn hold(&self) -> Option<(&'static str, String)> {
+        match self {
+            Smoke::Pass => None,
+            Smoke::Fail(why) => Some(("failed", why.clone())),
+            Smoke::Unproven(why) => Some(("unproven", why.clone())),
+        }
+    }
 }
 
 /// A smoke target: the provider label and model id to consult, and what the smoke's consults are
@@ -329,9 +350,10 @@ fn call_counts() -> &'static std::sync::Mutex<std::collections::HashMap<String, 
 }
 
 /// The scripted outcome under `C3_MAINTAIN_TEST_SMOKE=provider::model=<verdict>,...` where the
-/// verdict is `pass`, `fail`, `pass-then-fail` (the first smoke of that seat passes, the rest
-/// fail) or `fail-then-pass` (the first fails, the rest pass). A seat not listed fails, so a test
-/// opts a seat into passing explicitly.
+/// verdict is `pass`, `fail`, `unproven`, `pass-then-fail` (the first smoke of that seat passes,
+/// the rest fail), `pass-then-unproven` (the first passes, the rest are unproven) or
+/// `fail-then-pass` (the first fails, the rest pass). A seat not listed fails, so a test opts a
+/// seat into passing explicitly.
 fn scripted(script: &str, target: &Target) -> Smoke {
     let key = format!("{}::{}", target.provider, target.model);
     let first_call = |key: &str| {
@@ -349,6 +371,14 @@ fn scripted(script: &str, target: &Target) -> Smoke {
             let verdict = verdict.trim().to_ascii_lowercase();
             return match verdict.as_str() {
                 "pass" => Smoke::Pass,
+                "unproven" => Smoke::Unproven("scripted unproven smoke".to_string()),
+                "pass-then-unproven" => {
+                    if first_call(&key) {
+                        Smoke::Pass
+                    } else {
+                        Smoke::Unproven("scripted post-update unproven smoke".to_string())
+                    }
+                }
                 "pass-then-fail" => {
                     if first_call(&key) {
                         Smoke::Pass
@@ -412,10 +442,17 @@ fn run_consult_smoke(
             Some(s)
         }
     };
-    let turn_env: Vec<(&str, &str)> = roster_env
+    let mut turn_env: Vec<(&str, &str)> = roster_env
         .as_deref()
         .map(|r| vec![("CODEX_CONSULT_ROSTER", r)])
         .unwrap_or_default();
+    // (F11-8) the Codex home resolved to an absolute path ONCE: the consult children run from the
+    // scratch repo, so a relative CODEX_HOME would name another directory there than the one this
+    // process reads the rollouts from. Both use this one.
+    let codex_home = absolute_home(&crate::providers::get_codex_home());
+    if engine == "codex" && !codex_home.is_empty() {
+        turn_env.push(("CODEX_HOME", codex_home.as_str()));
+    }
 
     // 1. a throwaway git repo with token.txt
     if std::fs::create_dir_all(work).is_err() {
@@ -482,11 +519,66 @@ fn run_consult_smoke(
     if !(reply_contains(work, token) || turn2.combined().contains(token)) {
         return Smoke::Fail("the reply did not contain the token (no file read)".to_string());
     }
-    // (C3 0.2.5) a codex smoke also proves the sub-agent switch from its own rollouts.
+    // (C3 0.2.5) a codex smoke also proves the sub-agent switch from its own rollouts - for BOTH
+    // turns (F11-7).
     if engine == "codex" {
-        return subagent_switch_check(work, &crate::providers::get_codex_home());
+        return subagent_switch_check(work, &codex_home, SMOKE_TURNS);
     }
     Smoke::Pass
+}
+
+/// (F11-7) How many consults a smoke runs (turn 1 and turn 2); each must prove the switch.
+pub(crate) const SMOKE_TURNS: usize = 2;
+
+/// (F11-8) `home` as an absolute path (relative to this process's working directory when it is
+/// relative); `""` stays `""`.
+fn absolute_home(home: &str) -> String {
+    if home.is_empty() {
+        return String::new();
+    }
+    std::path::absolute(home)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| home.to_string())
+}
+
+/// (F11-8) How often, and how far apart, a rollout that cannot be found or read is looked for
+/// again (a transient sharing violation, a file the exited child's writer has not closed yet).
+const ROLLOUT_TRIES: usize = 3;
+const ROLLOUT_RETRY_MS: u64 = 300;
+
+/// (F11-8) The rollout of `thread` and its surface, retried a bounded number of times while it
+/// cannot be found or read; `Err` is the unproven reason.
+fn rollout_surface_of(
+    thread: &str,
+    codex_home: &str,
+) -> Result<c3_core::quota::SubagentSurface, String> {
+    let mut why = String::new();
+    for attempt in 0..ROLLOUT_TRIES {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(ROLLOUT_RETRY_MS));
+        }
+        let Some(path) = c3_core::quota::codex_rollout_path(thread, codex_home) else {
+            why = format!(
+                "no rollout of thread {thread} under {} (the sub-agent guard reads the same rollouts)",
+                std::path::Path::new(codex_home).join("sessions").display()
+            );
+            continue;
+        };
+        let s = c3_core::quota::rollout_subagent_surface(&path);
+        if !s.found || !s.read_error.is_empty() {
+            why = format!(
+                "the rollout of thread {thread} could not be read ({})",
+                if s.read_error.is_empty() {
+                    "it is gone"
+                } else {
+                    s.read_error.as_str()
+                }
+            );
+            continue;
+        }
+        return Ok(s);
+    }
+    Err(why)
 }
 
 /// (C3 0.2.5) The codex smoke proves the sub-agent switch: a Codex CLI update can break the bridge's
@@ -498,13 +590,25 @@ fn run_consult_smoke(
 /// FAILS when a thread shows a `multi_agent_version` other than `disabled`, offers or calls a
 /// multi-agent tool, or cannot be read.
 ///
-/// A missing rollout FAILS too (it is not a pass with a warning): the switch is then unproven, and the
-/// budget watch's sub-agent guard - the defence behind the switch - reads the same rollouts, so a CLI
-/// whose rollouts C3 cannot find runs with a blind guard. Rolling such an update back costs one held
-/// update; letting it through risks the incident again. A rollout that names neither a
-/// `multi_agent_version` nor a tool list fails for the same reason. A consult the operator opted into
-/// sub-agents (its roster entry's `codex_config`) is not judged.
-pub(crate) fn subagent_switch_check(work: &std::path::Path, codex_home: &str) -> Smoke {
+/// (F11-7) Nothing short of that proof passes: the smoke is [`Smoke::Unproven`] - which an automatic
+/// update holds on exactly as on a failure - when fewer consults than `expected` were recorded, when
+/// a consult recorded no thread id, when a consult ran with sub-agents allowed by the seat's
+/// `codex_config` (the switch was not exercised), and (F11-8) when a thread's rollout cannot be
+/// found or read after a few tries, names another session than the thread it was looked up for,
+/// holds an unreadable record, has no terminal record for its turn (`task_complete` after its last
+/// `task_started`; a thread two consults share needs one per consult), or names neither a
+/// `multi_agent_version` nor a tool list. The budget watch's sub-agent guard - the defence behind
+/// the switch - reads the same rollouts, so a CLI whose rollouts C3 cannot read runs with a blind
+/// guard: holding such an update costs one held update, letting it through risks the incident
+/// again. A shown surface (a version other than `disabled`, a multi-agent tool offered or called)
+/// is a [`Smoke::Fail`].
+pub(crate) fn subagent_switch_check(
+    work: &std::path::Path,
+    codex_home: &str,
+    expected: usize,
+) -> Smoke {
+    let unproven =
+        |why: String| Smoke::Unproven(format!("the sub-agent switch is unproven: {why}"));
     let sessions = work
         .join(".collab")
         .join("maintain-smoke")
@@ -518,44 +622,51 @@ pub(crate) fn subagent_switch_check(work: &std::path::Path, codex_home: &str) ->
                 .cloned()
         })
         .unwrap_or_default();
-    let mut threads: Vec<String> = Vec::new();
-    let mut opted_in = 0usize;
-    for c in &consults {
+    if consults.is_empty() {
+        return unproven("the smoke's consults recorded no codex thread".to_string());
+    }
+    if consults.len() < expected {
+        return unproven(format!(
+            "the smoke recorded {} consult(s), {expected} expected",
+            consults.len()
+        ));
+    }
+    // (thread, how many consults recorded it), first seen first
+    let mut threads: Vec<(String, usize)> = Vec::new();
+    for (i, c) in consults.iter().enumerate() {
+        let n = c
+            .get("n")
+            .and_then(|n| n.as_i64())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| (i + 1).to_string());
         let Some(t) = c
             .get("thread")
             .and_then(|t| t.as_str())
             .filter(|t| !t.is_empty())
         else {
-            continue;
+            return unproven(format!("consult n={n} recorded no thread id"));
         };
         if c.get("subagents_allowed").and_then(|a| a.as_bool()) == Some(true) {
-            opted_in += 1;
-            continue;
-        }
-        if !threads.iter().any(|x| x == t) {
-            threads.push(t.to_string());
-        }
-    }
-    if threads.is_empty() {
-        if opted_in > 0 {
-            eprintln!(
-                "c3 maintain smoke: the sub-agent switch was not exercised (the seat's codex_config turns sub-agents on)"
-            );
-            return Smoke::Pass;
-        }
-        return Smoke::Fail(
-            "the sub-agent switch is unproven: the smoke's consults recorded no codex thread"
-                .to_string(),
-        );
-    }
-    for t in &threads {
-        let Some(path) = c3_core::quota::codex_rollout_path(t, codex_home) else {
-            return Smoke::Fail(format!(
-                "the sub-agent switch is unproven: no rollout of thread {t} under {} (the sub-agent guard reads the same rollouts)",
-                std::path::Path::new(codex_home).join("sessions").display()
+            return unproven(format!(
+                "consult n={n} ran with sub-agents allowed by the seat's codex_config, so the switch was not exercised (smoke a seat that keeps them off)"
             ));
+        }
+        match threads.iter_mut().find(|(x, _)| x.eq_ignore_ascii_case(t)) {
+            Some((_, k)) => *k += 1,
+            None => threads.push((t.to_string(), 1)),
+        }
+    }
+    for (t, k) in &threads {
+        let s = match rollout_surface_of(t, codex_home) {
+            Ok(s) => s,
+            Err(why) => return unproven(why),
         };
-        let s = c3_core::quota::rollout_subagent_surface(&path);
+        if !s.session_id.eq_ignore_ascii_case(t) {
+            return unproven(format!(
+                "the rollout found for thread {t} names session `{}`, not that thread",
+                s.session_id
+            ));
+        }
         if let Some(why) = s.breach() {
             return Smoke::Fail(format!(
                 "the sub-agent switch did not hold: thread {t} - {why} - although the bridge passed -c {} -c {}",
@@ -563,9 +674,21 @@ pub(crate) fn subagent_switch_check(work: &std::path::Path, codex_home: &str) ->
                 c3_core::quota::AGENTS_OFF
             ));
         }
+        if s.malformed > 0 {
+            return unproven(format!(
+                "the rollout of thread {t} holds {} unreadable record(s)",
+                s.malformed
+            ));
+        }
+        if s.terminals == 0 || s.completed < *k {
+            return unproven(format!(
+                "the rollout of thread {t} holds no terminal record for its turn ({} task_complete for {k} consult(s))",
+                s.completed
+            ));
+        }
         if !s.has_evidence() {
-            return Smoke::Fail(format!(
-                "the sub-agent switch is unproven: the rollout of thread {t} names no multi_agent_version and no tool list"
+            return unproven(format!(
+                "the rollout of thread {t} names no multi_agent_version and no tool list"
             ));
         }
     }
@@ -770,13 +893,23 @@ mod tests {
             format!(
                 r#"{{"timestamp":"{at}","type":"turn_context","payload":{{"turn_id":"t","model":"glm-5.3-flash","multi_agent_version":"{mav}"}}}}"#
             ),
+            format!(
+                r#"{{"timestamp":"{at}","type":"event_msg","payload":{{"type":"task_complete","last_agent_message":"OK"}}}}"#
+            ),
         ]
     }
 
     fn fail_reason(s: Smoke) -> String {
         match s {
             Smoke::Fail(why) => why,
-            Smoke::Pass => panic!("expected a failure"),
+            other => panic!("expected a failure, got {other:?}"),
+        }
+    }
+
+    fn unproven_reason(s: Smoke) -> String {
+        match s {
+            Smoke::Unproven(why) => why,
+            other => panic!("expected an unproven smoke, got {other:?}"),
         }
     }
 
@@ -792,7 +925,7 @@ mod tests {
                 (T2, smoke_rollout(T2, "disabled", false)),
             ],
         );
-        let got = subagent_switch_check(&work, &home);
+        let got = subagent_switch_check(&work, &home, SMOKE_TURNS);
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(got, Smoke::Pass);
     }
@@ -809,7 +942,7 @@ mod tests {
                 (T2, smoke_rollout(T2, "v2", false)),
             ],
         );
-        let why = fail_reason(subagent_switch_check(&work, &home));
+        let why = fail_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(
             why,
@@ -821,21 +954,37 @@ mod tests {
             &[(T1, None)],
             &[(T1, smoke_rollout(T1, "disabled", true))],
         );
-        let why = fail_reason(subagent_switch_check(&work, &home));
+        let why = fail_reason(subagent_switch_check(&work, &home, 1));
         let _ = std::fs::remove_dir_all(&root);
         assert!(
             why.contains(&format!("thread {T1} - offers spawn_agent, wait_agent")),
             "{why}"
         );
+
+        // (F10-5) the multi-agent tool under an MCP server's namespace counts by its name
+        let mut mcp = smoke_rollout(T1, "disabled", false);
+        mcp[2] = mcp[2].replace(
+            r#"{"type":"namespace","name":"clock""#,
+            r#"{"type":"namespace","name":"mcp__srv","tools":[{"type":"function","name":"spawn_agent"}]},{"type":"namespace","name":"clock""#,
+        );
+        let (root, work, home) = switch_fixture("mcp", &[(T1, None)], &[(T1, mcp)]);
+        let why = fail_reason(subagent_switch_check(&work, &home, 1));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            why.contains(&format!("thread {T1} - offers spawn_agent")),
+            "{why}"
+        );
     }
 
-    /// (C3 0.2.5) A recorded thread without a rollout, a rollout that names no version and no tool
-    /// list, and a smoke that recorded no thread all FAIL (the switch is unproven, and the guard
-    /// reads the same rollouts); a consult the seat opted into sub-agents is not judged.
+    /// (F11-7, F11-8) A smoke whose proof is incomplete is UNPROVEN (never a pass): a recorded thread
+    /// without a rollout, a rollout without a session id of that thread, one consult without a
+    /// thread id beside a clean one, fewer consults than turns, a seat that opted into sub-agents, a
+    /// rollout without a terminal record for its turn, one with an unreadable record, and a smoke
+    /// that recorded no thread.
     #[test]
-    fn the_codex_smoke_fails_when_the_switch_is_unproven() {
+    fn the_codex_smoke_is_unproven_without_full_evidence() {
         let (root, work, home) = switch_fixture("missing", &[(T1, Some(false))], &[]);
-        let why = fail_reason(subagent_switch_check(&work, &home));
+        let why = unproven_reason(subagent_switch_check(&work, &home, 1));
         let _ = std::fs::remove_dir_all(&root);
         assert!(
             why.starts_with(&format!(
@@ -844,33 +993,117 @@ mod tests {
             "{why}"
         );
 
+        // a rollout without a session_meta: its identity is unknown
         let bare = vec![
             r#"{"timestamp":"2026-11-22T12:09:52.300Z","type":"event_msg","payload":{"type":"task_started"}}"#.to_string(),
         ];
         let (root, work, home) = switch_fixture("bare", &[(T1, Some(false))], &[(T1, bare)]);
-        let why = fail_reason(subagent_switch_check(&work, &home));
+        let why = unproven_reason(subagent_switch_check(&work, &home, 1));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(
             why,
-            format!("the sub-agent switch is unproven: the rollout of thread {T1} names no multi_agent_version and no tool list")
+            format!("the sub-agent switch is unproven: the rollout found for thread {T1} names session ``, not that thread")
         );
 
+        // a rollout whose session_meta names ANOTHER thread
+        let (root, work, home) = switch_fixture(
+            "otherid",
+            &[(T1, Some(false))],
+            &[(T1, smoke_rollout(T2, "disabled", false))],
+        );
+        let why = unproven_reason(subagent_switch_check(&work, &home, 1));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(why.contains(&format!("names session `{T2}`")), "{why}");
+
+        // the reviewer's Verify: one clean thread and one successful consult with a blank thread
+        let (root, work, home) = switch_fixture(
+            "blank",
+            &[(T1, Some(false)), ("", Some(false))],
+            &[(T1, smoke_rollout(T1, "disabled", false))],
+        );
+        let why = unproven_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            why,
+            "the sub-agent switch is unproven: consult n=2 recorded no thread id"
+        );
+
+        // only one of the two turns recorded
+        let (root, work, home) = switch_fixture(
+            "one",
+            &[(T1, Some(false))],
+            &[(T1, smoke_rollout(T1, "disabled", false))],
+        );
+        let why = unproven_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(why.contains("recorded 1 consult(s), 2 expected"), "{why}");
+
+        // an opted-in seat (even beside a clean consult) did not exercise the switch
+        let (root, work, home) = switch_fixture(
+            "optin",
+            &[(T1, Some(false)), (T2, Some(true))],
+            &[
+                (T1, smoke_rollout(T1, "disabled", false)),
+                (T2, smoke_rollout(T2, "v2", true)),
+            ],
+        );
+        let why = unproven_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            why.contains("consult n=2 ran with sub-agents allowed by the seat's codex_config"),
+            "{why}"
+        );
+
+        // no terminal record for the turn; an unreadable (split) record
+        let mut open = smoke_rollout(T1, "disabled", false);
+        open.pop();
+        let (root, work, home) = switch_fixture("open", &[(T1, Some(false))], &[(T1, open)]);
+        let why = unproven_reason(subagent_switch_check(&work, &home, 1));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            why.contains("holds no terminal record for its turn"),
+            "{why}"
+        );
+        let mut split = smoke_rollout(T1, "disabled", false);
+        split.push(r#"{"timestamp":"2026-11-22T12:09:53.000Z","type":"turn_cont"#.to_string());
+        let (root, work, home) = switch_fixture("split", &[(T1, Some(false))], &[(T1, split)]);
+        let why = unproven_reason(subagent_switch_check(&work, &home, 1));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(why.contains("holds 1 unreadable record(s)"), "{why}");
+
+        // a thread two consults share needs a terminal record per consult
+        let (root, work, home) = switch_fixture(
+            "shared",
+            &[(T1, Some(false)), (T1, Some(false))],
+            &[(T1, smoke_rollout(T1, "disabled", false))],
+        );
+        let why = unproven_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(why.contains("1 task_complete for 2 consult(s)"), "{why}");
+
         let (root, work, home) = switch_fixture("nothread", &[], &[]);
-        let why = fail_reason(subagent_switch_check(&work, &home));
+        let why = unproven_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(
             why,
             "the sub-agent switch is unproven: the smoke's consults recorded no codex thread"
         );
-
-        let (root, work, home) = switch_fixture(
-            "optin",
-            &[(T1, Some(true))],
-            &[(T1, smoke_rollout(T1, "v2", true))],
+        assert_eq!(
+            Smoke::Unproven("x".into()).hold(),
+            Some(("unproven", "x".to_string())),
+            "an automatic update holds on an unproven smoke"
         );
-        let got = subagent_switch_check(&work, &home);
-        let _ = std::fs::remove_dir_all(&root);
-        assert_eq!(got, Smoke::Pass, "an opted-in consult is not judged");
+        assert_eq!(Smoke::Pass.hold(), None);
+    }
+
+    /// (F11-8) A relative Codex home is resolved once to an absolute path (the consult children run
+    /// from the scratch repo).
+    #[test]
+    fn a_relative_codex_home_is_made_absolute() {
+        let abs = absolute_home("rel-home");
+        assert!(std::path::Path::new(&abs).is_absolute(), "{abs}");
+        assert!(abs.ends_with("rel-home"), "{abs}");
+        assert_eq!(absolute_home(""), "");
     }
 
     #[test]

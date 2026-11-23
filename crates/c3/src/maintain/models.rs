@@ -396,6 +396,21 @@ fn recorded_older(older: &[OlderPair], seated: &str, cand: &str) -> bool {
     older.contains(&probe)
 }
 
+/// (0.2.5 R2, F13-6) Whether the maintain state dates `cand` as NOT newer than `seated`: a public
+/// source of `state` dates both ids and the candidate's `created` is not later than the seated
+/// id's (the swap gate's own comparison), or an earlier pass recorded the pair as older. `false`
+/// without dates for both ids. The repository `AGENTS.md` repair asks this before following a
+/// successor, so it never moves to a model the catalog knows to be older.
+pub fn dated_older(state: &ModelsState, seated: &str, cand: &str) -> bool {
+    recorded_older(&state.older, seated, cand)
+        || public_hits(&state.sources, cand).iter().any(|h| {
+            matches!(
+                (h.created, seated_created(h.source, seated, h.vendor)),
+                (Some(c), Some(cs)) if c <= cs
+            )
+        })
+}
+
 /// The NEGATIVE date evidence against `cand` as a successor of `seated` in the public sources of
 /// `current`: an occurrence dated in the future (beyond [`FUTURE_SLACK_SECS`]), or one dated not
 /// later than the seated id in the same source. With `only_both_dated`, an occurrence counts only

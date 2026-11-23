@@ -410,12 +410,46 @@ pub struct AgyEvents {
 }
 
 /// (A1) One agy tool step as its event log recorded it: the `step_index` (when the stream names
-/// one), the tool name and the logged `tool_info.parameters` (the first object any event of the
-/// step carried).
+/// one), the tool name (the first non-empty one any event of the step carried) and the logged
+/// `tool_info.parameters` MERGED over every event of the step ([`merge_parameters`]).
 struct AgyToolStep {
     index: Option<i64>,
     name: String,
     parameters: Option<Value>,
+}
+
+/// (F10-2, F11-1) Merge one event's logged parameters into a step's: any object seen wins over
+/// none, and two objects are united key by key - a key's empty value (`null`, `""`, `{}`, `[]`)
+/// gives way to a non-empty one, so an empty ACTIVE object followed by a populated DONE command
+/// keeps the command. A non-object value is kept only while no object was seen.
+fn merge_parameters(into: &mut Option<Value>, next: Option<Value>) {
+    fn empty(v: &Value) -> bool {
+        match v {
+            Value::Null => true,
+            Value::String(s) => s.is_empty(),
+            Value::Object(m) => m.is_empty(),
+            Value::Array(a) => a.is_empty(),
+            _ => false,
+        }
+    }
+    let Some(next) = next else {
+        return;
+    };
+    match (into.as_mut(), next) {
+        (None, n) => *into = Some(n),
+        (Some(Value::Object(cur)), Value::Object(n)) => {
+            for (k, v) in n {
+                match cur.get(&k) {
+                    Some(old) if !empty(old) || empty(&v) => {}
+                    _ => {
+                        cur.insert(k, v);
+                    }
+                }
+            }
+        }
+        (Some(cur), n @ Value::Object(_)) if !cur.is_object() => *into = Some(n),
+        _ => {}
+    }
 }
 
 /// Parse one agy event stream tolerantly. `allow_partial_last` lets the LAST non-empty line be a
@@ -465,18 +499,22 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
                         let parameters = su
                             .get("tool_info")
                             .and_then(|ti| ti.get("parameters"))
-                            .filter(|p| p.is_object())
+                            .filter(|p| !p.is_null())
                             .cloned();
+                        // (F10-2) the events of ONE step (same index) merge, also when one of
+                        // them carries no tool name (a parameter-less ACTIVE, a named DONE)
                         let known = index.and_then(|ix| {
-                            steps
-                                .iter_mut()
-                                .find(|s| s.index == Some(ix) && s.name == tn)
+                            steps.iter_mut().find(|s| {
+                                s.index == Some(ix)
+                                    && (s.name == tn || s.name.is_empty() || tn.is_empty())
+                            })
                         });
                         match known {
                             Some(s) => {
-                                if s.parameters.is_none() {
-                                    s.parameters = parameters;
+                                if s.name.is_empty() {
+                                    s.name = tn;
                                 }
+                                merge_parameters(&mut s.parameters, parameters);
                             }
                             None => steps.push(AgyToolStep {
                                 index,
@@ -512,8 +550,16 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
     r.writing_tool_names = steps
         .iter()
         .filter(|s| {
-            let handover = s.index.is_some_and(|ix| finish_steps.contains(&ix));
-            super::tree_check::agy_tool_step_is_writing(&s.name, s.parameters.as_ref(), handover)
+            // (F11-1) the hand-over exemption needs a VERIFIED finish call: a tool named `finish`
+            // whose index the stream closed with a `step_type: "finish"` event - never the index
+            // alone (a write step sharing an index with a finish event stays a write)
+            let verified_finish = s.name.trim().eq_ignore_ascii_case("finish")
+                && s.index.is_some_and(|ix| finish_steps.contains(&ix));
+            super::tree_check::agy_tool_step_is_writing(
+                &s.name,
+                s.parameters.as_ref(),
+                verified_finish,
+            )
         })
         .map(|s| s.name.clone())
         .collect();
@@ -1027,6 +1073,104 @@ mod tests {
         );
         let e = read_agy_events(w, true);
         assert_eq!(e.writing_tool_names, vec!["run_command".to_string()]);
+    }
+
+    /// (F11-1, F10-1, F10-2) The step's events are merged before it is classified: a write step that
+    /// logs an EMPTY object on ACTIVE and its command on DONE is a write (the reviewer's Verify); a
+    /// read step whose ACTIVE carries no name and no parameters and whose DONE names `read_file` is a
+    /// read (a pure read must not fail); a write step sharing its index with a finish event is still
+    /// a write (the exemption needs a verified finish call); a command nested under an unknown key
+    /// is a write.
+    #[test]
+    fn a_steps_events_are_merged_before_it_is_classified() {
+        let ev = |ix: i64, state: &str, ty: &str, name: &str, params: &str| {
+            format!(
+                r#"{{"event":"step_update","step_update":{{"step_index":{ix},"state":"{state}","step_type":"{ty}","tool_name":"{name}","tool_info":{{"name":"{name}","parameters":{params}}}}}}}"#
+            )
+        };
+        // an empty ACTIVE object, then the populated DONE command
+        let w = [
+            ev(4, "ACTIVE", "tool", "run_command", "{}"),
+            ev(
+                4,
+                "DONE",
+                "tool",
+                "run_command",
+                r#"{"CommandLine":"rm -rf x","Cwd":"."}"#,
+            ),
+        ]
+        .join("\n");
+        assert_eq!(
+            read_agy_events(&w, true).writing_tool_names,
+            vec!["run_command".to_string()]
+        );
+        // a parameter-less, unnamed ACTIVE and a named DONE of one read step
+        let r = [
+            r#"{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"tool"}}"#
+                .to_string(),
+            ev(2, "DONE", "tool", "read_file", r#"{"Path":"a.md"}"#),
+        ]
+        .join("\n");
+        let e = read_agy_events(&r, true);
+        assert!(
+            e.writing_tool_names.is_empty(),
+            "{:?}",
+            e.writing_tool_names
+        );
+        // a write step that shares its index with a finish event is not exempted by the index
+        let shared = [
+            ev(9, "ACTIVE", "tool", "write_to_file", r#"{"TargetFile":"a.rs"}"#),
+            r#"{"event":"step_update","step_update":{"step_index":9,"state":"DONE","step_type":"finish"}}"#
+                .to_string(),
+        ]
+        .join("\n");
+        assert_eq!(
+            read_agy_events(&shared, true).writing_tool_names,
+            vec!["write_to_file".to_string()]
+        );
+        // a command nested under an unknown key, by an unknown tool
+        let nested = ev(
+            5,
+            "ACTIVE",
+            "tool",
+            "do_thing",
+            r#"{"config":{"action":"rm -rf x"}}"#,
+        );
+        assert_eq!(
+            read_agy_events(&nested, true).writing_tool_names,
+            vec!["do_thing".to_string()]
+        );
+        // agy's Cascade-vocabulary readers with path parameters are reads
+        let readers = [
+            ev(
+                6,
+                "ACTIVE",
+                "tool",
+                "list_dir",
+                r#"{"DirectoryPath":"C:/r"}"#,
+            ),
+            ev(
+                7,
+                "ACTIVE",
+                "tool",
+                "grep_search",
+                r#"{"Query":"a|b","SearchPath":"C:/r"}"#,
+            ),
+            ev(
+                8,
+                "ACTIVE",
+                "tool",
+                "find_by_name",
+                r#"{"SearchDirectory":"C:/r","Pattern":"*.rs"}"#,
+            ),
+        ]
+        .join("\n");
+        let e = read_agy_events(&readers, true);
+        assert!(
+            e.writing_tool_names.is_empty(),
+            "{:?}",
+            e.writing_tool_names
+        );
     }
     const DENIED_STDERR: &str = include_str!("fixtures/agy_denied.stderr.txt");
 

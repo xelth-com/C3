@@ -53,7 +53,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   set up before the "BRANCHES AND WORKTREES" section never got it. Doctor now reports such a file
   (exit 1) when it still carries C3's own title line, and `c3 doctor --fix` appends exactly that
   section, taken from the embedded template, in the file's own line ending, through a temp file and a
-  rename (a link, a hard-linked file or a concurrent edit is refused and reported). A file the user
+  rename (a link and a hard-linked file are refused and reported; the file is read again immediately
+  before the rename and left as it is when it changed - the moment between that re-read and the
+  rename itself remains). A file the user
   rewrote is reported as a warning and never edited. The SessionStart hook does not do this, and
   nothing happens inside a C3 child.
 - **`c3 doctor` now flags a pinned agent model.** Each `.claude/agents/*.md` whose frontmatter
@@ -69,12 +71,17 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `c3 finish`; the repair starts no process at all (no git: it finds the repository root by walking
   up to `.git`), never writes outside the repository (a linked directory or file, or a file with a
   second hard link, is reported and left alone), and never fails a session.
-- **Every child C3 starts is marked with `C3_CHILD=1`** (reviewer CLIs, worker CLIs, the claude
-  engine's allow-listed environment, launcher probes, the detached `c3 maintain` pass). The hook's
-  repair above and `c3 doctor --fix` do nothing when they see the mark: a reviewer on the `claude`
-  engine runs the same SessionStart hook in the repository under review and must stay read-only,
-  and a worker's patch must hold only its own change. Any non-empty value marks a child except an
-  explicit off (`0`, `false`, `off`, `no`).
+- **Every child C3 starts that could run a Claude Code hook or a repair is marked with
+  `C3_CHILD=1`**: reviewer CLIs, worker CLIs, the claude engine's allow-listed environment, launcher
+  probes, the engine CLIs' installs and updates of `c3 maintain`, the detached `c3 maintain` pass and
+  every child of `c3 update` (`cargo install`, `claude plugin update`, its git calls). Not marked:
+  C3's own re-runs of itself as the bridge on the coordinator's behalf (a detached `c3 consult` /
+  `c3 work`, a panel member, the telemetry sender, the MCP server's tool calls - their reviewer and
+  worker children are marked), git elsewhere, `gh` and the OS's kill and link tools. The hook's
+  repair above, `c3 doctor --fix` and `c3 branches --set` / `--clear` do nothing when they see the
+  mark: a reviewer on the `claude` engine runs the same SessionStart hook in the repository under
+  review and must stay read-only, and a worker's patch must hold only its own change. Any non-empty
+  value marks a child except an explicit off (`0`, `false`, `off`, `no`).
 - **`c3 branches`: every branch's state is visible and recorded in the repository.** It lists every
   local branch but the default one and every worktree other than the default branch's, with the
   recorded state, `merged` by ancestry or — when not — whether the content is already on the default
@@ -121,15 +128,15 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   public lists, the announcements and the swaps per mode - no CLI checked or updated, `next_due`
   and the engine records untouched. `--dry-run` collects and says what it would announce and swap,
   with no smoke, no roster edit and no state written.
-- **The codex smoke proves the sub-agent switch.** A Codex CLI update can silently break the
+- **The codex smoke checks the sub-agent switch.** A Codex CLI update can silently break the
   bridge's off switches (codex-cli 0.169.0 did, and two runs spent 14 % of a ChatGPT week in five
   minutes), and `c3 maintain` would have installed it: its smoke only checked that a reply came
   back. The codex smoke now reads the rollout of every thread its two turns recorded and fails when a
   thread shows a `multi_agent_version` other than `disabled`, offers or calls a multi-agent tool
   (`spawn_agent`, `send_message`, `wait_agent`, `list_agents`, `close_agent`, `interrupt_agent`, or
-  anything in the `collaboration` namespace), so a post-update smoke rolls the update back. A
-  missing rollout, or one naming neither a version nor a tool list, fails too: the switch is then
-  unproven and the budget watch's sub-agent guard reads the same rollouts.
+  anything in the `collaboration` namespace), so a post-update smoke rolls the update back. A smoke
+  that cannot make that check for both turns is "unproven", never a pass, and an automatic update
+  holds on it exactly as on a failure (see Fixed: the smoke counts as a proof only when it is one).
 
 ### Changed
 
@@ -251,6 +258,154 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **`c3 doctor --fix` never removes through a link and never removes a worktree a live review may
+  own (F13-1, F13-8, F12-1).** Staleness read the throwaway path with `std::fs::metadata`, which
+  follows a link: a junction or symlink named `c3-kimi-wt-<32 hex>` in the temp directory, pointing
+  at an old directory without an owner record, was classified stale and handed to the removal (the
+  removal itself has refused a linked root since wave P4, so the target survived - by the second
+  line of defence only). The path is now read itself (`symlink_metadata`): a link - on Windows any
+  reparse point - is reported "a link, left alone" and never handed to the removal. The owner record
+  is no longer best effort: when it cannot be written, making the reviewer's throwaway worktree
+  fails, the worktree made so far is removed link-safely, and the run records the same capability
+  failure as a worktree that could not be made. The 6-hour rule is gone: a throwaway worktree
+  without an owner record is removed only when git itself calls it prunable (its directory is
+  gone), else reported "no owner record - remove it by hand" whatever its age. An owner's liveness
+  has three answers now - alive (no finding), gone (removable) and cannot tell: a process holds the
+  pid but its start time cannot be read (another user's or an elevated process), which is reported
+  and left alone, never removed. `c3 branches --json` / `c3 doctor --json` carry `removable` per
+  reported worktree; doctor prints a left-alone one as `[!] c3 worktree <path>: <why> (c3 doctor
+  --fix does not remove it)`, still a finding. Tests: the reviewer's scenario (a registered
+  worktree whose path is a junction - a symlink elsewhere - to an outside sentinel, with a gone
+  owner: reported as a link, `doctor --fix` attempts nothing, the target and the link survive), no
+  owner record until the directory goes, an owner whose start time is unreadable (test hook), an
+  injected owner-record failure.
+- **A stray `.git` entry is no longer taken for a repository (F13-2).** The SessionStart repair
+  found the root by walking up to the nearest `.git` entry of any kind, so an empty file, a broken
+  link or a non-repository directory named `.git` let the hook rewrite agent files and `AGENTS.md`
+  in a directory that is no repository. The nearest `.git` entry now counts only when it is a real
+  directory holding `HEAD`, or a regular file whose first line is `gitdir: <path>` naming a
+  directory that holds `HEAD`; anything else means no repair, silently (the walk does not go on past
+  it). Still no process is started. With `GIT_DIR` set in the environment the hook's repair does
+  nothing (the walk cannot know which repository git would take).
+- **A branch record needs a real date (F13-3).** `c3: work | alice | tomorrow | keep me` parsed as
+  C3's record, so `--set` replaced that note and `--clear` deleted it. A line is C3's record only
+  when its date field is `YYYY-MM-DD` (four, two and two digits, month 01-12, day 01-31); anything
+  else is a foreign description, kept byte for byte by `--set` and left alone by `--clear`.
+- **`C3_CHILD=1` on the children of `c3 update`, and no branch edits from a child (F13-4).** `c3
+  update --apply` started `claude plugin update c3@c3` (and `cargo install`, and its git calls) with
+  the inherited environment, so the SessionStart hook of that Claude Code could repair the
+  repository it ran in. Every child `c3 update` starts is now marked. Inside a C3 child `c3 branches
+  --set`, `--clear` and `--default` refuse - exit 1, one line saying why - and write nothing; the
+  listing stays available.
+- **The hook's branch-line deadline stops its git children (F13-5).** Past the 2-second deadline the
+  hook stopped waiting but left the scan's git running, and it outlived `c3 hook`. Every git call of
+  the branch line - the root's `rev-parse` included - now goes through one runner that registers
+  the running child; when the deadline fires, the registered children are killed and reaped and any
+  later start of that scan is refused, before the hook goes on. Other callers of the scan are
+  unchanged.
+- **`AGENTS.md` never follows to an older model (F13-6).** The repair took the roster's
+  numerically higher id for the successor: a sole `grok-4.20` entry rewrote `grok-4.7`, although
+  4.20 is the vendor's 2025 model. When the maintain state dates both ids (a public catalog's
+  `created`) and the candidate is not newer, or an earlier pass recorded the pair as older, that
+  candidate is not followed (the swap gate's comparison). Without dates for both ids the behaviour
+  stays as it was: the version rule alone decides.
+- **A failed `git cherry` is "not checked" (F13-7).** A patch check whose `git cherry` or `git
+  rev-list --count` failed still set `patches_checked`, so the listing dropped "patches not
+  checked" and the failure looked like a finished check. The branch now counts as checked only when
+  both calls succeeded; a failed check stays unchecked and is counted in `patches_not_checked` (the
+  listing's line now says it counts failed checks as well as the cap of 50).
+- **Four sentences now say what is true (F12-2, F12-3, F12-4, F13-9).** `providers::
+  resolve_repo_root`'s `git rev-parse --show-toplevel` runs with `GIT_OPTIONAL_LOCKS=0` too, so
+  "every git call of the listing, doctor, the hook and the finish note runs with
+  `GIT_OPTIONAL_LOCKS=0`" holds literally. The repair's refusal names a Windows reparse point that
+  is no symlink or junction (a cloud-sync placeholder) "a reparse point" instead of "a link". The
+  sentences that said a concurrent edit is "never written over" (`c3 branches --set` / `--clear`,
+  the repair's rename) now say what is checked: the description or file is read again immediately
+  before the write, and the write is skipped when it changed; the moment between that re-read and
+  the write itself remains - a decided boundary (closing it needs a local process with write access
+  to the repository, which can edit the files directly).
+- **Brief staging never writes outside the reviewer's throwaway worktree (F11-3).** The brief and
+  the task's handoffs are copied into the worktree at their repo-relative paths, and the checked-out
+  revision can carry a link there. A staging destination is now checked twice: in the revision's own
+  tree (no link, submodule or file on the way, no directory or link at the path - whatever the
+  platform's checkout makes of a link) and on disk (no component may be a symlink, junction or other
+  reparse point); the bytes go into a new file created exclusively beside the destination, which
+  replaces it by a rename only when it is absent or a regular file, so the destination is never
+  opened for writing. Any doubt refuses the run before the reviewer starts; a committed link at the
+  brief's path pointing outside leaves its target's bytes untouched.
+- **The worktree seat's availability check and re-seat (F11-4, F10-3).** An in-repo brief path with
+  `..` (`docs/sub/../brief.md`) is normalised to the same file instead of being refused as leaving
+  the repository; a brief committed at HEAD that the live tree cannot read is materialised from
+  HEAD (also into the worktree of an older `--rev`) instead of failing; and a staging failure is a
+  typed pre-start refusal with the preflight wording - the reservation is withdrawn, a panel member
+  leaves its reserved record untouched, so the panel re-seats an optional seat from its reserve
+  exactly as for a preflight refusal - not a provider capability failure. A stageable brief is
+  always staged or the run refused, so the prompt says "copied in" only when the copy was made.
+- **The agy write classifier neither passes a real write nor fails a pure read (F11-1, F10-1,
+  F10-2).** The parameters of all events of one tool step (ACTIVE / DONE / ERROR, also when one of
+  them carries no name) are merged, so an empty first object no longer hides the command a later
+  event logs; a tool not on the reader allow-list counts as writing whatever its parameters are
+  named, a reader whose parameters carry a command at any depth (or a command-shaped value outside
+  a search term) too, and agy's Cascade-vocabulary readers (`list_dir`, `grep_search`,
+  `find_by_name`, ...) joined the allow-list, so a pure read with them no longer fails a complete
+  reply. The hand-over exemption needs a verified `finish` call (named `finish`, closed by a finish
+  event), never a step index alone. A tree change agy's log does not explain is reported as
+  "unattributed", never as someone else's; the integration test whose launcher writes the file
+  itself now says so.
+- **An agy reply whose brief or artifact changed during the run is not recorded as usable
+  (F11-2).** A change of a BOUND input while agy read it is classified apart from ambient drift: the
+  outcome fails (class `permission`, as a failed read-only check) with a message naming the changed
+  input, and the raw reply is kept. A change of the tree or the collab directory stays a warning.
+- **The isolation paragraph no longer leaks file names (F11-5).** The prompt of a reviewer in a
+  throwaway worktree of HEAD named the first twenty paths of `git status` verbatim, untracked files
+  included. It now names only the tracked paths of HEAD that differ in the live checkout (names the
+  reviewer can see in the revision anyway; a rename by its original path), each as data - a name
+  with a backtick, a control character or a line break is counted, not shown - and gives the paths
+  HEAD does not hold (untracked or newly added) as a count only.
+- **A panel member is judged against the findings it was shown (F11-6, F10-4).** The panel freezes
+  an immutable record (id, status, severity, the text shown) of every listed finding into each
+  member's spec at panel start; the member's prompt, its prior-blocker semantics and the validation
+  of its prior report use that record, so a sibling (or another process) changing a listed finding
+  mid-panel can no longer erase or create a blocker the member never saw in that form, and an id
+  that was not in the member's list is not accepted as a prior report. Its checks still merge into
+  the current store under the task lock.
+- **The smoke counts as a proof only when it is one (F11-7, F10-5).** A codex smoke whose consult
+  recorded no thread id, a turn missing from the ledger, a seat that opts into sub-agents, and a
+  rollout that cannot be found, read or identified are now "unproven", not a pass: an automatic
+  update holds on it exactly like a failed smoke (rolled back where supported, the pending record
+  kept unless the previous version is verified back), a recovery smoke never records it as
+  verified, a model swap is not seated, and `c3 maintain --smoke` reports `unproven`. A multi-agent
+  tool counts by its name in any namespace, an MCP server's (`mcp__*`) included.
+- **The smoke's rollout evidence is checked (F11-8).** The Codex home is resolved to an absolute
+  path once and handed to the consult children, so a relative `CODEX_HOME` no longer names another
+  directory from the scratch repo; a rollout's `session_meta` id must be the thread it was looked up
+  for; a tool list counts only once its `tools` array is there; a rollout without a `task_complete`
+  for its turn (one per consult on a shared thread), or with an unreadable record, is unproven; a
+  rollout that cannot be found or read is looked for again a few times before it is.
+- **The sub-agent guard sees a turn that exits between two polls (F11-9).** After the child exits
+  on its own, the guard inspects the rollout once more before the turn is accepted as normal, so a
+  spawn call made after the last poll still stops it. A child rollout is attributed to the current
+  turn by its own creation (its head's timestamp at or after the launch), so an old child of a
+  resumed thread written to within the five-second slack no longer stops it; a head without a
+  timestamp still falls back to that slack.
+- **The secondary prompts carry the reviewer instruction (F11-10).** The timeout continuation, the
+  format repair and the same-thread read-insist re-asks now carry the same "you are a reviewer, not
+  a coordinator" sentence as every review prompt (an instruction to the reviewer, not an enforced
+  capability limit).
+- **A death record names the run's own stream (F11-11, F10-7).** Every turn transition (main,
+  continuation, read-insist, format repair, denial retry) now names its stream in the run's own
+  recovery record - a panel member's, keyed by its seat - and, for a detached single run, in its
+  status file; the continuation's running record names the continuation's stream. A death record
+  reads only evidence of its own run (a sibling's pending record is never taken for it), names the
+  turn that ended the run, and a reader of a run whose bridge was killed falls back to the persisted
+  stream, then to the newest events file of the run's handoffs.
+- **`c3 providers` counts failed runs by the reply they kept (F11-12).** The breakdown counted a
+  failed run as "with a reply" only when it named a `.reply.json` sidecar, so a run that kept only a
+  Markdown partial read as "no reply". A failed run's ledger entry now records the kind it kept
+  (`reply_kept`: `sidecar` / `partial` / `none`), the count goes by that (an older entry by its
+  `reply_json` / `partial_reply`), and the label and the JSON keys (`failed_reply_json`,
+  `failed_partial`, `failed_no_reply`; `failed_with_reply` is the sum of the first two) say what is
+  counted.
 - **A reviewer in a throwaway worktree is no longer failed by a change of the live tree.** The kimi
   engine ran in its own worktree, yet the read-only check compared the MAIN tree and failed the run on
   any change there - a parallel session's edit, not the reviewer's (the false negative the agy fix
@@ -297,8 +452,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   whitespace-only note survive a set and a clear exactly. A first line is C3's only when it parses as
   a full record; a note that merely starts with `c3: ` is foreign and `--clear` leaves it alone. A
   value C3 cannot read exactly (git fails, not UTF-8, several values under the key) aborts the
-  command instead of being written over, and the value is read again right before the write: when
-  another writer changed it meanwhile, nothing is written. A name git would not accept as a branch
+  command instead of being written over, and the value is read again immediately before the write:
+  when another writer changed it meanwhile, nothing is written (a writer landing between that
+  re-read and git's own write is not seen). A name git would not accept as a branch
   name is refused; a valid one with dots, slashes or non-ASCII characters (`foo.bar`, `feat/x-y`)
   addresses its own `branch.<name>.description` key, which the new tests prove.
 - **The branch read paths no longer refresh or lock the index (F02-8, F04-1, F03-6).** `c3 branches`
@@ -323,10 +479,12 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `c3-kimi-wt-`, wherever it was; one left by a crashed run was reported by nothing. A worktree is
   now C3's throwaway only when it lies directly in the system temp directory and is named exactly
   `c3-kimi-wt-<32 hex digits>`. The kimi engine records the owning process (pid and start time) in
-  the worktree's git admin directory, outside the reviewer's files; a throwaway whose owner is gone
-  (or, with no record, that is older than 6 hours, or whose folder is gone) is listed as a "stale c3
-  worktree" by `c3 branches` and `c3 doctor` (a finding), and `c3 doctor --fix` removes it with the
-  kimi engine's own link-safe removal. A live run's worktree is still never a finding.
+  the worktree's git admin directory, outside the reviewer's files; a throwaway whose owner is gone,
+  or whose folder is gone (git calls it prunable), is listed as a "stale c3 worktree" by `c3
+  branches` and `c3 doctor` (a finding), and `c3 doctor --fix` removes it with the kimi engine's own
+  link-safe removal. A live run's worktree is still never a finding; one whose path is a link, one
+  without an owner record and one whose owner cannot be checked are reported and left alone (see
+  F13-1 above).
 
 - **`c3 maintain` no longer offers an older catalog model as a successor.** The version rule alone
   took the vendor's 2025 `grok-4.20` for a successor of `grok-4.7` (4.20 > 4.7), and a plan that
@@ -442,8 +600,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   edited that file too, a failed or interrupted write could leave a truncated file, and an editor's
   save between the read and the write was lost. The new content now goes to a sibling temporary file
   in the same directory, which is synced and read back; the links are checked again and the
-  original is re-read and compared with the snapshot the edit was computed from (a changed file is
-  left as it is); only then does the temporary file replace the original by rename. A file with more
+  original is re-read immediately before the rename and compared with the snapshot the edit was
+  computed from (a changed file is left as it is; an edit landing between that re-read and the
+  rename itself is not seen); only then does the temporary file replace the original by rename. A file with more
   than one hard link is not edited, as before neither is a symlink, a junction or a file under a
   linked `.claude` / `.claude/agents`. Every repair not made is reported with its reason - in the
   hook line (`c3: model settings NOT refreshed in this repository - <file> <old> -> <new>: <why>`)
@@ -474,7 +633,7 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   2-second deadline: past it the line is dropped and the hook ends without waiting (the hook's own
   output handles are no longer inherited by those git children, so a stalled one cannot hold the
   session's hook output open).
-- **`C3_CHILD=1` reaches every child C3 starts (F03-1, F02-5, F04-6).** The claude engine's
+- **`C3_CHILD=1` reaches the reviewer, worker and maintenance children (F03-1, F02-5, F04-6).** The claude engine's
   allow-listed child environment did not carry the mark (a turn got it only because the launcher
   added it after the allow list), its `auth status` / `--version` probes did not get it at all, and
   the detached `c3 maintain` pass only inherited it from a session that already had it. The allow

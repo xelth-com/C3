@@ -2470,28 +2470,43 @@ fn malformed_now(raw: &str, item: &str) -> String {
 }
 
 pub fn resolve_repo_root(cwd: &Path) -> PathBuf {
-    let out = Command::new("git")
-        .arg("-C")
+    let out = repo_root_command(cwd).output();
+    let top = match &out {
+        Ok(o) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
+        _ => None,
+    };
+    repo_root_from_toplevel(cwd, top.as_deref())
+}
+
+/// The `git rev-parse --show-toplevel` of [`resolve_repo_root`], run in `cwd` with git's optional
+/// locks off (`GIT_OPTIONAL_LOCKS=0`, as every other git call of the branch checks: it never
+/// refreshes or locks the index).
+fn repo_root_command(cwd: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
         .arg(cwd)
         .args(["rev-parse", "--show-toplevel"])
-        .output();
-    if let Ok(o) = out {
-        if o.status.success() {
-            let first = String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if !first.is_empty() {
-                if let Ok(p) = std::fs::canonicalize(&first) {
-                    return dunce_simplify(p);
-                }
-                return PathBuf::from(first);
-            }
-        }
+        .env("GIT_OPTIONAL_LOCKS", "0");
+    cmd
+}
+
+/// The repository root from `git rev-parse --show-toplevel`'s stdout (`None`: git failed): its first
+/// line, canonicalised when possible (without the Windows verbatim prefix); `cwd` itself when git
+/// failed or printed nothing. (`setup::branches::hook_line` runs the same query through its own,
+/// deadline-bound runner.)
+pub fn repo_root_from_toplevel(cwd: &Path, toplevel: Option<&str>) -> PathBuf {
+    let first = toplevel
+        .and_then(|s| s.lines().next())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if first.is_empty() {
+        return cwd.to_path_buf();
     }
-    cwd.to_path_buf()
+    match std::fs::canonicalize(&first) {
+        Ok(p) => dunce_simplify(p),
+        Err(_) => PathBuf::from(first),
+    }
 }
 
 // Strip the Windows verbatim prefix that canonicalize adds.
@@ -2619,16 +2634,21 @@ fn concentration_warning(
 // ---- per-reviewer reply outcomes (A1)
 
 /// (A1) One reviewer's reply outcomes over this repository's ledger window
-/// ([`CONCENTRATION_WINDOW_DAYS`]): a usable reply, a failed run whose reply was preserved
-/// (`reply_json` names it - the bridge failed a reply that exists, e.g. a tree post-check), and a
-/// failed run with no reply at all. Lets an operator see that a reviewer's "failures" are bridge
-/// false negatives before dropping it from the roster.
+/// ([`CONCENTRATION_WINDOW_DAYS`]): a usable reply, and (F11-12) a failed run by the KIND of reply it
+/// preserved - its raw reply kept as the `.reply.json` sidecar (the bridge failed a reply that
+/// exists, e.g. a tree post-check), only a salvaged Markdown `.partial.md` (a timeout, a raw run),
+/// or none. Lets an operator see that a reviewer's "failures" are bridge false negatives before
+/// dropping it from the roster.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ReplyOutcomes {
     pub provider: String,
     pub model: String,
     pub usable: usize,
-    pub failed_with_reply: usize,
+    /// Failed, the raw reply kept as the `.reply.json` sidecar.
+    pub failed_sidecar: usize,
+    /// Failed, only a salvaged Markdown partial kept.
+    pub failed_partial: usize,
+    /// Failed, no reply kept.
     pub failed_no_reply: usize,
 }
 
@@ -2638,14 +2658,17 @@ impl ReplyOutcomes {
         c3_core::lineage::format_lineage(&self.provider, &self.model)
     }
 
-    /// The `--json` object.
+    /// The `--json` object. `failed_with_reply` is the failed runs that kept a reply of either kind
+    /// (the sidecar or a partial).
     fn json(&self) -> Value {
         json!({
             "reviewer": self.reviewer(),
             "provider": self.provider,
             "model": self.model,
             "usable": self.usable,
-            "failed_with_reply": self.failed_with_reply,
+            "failed_reply_json": self.failed_sidecar,
+            "failed_partial": self.failed_partial,
+            "failed_with_reply": self.failed_sidecar + self.failed_partial,
             "failed_no_reply": self.failed_no_reply,
         })
     }
@@ -2653,9 +2676,10 @@ impl ReplyOutcomes {
 
 /// (A1) Count each reviewer's reply outcomes from the recorded consultations whose `when` lies in
 /// `[now - CONCENTRATION_WINDOW_DAYS, now]`: a usable `bridge_outcome` ([`c3_core::health::
-/// is_usable_outcome`]) is usable; a `failed...` one is "with a reply" when its `reply_json` names
-/// a preserved reply, else "without a reply"; anything else (no outcome) is not counted. Sorted by
-/// reviewer. Pure: no clock, no I/O.
+/// is_usable_outcome`]) is usable; (F11-12) a `failed...` one is counted by the kind of reply its
+/// entry records it preserved (`reply_kept`: `sidecar` / `partial` / `none`) - an older entry
+/// without that record by its `reply_json` (a sidecar) or `partial_reply` (a partial), else none;
+/// anything else (no outcome) is not counted. Sorted by reviewer. Pure: no clock, no I/O.
 fn reply_outcomes(consults: &[Value], now: DateTime<Utc>) -> Vec<ReplyOutcomes> {
     let cutoff = now - chrono::Duration::days(CONCENTRATION_WINDOW_DAYS);
     let mut by: std::collections::BTreeMap<(String, String), ReplyOutcomes> =
@@ -2686,10 +2710,16 @@ fn reply_outcomes(consults: &[Value], now: DateTime<Utc>) -> Vec<ReplyOutcomes> 
             .get("bridge_outcome")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let has_reply = c
-            .get("reply_json")
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| !s.is_empty());
+        let text = |k: &str| c.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let kept = match c.get("reply_kept").and_then(|v| v.as_str()) {
+            Some(k) => k.to_string(),
+            // an older entry: the same rule the ledger now records it by
+            None => crate::consult::orchestrate::reply_kept_kind(
+                &text("reply_json"),
+                &text("partial_reply"),
+            )
+            .to_string(),
+        };
         let usable = c3_core::health::is_usable_outcome(outcome);
         if !usable && !outcome.starts_with("failed") {
             continue;
@@ -2703,10 +2733,12 @@ fn reply_outcomes(consults: &[Value], now: DateTime<Utc>) -> Vec<ReplyOutcomes> 
             });
         if usable {
             e.usable += 1;
-        } else if has_reply {
-            e.failed_with_reply += 1;
         } else {
-            e.failed_no_reply += 1;
+            match kept.as_str() {
+                "sidecar" => e.failed_sidecar += 1,
+                "partial" => e.failed_partial += 1,
+                _ => e.failed_no_reply += 1,
+            }
         }
     }
     by.into_values().collect()
@@ -2723,14 +2755,15 @@ fn reply_outcome_lines(outcomes: &[ReplyOutcomes], provider: &str) -> Vec<String
         return Vec::new();
     }
     let mut out = vec![format!(
-        "reply outcomes in {CONCENTRATION_WINDOW_DAYS} days (usable / failed with a reply / failed without a reply):"
+        "reply outcomes in {CONCENTRATION_WINDOW_DAYS} days (usable / failed, raw reply kept as .reply.json / failed, only a Markdown partial kept / failed, no reply kept):"
     )];
     for o in shown {
         out.push(format!(
-            "  {}: {} / {} / {}",
+            "  {}: {} / {} / {} / {}",
             o.reviewer(),
             o.usable,
-            o.failed_with_reply,
+            o.failed_sidecar,
+            o.failed_partial,
             o.failed_no_reply
         ));
     }
@@ -3672,6 +3705,31 @@ pub(crate) fn get_muse_harness(launcher: &str) -> String {
 }
 
 #[cfg(test)]
+mod repo_root_tests {
+    use super::*;
+
+    // (R2, F12-2) The root query runs with git's optional locks off, like every other git call of
+    // the branch checks; the root is the first line, else the working directory.
+    #[test]
+    fn the_repo_root_query_takes_no_optional_lock() {
+        let cmd = repo_root_command(Path::new("."));
+        let locks: Vec<_> = cmd
+            .get_envs()
+            .filter(|(k, _)| *k == "GIT_OPTIONAL_LOCKS")
+            .map(|(_, v)| v.map(|v| v.to_string_lossy().to_string()))
+            .collect();
+        assert_eq!(locks, vec![Some("0".to_string())]);
+        let cwd = Path::new("no-such-dir-c3-r2");
+        assert_eq!(repo_root_from_toplevel(cwd, None), cwd);
+        assert_eq!(repo_root_from_toplevel(cwd, Some("\n")), cwd);
+        assert_eq!(
+            repo_root_from_toplevel(cwd, Some("no-such-top-c3-r2\nx\n")),
+            PathBuf::from("no-such-top-c3-r2")
+        );
+    }
+}
+
+#[cfg(test)]
 mod concentration_tests {
     use super::*;
 
@@ -3769,6 +3827,18 @@ mod concentration_tests {
                 "h/06.reply.json",
             ),
             c("gemini", "g", 3, "failed: agy exit 1 - quota", ""),
+            // (F11-12) a failed run that kept only a Markdown partial (no sidecar): recorded ...
+            json!({"reviewer": {"provider": "gemini", "model": "g"}, "when": at(1),
+                   "bridge_outcome": "failed: timeout", "reply_json": "", "reply_kept": "partial",
+                   "partial_reply": "h/08.partial.md"}),
+            // ... or, in an older entry, read from its partial_reply
+            json!({"reviewer": {"provider": "gemini", "model": "g"}, "when": at(1),
+                   "bridge_outcome": "failed: timeout", "reply_json": "",
+                   "partial_reply": "h/09.partial.md"}),
+            // the explicit record wins over a stale sidecar reference
+            json!({"reviewer": {"provider": "gemini", "model": "g"}, "when": at(1),
+                   "bridge_outcome": "failed: x", "reply_json": "h/10.reply.json",
+                   "reply_kept": "none"}),
             // outside the window: not counted
             c("gemini", "g", 30, "failed: x", "h/01.reply.json"),
             c(
@@ -3791,8 +3861,9 @@ mod concentration_tests {
                 provider: "gemini".into(),
                 model: "g".into(),
                 usable: 1,
-                failed_with_reply: 2,
-                failed_no_reply: 1,
+                failed_sidecar: 2,
+                failed_partial: 2,
+                failed_no_reply: 2,
             }
         );
         assert_eq!(got[1].reviewer(), "openai :: a");
@@ -3800,12 +3871,31 @@ mod concentration_tests {
         let lines = reply_outcome_lines(&got, "");
         assert_eq!(
             lines[0],
-            "reply outcomes in 14 days (usable / failed with a reply / failed without a reply):"
+            "reply outcomes in 14 days (usable / failed, raw reply kept as .reply.json / failed, only a Markdown partial kept / failed, no reply kept):"
         );
-        assert_eq!(lines[1], "  gemini :: g: 1 / 2 / 1");
+        assert_eq!(lines[1], "  gemini :: g: 1 / 2 / 2 / 2");
         assert_eq!(reply_outcome_lines(&got, "openai").len(), 2);
         assert!(reply_outcome_lines(&got, "nobody").is_empty());
-        assert_eq!(got[0].json()["failed_with_reply"], 2);
+        let j = got[0].json();
+        assert_eq!(
+            (
+                &j["failed_reply_json"],
+                &j["failed_partial"],
+                &j["failed_with_reply"],
+                &j["failed_no_reply"]
+            ),
+            (&json!(2), &json!(2), &json!(4), &json!(2))
+        );
+        // the ledger's explicit record
+        assert_eq!(
+            crate::consult::orchestrate::reply_kept_kind("h/1.reply.json", ""),
+            "sidecar"
+        );
+        assert_eq!(
+            crate::consult::orchestrate::reply_kept_kind("", "h/1.partial.md"),
+            "partial"
+        );
+        assert_eq!(crate::consult::orchestrate::reply_kept_kind("", ""), "none");
     }
 }
 

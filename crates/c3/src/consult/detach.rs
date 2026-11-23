@@ -84,19 +84,16 @@ struct Sink {
     /// The last refusal / error line the run printed (the summary of a run that never reached its
     /// own summary block — a refusal after the lock, D3).
     last_line: String,
-    /// (A1) The engine stream the run named at its own end ([`note_engine_stream`]): the death
-    /// record falls back to it when no `.consult.pending*` record is left to read.
+    /// (A1, F11-11) The engine stream the run named for its current turn ([`note_engine_stream`]),
+    /// also persisted in the status record (`stream`): the death record falls back to it when no
+    /// `.consult.pending*` record of the run is left to read.
     noted: Option<NotedStream>,
 }
 
-/// (A1) The engine evidence a single run names at its end: the raw event stream of the turn that
-/// ended it (the dead read-insist re-ask's, else the primary's - the summary's `events file:`) and a
-/// hint where its reply or salvage lies.
-#[derive(Debug, Clone, Default, PartialEq)]
-struct NotedStream {
-    events_file: String,
-    partial_hint: String,
-}
+/// (A1, F11-11) The engine evidence a single run names: the raw event stream of its current turn
+/// (at its end, of the turn that ended it) and a hint where its reply or salvage lies, with the
+/// run's consult id and handoff number.
+type NotedStream = super::detached::StreamNote;
 
 fn sink() -> &'static Mutex<Option<Sink>> {
     static SINK: OnceLock<Mutex<Option<Sink>>> = OnceLock::new();
@@ -118,16 +115,17 @@ pub fn note_line(line: &str) {
     }
 }
 
-/// (A1) Remember the engine stream a single run named at its end, so a failed run's death record
-/// points at it even after the commit removed the run's `.consult.pending*` record (a read-insist
-/// re-ask writes none at all). No-op when the sink is inactive.
-pub fn note_engine_stream(events_file: &str, partial_hint: &str) {
+/// (A1, F11-11) Remember the engine stream of a single run's CURRENT turn - called on every turn
+/// transition and once more at the run's end with the turn that ended it - and PERSIST it in the
+/// status record, so a failed run's death record points at it even after the commit removed the
+/// run's `.consult.pending*` record (a read-insist re-ask writes none at all), and a reader of a
+/// run whose bridge was killed finds it on disk. No-op when the sink is inactive.
+pub fn note_engine_stream(note: NotedStream) {
     if let Ok(mut g) = sink().lock() {
         if let Some(s) = g.as_mut() {
-            s.noted = Some(NotedStream {
-                events_file: events_file.to_string(),
-                partial_hint: partial_hint.to_string(),
-            });
+            s.record.stream = Some(note.clone());
+            s.noted = Some(note);
+            let _ = write_status(&s.path, &mut s.record);
         }
     }
 }
@@ -1233,15 +1231,58 @@ fn last_event_time(path: &Path) -> String {
     String::new()
 }
 
-/// Read the engine evidence of a task (`bases` are the directories a recorded `events` path may be
-/// relative to: the task dir first, then the repo and collab roots). (A1) What no
-/// `.consult.pending*` record supplies - the commit removed the run's record, or the turn that
-/// ended the run was a read-insist re-ask, which writes none - comes from the stream the run
-/// `noted` at its end.
+/// Whether two handoff numbers name the same handoff (`"07"` / `"7"`).
+fn same_handoff(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    !a.is_empty()
+        && !b.is_empty()
+        && match (a.parse::<u32>(), b.parse::<u32>()) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => a == b,
+        }
+}
+
+/// (F11-11) The newest `handoffs/<NN>-*.events.jsonl` of the run's handoffs under `task_dir` (a
+/// read-insist re-ask's, a continuation's or the primary's stream - whichever was written last).
+fn newest_run_events(task_dir: &Path, run_handoffs: &[String]) -> String {
+    let dir = task_dir.join("handoffs");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return String::new();
+    };
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some((nn, _)) = name.split_once('-') else {
+            continue;
+        };
+        if !name.to_ascii_lowercase().ends_with(".events.jsonl")
+            || !run_handoffs.iter().any(|h| same_handoff(h, nn))
+        {
+            continue;
+        }
+        let Ok(m) = e.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(t, _)| m > *t) {
+            best = Some((m, format!("handoffs/{name}")));
+        }
+    }
+    best.map(|(_, p)| p).unwrap_or_default()
+}
+
+/// Read the engine evidence of a run (`bases` are the directories a recorded `events` path may be
+/// relative to: the task dir first, then the repo and collab roots). (F11-11) Only evidence of THIS
+/// run counts: a `.consult.pending*` record whose handoff number is one of the run's
+/// (`run_handoffs` - a sibling's or another run's pending record of the task is never read; no
+/// known handoff reads none). (A1) What no such record supplies - the commit removed the run's
+/// record, or the turn that ended the run was a read-insist re-ask, which writes none - comes from
+/// the stream the run `noted` (in memory, or persisted in its status record for a reader); and
+/// failing that, the newest events file of the run's handoffs.
 fn engine_evidence(
     task_dir: &Path,
     bases: &[PathBuf],
     noted: Option<&NotedStream>,
+    run_handoffs: &[String],
 ) -> EngineEvidence {
     use crate::liveness::pending;
     let mut ev = EngineEvidence {
@@ -1260,6 +1301,16 @@ fn engine_evidence(
             Some(r) => r,
             None => continue,
         };
+        let nn = record
+            .get("nn")
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default();
+        if !run_handoffs.iter().any(|h| same_handoff(h, &nn)) {
+            continue; // another run's record
+        }
         any = true;
         if pending::test_pending_active(&record, &p).active {
             alive = true;
@@ -1288,6 +1339,9 @@ fn engine_evidence(
         if ev.partial_hint.is_empty() {
             ev.partial_hint = n.partial_hint.clone();
         }
+    }
+    if ev.events_file.is_empty() {
+        ev.events_file = newest_run_events(task_dir, run_handoffs);
     }
     if !ev.events_file.is_empty() {
         for base in bases {
@@ -1320,7 +1374,8 @@ struct RunDeathInputs<'a> {
     log_path: &'a Path,
     task_dir: &'a Path,
     bases: &'a [PathBuf],
-    /// (A1) the stream the run itself named at its end (`None` for a reader of a dead run).
+    /// (A1, F11-11) the stream the run named for its last turn (in memory for the background; the
+    /// one persisted in its status record for a reader of a dead run).
     noted: Option<&'a NotedStream>,
     recorded_by: &'a str,
     bridge_alive: bool,
@@ -1342,7 +1397,19 @@ fn build_run_death(input: &RunDeathInputs) -> DeathRecord {
         now,
     } = input;
     let log_text = read_log_tail(log_path, 40);
-    let ev = engine_evidence(task_dir, bases, noted);
+    // (F11-11) the run's own handoffs: its members' numbers, and the one its stream note names
+    let mut run_handoffs: Vec<String> = record
+        .members
+        .iter()
+        .map(|m| m.handoff.clone())
+        .filter(|h| !h.trim().is_empty())
+        .collect();
+    if let Some(n) = noted.filter(|n| !n.handoff.trim().is_empty()) {
+        if !run_handoffs.iter().any(|h| same_handoff(h, &n.handoff)) {
+            run_handoffs.push(n.handoff.clone());
+        }
+    }
+    let ev = engine_evidence(task_dir, bases, noted, &run_handoffs);
     build_death_record(DeathInputs {
         recorded_by,
         now,
@@ -1433,12 +1500,14 @@ fn ensure_reader_death_record(
     if !reader_should_record_death(&fresh, bridge_alive) {
         return fresh.death;
     }
+    // (F11-11) the stream the run persisted on its last turn transition
+    let persisted = fresh.stream.clone();
     let death = build_run_death(&RunDeathInputs {
         record: &fresh,
         log_path,
         task_dir,
         bases,
-        noted: None,
+        noted: persisted.as_ref(),
         recorded_by: "reader",
         bridge_alive,
         child_exit: fresh.exit,
@@ -2204,14 +2273,15 @@ mod tests {
         .unwrap();
         let bases = vec![dir.clone()];
         // no pending record and nothing noted: the four fields stay empty (the old behaviour).
-        let bare = engine_evidence(&dir, &bases, None);
+        let bare = engine_evidence(&dir, &bases, None, &[]);
         assert!(bare.events_file.is_empty() && bare.partial_hint.is_empty());
         assert!(bare.engine_alive.is_none());
         let noted = NotedStream {
             events_file: events.to_string_lossy().to_string(),
             partial_hint: "the raw event stream of the turn that ended it is at x".into(),
+            ..Default::default()
         };
-        let ev = engine_evidence(&dir, &bases, Some(&noted));
+        let ev = engine_evidence(&dir, &bases, Some(&noted), &[]);
         assert_eq!(ev.events_file, noted.events_file);
         assert_eq!(ev.last_event, "2026-11-15T10:09:58Z");
         assert!(ev.events_mtime.is_some());
@@ -2241,6 +2311,94 @@ mod tests {
         assert_eq!(d.last_event, "2026-11-15T10:09:58Z");
         assert!(!d.events_mtime.is_empty());
         assert_eq!(d.partial_hint, noted.partial_hint);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (F11-11) A death record reads only its OWN run's evidence: a sibling's pending record of the
+    // task is never taken for it; the run's own record (its handoff number) is; a reader with no
+    // record and no note falls back to the NEWEST events file of the run's handoffs (a later turn's
+    // stream over the primary's), never another run's; the stream a run persisted in its status
+    // record reaches a reader's death record.
+    #[test]
+    fn a_death_record_reads_only_its_own_runs_evidence() {
+        let dir = std::env::temp_dir().join(format!("c3-own-{}", uuid::Uuid::new_v4().simple()));
+        let h = dir.join("handoffs");
+        std::fs::create_dir_all(&h).unwrap();
+        let bases = vec![dir.clone()];
+        // a sibling's live-looking pending record (nn 01) and its stream
+        std::fs::write(
+            dir.join(".consult.pending-01.json"),
+            r#"{"state":"running","nn":"01","events":"handoffs/01-codex-sib.events.jsonl","note":"the sibling's"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            h.join("01-codex-sib.events.jsonl"),
+            "{\"ts\":\"2026-11-15T09:00:00Z\"}\n",
+        )
+        .unwrap();
+        let ev = engine_evidence(&dir, &bases, None, &["03".to_string()]);
+        assert!(ev.events_file.is_empty(), "{:?}", ev.events_file);
+        assert!(
+            ev.engine_alive.is_none(),
+            "the sibling's record is not this run's"
+        );
+        // this run's own streams: the primary, then (later) its continuation
+        std::fs::write(
+            h.join("03-codex-me.events.jsonl"),
+            "{\"ts\":\"2026-11-15T10:00:00Z\"}\n",
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(
+            h.join("03-codex-me.continue.events.jsonl"),
+            "{\"ts\":\"2026-11-15T10:05:00Z\"}\n",
+        )
+        .unwrap();
+        let ev = engine_evidence(&dir, &bases, None, &["3".to_string()]);
+        assert_eq!(ev.events_file, "handoffs/03-codex-me.continue.events.jsonl");
+        assert_eq!(ev.last_event, "2026-11-15T10:05:00Z");
+        // its own pending record (nn 03) names its current stream: taken
+        std::fs::write(
+            dir.join(".consult.pending-03.json"),
+            r#"{"state":"running","nn":"03","events":"handoffs/03-codex-me.events.jsonl"}"#,
+        )
+        .unwrap();
+        let ev = engine_evidence(&dir, &bases, None, &["03".to_string()]);
+        assert_eq!(ev.events_file, "handoffs/03-codex-me.events.jsonl");
+        assert!(ev.engine_alive.is_some(), "its own record is read");
+        // a reader's death record uses the stream the run persisted in its status record
+        let _ = std::fs::remove_file(dir.join(".consult.pending-03.json"));
+        let rec = DetachedRecord {
+            id: "abcdef12-0000-0000-0000-00000000bbbb".into(),
+            state: "running".into(),
+            members: vec![DetachedMember {
+                position: 1,
+                handoff: "03".into(),
+                ..Default::default()
+            }],
+            stream: Some(super::super::detached::StreamNote {
+                consult_id: "c-1".into(),
+                handoff: "03".into(),
+                turn: "timeout continuation".into(),
+                events_file: "handoffs/03-codex-me.continue.events.jsonl".into(),
+                partial_hint: "the continuation's stream".into(),
+            }),
+            ..Default::default()
+        };
+        let paths = detached_paths(&dir, &rec.id);
+        let d = build_run_death(&RunDeathInputs {
+            record: &rec,
+            log_path: &paths.log,
+            task_dir: &dir,
+            bases: &bases,
+            noted: rec.stream.as_ref(),
+            recorded_by: "reader",
+            bridge_alive: false,
+            child_exit: None,
+            now: Utc::now(),
+        });
+        assert_eq!(d.events_file, "handoffs/03-codex-me.continue.events.jsonl");
+        assert_eq!(d.partial_hint, "the continuation's stream");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

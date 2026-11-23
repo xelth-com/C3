@@ -1,0 +1,3274 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 852017f..a1a2131 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -88,6 +88,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+ 
+ ### Changed
+ 
++- **`C3_MAINTAIN_MODELS=off` holds for `c3 maintain --models` too (F02-18).** An explicit `--models`
++  used to turn `off` into `announce` and fetch the engine, endpoint and public lists anyway. With
++  `off` it now fetches nothing, writes nothing and says so; set `announce` or `swap` to run it.
++- **An unresolved pending update no longer freezes its engine.** When the installed version of an
++  interrupted update still fails its smoke and the rollback fails or does not exist, a pass skipped
++  the engine's update check for as long as the record stayed. It now asks the vendor: a release
++  NEWER than the failing version is tried with the same cool-down (unless `--force`), in-use check,
++  write-before-install record and post-update smoke, keeping the record's original `previous` as the
++  rollback target; resolved when it smokes clean, otherwise the record stays with the new target.
++  The no-rollback-path branch (agy) has an integration test now.
+ - **OpenAI's GPT-6.2 models are known to telemetry.** The `openai` class's closed model list now
+   also holds `gpt-6.1-sol`, `gpt-6.2-astra` and `gpt-6.2-sol` (released 2026-11, listed for
+   ChatGPT accounts by Codex). Before this a judge record naming them was sent as `other`. The
+@@ -178,10 +188,54 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   still serves it would have passed the smoke and been downgraded. A public candidate now needs
+   date evidence: created after the seated id when the catalog lists both, else created within the
+   last 180 days; an undated catalog entry or a page id is announced only, never smoked. The
+-  entry's own model list keeps the old rule. The catalog dates are kept in the maintain state (an
+-  older state loads without them); a rejected id is named with its reason in the full report only;
+-  "new in the family" skips an id older than the seated one by date and names each id once per
+-  provider.
++  entry's own model list needs no date (but see the date gate below). The catalog dates are kept in
++  the maintain state (an older state loads without them); a rejected id is named with its reason in
++  the full report only; "new in the family" skips an id older than the seated one by date and names
++  each id once per provider.
++- **`c3 maintain`: the successor date gate lets negative evidence win (F02-14, F04-2, F04-3).** A
++  catalog id dated more than a day in the future is refused; if ANY public source dates a candidate
++  not after the seated id it lists too, the candidate is refused whatever another source says (a
++  second catalog's recent, unanchored copy no longer outvotes it); such a pair is recorded in the
++  maintain state (`models.older`, at most 500) and stays refused in every later pass, so a catalog
++  that re-stamps an old model later cannot bring it back. An id from the entry's own list (`grok
++  models`, `agy models`, an endpoint's list) still needs no date, but goes through the same refusals
++  when a public source dates both ids - `grok-4.20` beside `grok-4.7` in `grok models` is no longer
++  smoked when the catalog dates it older. Only ids the version rule takes for a successor are gated.
++- **`c3 maintain`: public catalog and page fetches have their own, tighter policy (F02-12, F02-13,
++  F04-8).** They shared the kimi installer's redirect rule, so a catalog on `code.kimi.ai` could be
++  sent on to `cdn.kimi.ai`, a redirect could change the port or add userinfo, every hop restarted the
++  15 s clock, and the 4 MiB cap was checked only after up to 8 MiB had been read. A public GET now
++  follows at most 3 redirects, each to the start's own host and port with no userinfo (re-checked at
++  every hop; the start URL too), under ONE absolute 15 s deadline that also bounds the body read,
++  and the reader stops at 4 MiB + 1 bytes. The installer keeps its `code.kimi.ai` -> `cdn.kimi.ai`
++  pair (now also port-pinned and userinfo-free); a key-carrying endpoint request still follows no
++  redirect. The User-Agent stays `c3/<version>`.
++- **`c3 maintain`: an endpoint's model list is keyed by the endpoint, its key variable and its plan
++  (F02-15).** The list was recorded as `endpoint:<host>` and the first response won, so two entries
++  on one host with another path or another key shared it, and a model private to one could be offered
++  to - and smoked on - the other without any date check. The source is now `endpoint:<scheme>://
++  <host>:<port><path>|<key variable>|<plan>` and its ids are candidates only for entries with that
++  key. The first pass after the change reads the old host-only record, so the list is not announced
++  again as new.
++- **`c3 maintain`: the smoke and the swap bind to the exact roster entry (F02-16).** The swap smoke
++  ran `c3 consult --provider <label> --model <candidate>`, which resolved the label again: with the
++  candidate model in no entry, the label's FIRST entry was used - possibly an on-request or protected
++  one, with another endpoint, auth, plan and quota policy. Both smoke turns now run against a
++  one-entry roster (`CODEX_CONSULT_ROSTER`, written beside the scratch repository and removed with
++  it) holding exactly the entry at the candidate's position, the operator's own JSON for it with only
++  the model overridden; the position must still be that provider and old model, and a protected,
++  on-request or inactive entry is refused even there. The engine-update smokes bind to their roster
++  seat the same way; a codex-config custom provider's smoke runs with no roster; an explicit
++  `C3_MAINTAIN_SMOKE_<ENGINE>` is still resolved by its label. A failed turn is now reported with the
++  consult's `codex-consult:` outcome line rather than its first stderr line. An `ext.c3.reviewers`
++  http entry is announced only. Tested end to end with two same-label stub endpoints, the on-request
++  one first: both turns reach the candidate's endpoint, the other none.
++- **`c3 maintain`: the roster writer edits the parsed entry and verifies the result (F02-17).** It
++  searched the text for `"model": "<old>"` and accepted a sole match anywhere, so with a JSON-escaped
++  model in the entry it could edit an `ext` object's plain `"model"` instead while reporting a seat.
++  It now locates the string value of `reviewers[<position>].model` by parsing (a repeated key on the
++  path is refused), checks it still decodes to the old model, replaces the whole literal, and
++  verifies that the re-parsed roster equals the old one except that one field.
+ 
+ - **The `kimi` engine's throwaway worktree removal could follow a link.** The reviewer can run
+   commands in that worktree; a junction or symlink it left there (e.g. a `node_modules` junction into
+diff --git a/README.md b/README.md
+index 03b00ac..35fa57d 100644
+--- a/README.md
++++ b/README.md
+@@ -565,22 +565,34 @@ its one-line report.
+   The smoke is two real turns through `c3 consult` in a throwaway repository; the second must
+   return a random token from a file. codex updates through npm, grok through `grok update`, kimi
+   through the vendor installer; agy is report-only; muse and claude update themselves and are only
+-  recorded. An engine with a live run or process is skipped and retried the next day.
++  recorded. An engine with a live run or process is skipped and retried the next day. A smoke of a
++  roster seat runs through exactly that entry (a one-entry roster), never whatever its provider
++  label would resolve to. An interrupted update whose new version keeps failing its smoke, with no
++  working rollback, is not left frozen: a newer vendor release is tried, the original previous
++  version kept as the rollback target.
+ - **Models.** The ids come from the engines' own lists (`grok models`, `agy models`), from each
+-  Anthropic-compatible endpoint's `/v1/models` (sent with that endpoint's key), and from public
+-  catalogs. A seated id is replaced only by a successor with the same prefix and suffix and a higher
+-  version — a higher major included (`qwen3.8-max` -> `qwen4-max`, `glm-5.3` -> `glm-6`; an id
+-  without a minor counts as `.0`) — and only after the smoke passed on that entry's own plan; the
+-  roster is backed up first (`.bak-maintain-<date>`) and only that entry's `model` is edited. A
+-  protected or on-request roster entry is never smoked or edited: its successor is only announced.
++  Anthropic-compatible endpoint's `/v1/models` (sent with that endpoint's key; a list is shared
++  only by entries with the same endpoint, key variable and plan), and from public catalogs. A
++  seated id is replaced only by a successor with the same prefix and suffix and a higher version —
++  a higher major included (`qwen3.8-max` -> `qwen4-max`, `glm-5.3` -> `glm-6`; an id without a
++  minor counts as `.0`) — and only after the smoke passed on that entry's own plan; the roster is
++  backed up first (`.bak-maintain-<date>`) and only that entry's `model` is edited (located by
++  parsing, the result checked to differ in nothing else). A protected or on-request roster entry is
++  never smoked or edited: its successor is only announced.
+ - **Public catalogs.** Once a week (inside the pass) or on request (`--models`), C3 reads
+-  `https://openrouter.ai/api/v1/models` with a plain GET that carries **no key** (https only,
+-  redirects only within the same host, a 15 s timeout, at most 4 MB and 5000 ids). Ids are
++  `https://openrouter.ai/api/v1/models` with a plain GET that carries **no key** (https only; at
++  most 3 redirects, each to the same host and port and without credentials; one 15 s deadline over
++  all of it; the read stopped at 4 MB; at most 5000 ids). Ids are
+   `<vendor>/<model>`; a `:variant` (`:free`, `:batch`) is skipped and every id must have the strict
+   model-id shape. A catalog id is only a candidate: for any active, unprotected entry — also one
+   whose endpoint gives no list, like Alibaba, Xiaomi MiMo or BytePlus — the model part
+   (`qwen4-max`) is smoked on the entry's own plan; a failing one is reported ("seen in the catalog,
+-  not served by this plan") and tried again on a later pass, one smoke per entry and pass. The pass
++  not served by this plan") and tried again on a later pass, one smoke per entry and pass. Dates
++  decide first: a catalog id needs a date after the seated id's (or, when the catalog does not list
++  the seated id, within 180 days); one dated in the future, or dated not after the seated id by ANY
++  public source, is refused - and once a source dated it older, it stays refused in later passes.
++  An id of the entry's own list needs no date, but is refused the same way when a public source
++  dates both ids. The pass
+   also announces "new in the family": a catalog id not seen before with the prefix of a seated id,
+   a version not lower and another suffix (seated `gemini-3.8-flash-high`, catalog
+   `gemini-4-hydrogen`) — at most 5 per entry, and on a catalog's first collection only ids created
+@@ -598,8 +610,8 @@ its one-line report.
+   `<codex home>/c3/config.json`, turns the automatic pass off. `C3_MAINTAIN_DAYS` (7) sets the
+   interval; `C3_MAINTAIN_MIN_AGE_DAYS` (3) holds a version released more recently than that when
+   its date is known; `C3_MAINTAIN_SKIP=kimi,grok` names engines never touched;
+-  `C3_MAINTAIN_MODELS` is `swap` (default), `announce` or `off` (`off` fetches nothing; an
+-  explicit `--models` then only announces); `C3_MODEL_WEB=off`, or `"model_web": false`, turns
++  `C3_MAINTAIN_MODELS` is `swap` (default), `announce` or `off` (`off` fetches nothing, an
++  explicit `--models` included - it says so and stops); `C3_MODEL_WEB=off`, or `"model_web": false`, turns
+   the public catalogs and pages off;
+   `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model` names the smoke reviewer of an engine. State lives
+   in `<codex home>/c3/maintain/`.
+diff --git a/crates/c3-cli/tests/fixtures/fake-claude.ps1 b/crates/c3-cli/tests/fixtures/fake-claude.ps1
+index 53b58ba..a0292d6 100644
+--- a/crates/c3-cli/tests/fixtures/fake-claude.ps1
++++ b/crates/c3-cli/tests/fixtures/fake-claude.ps1
+@@ -27,6 +27,7 @@
+ #                                 --json-schema) and its text as result.result; other text ->
+ #                                 result.result only
+ #   FAKE_CLAUDE_RESUME_REPLY=<file>  on a --resume turn (a secondary turn): this reply instead
++#   FAKE_CLAUDE_REPLY_FROM_CWD=<rel>  the reply is that file of the working directory when it exists
+ #   FAKE_CLAUDE_PROSE=1           the reply text only, never structured_output (first turn)
+ #   FAKE_CLAUDE_IS_ERROR=<text>   result is_error true with that text; exit 1 unless EXIT is set
+ #   FAKE_CLAUDE_SUBTYPE=<s>       result.subtype (default success)
+@@ -239,6 +240,9 @@ if ($rl) {
+ 
+ # the reply
+ $replyFile = $env:FAKE_CLAUDE_REPLY
++# FAKE_CLAUDE_REPLY_FROM_CWD=<relative path>: when that file exists in the working directory, its
++# content is the reply (the `c3 maintain` smoke's token.txt - proof the smoke really ran here)
++if ($env:FAKE_CLAUDE_REPLY_FROM_CWD) { $cwdReply = Join-Path (Get-Location).Path ([string]$env:FAKE_CLAUDE_REPLY_FROM_CWD); if (Test-Path -LiteralPath $cwdReply) { $replyFile = $cwdReply } }
+ $fromResume = $false
+ if ($resume -and $env:FAKE_CLAUDE_RESUME_REPLY) { $replyFile = $env:FAKE_CLAUDE_RESUME_REPLY; $fromResume = $true }
+ $den = [string]$env:FAKE_CLAUDE_DENIALS
+diff --git a/crates/c3-cli/tests/fixtures/fake-mnt.ps1 b/crates/c3-cli/tests/fixtures/fake-mnt.ps1
+index e753279..794abb6 100644
+--- a/crates/c3-cli/tests/fixtures/fake-mnt.ps1
++++ b/crates/c3-cli/tests/fixtures/fake-mnt.ps1
+@@ -6,6 +6,7 @@
+ #          write FAKE_GROK_LATEST to FAKE_GROK_VERFILE; update --version <v> -> write <v>;
+ #          models -> a short list.
+ #   codex: --version -> "codex-cli <cur>".
++#   agy:   --version -> "agy <FAKE_AGY_VER>" (the wrapper is written by the test from the grok one).
+ #   npm:   view @openai/codex version -> FAKE_NPM_LATEST; view ... time --json -> {latest:date};
+ #          ls -g @openai/codex -> "@openai/codex@1.0.0"; install -g @openai/codex@<v> -> write <v>.
+ $ErrorActionPreference = 'Stop'
+@@ -70,6 +71,11 @@ switch ($role) {
+     if ($argv -contains '--version') { Out-Line "codex-cli $cur"; exit 0 }
+     exit 0
+   }
++  'agy' {
++    # agy has no update check and no version pin (report-only, no rollback path)
++    if ($argv -contains '--version') { Out-Line ("agy " + [string]$env:FAKE_AGY_VER); exit 0 }
++    exit 0
++  }
+   'npm' {
+     if ($argv.Count -ge 1 -and $argv[0] -eq 'view') {
+       if ($argv -contains 'time') {
+diff --git a/crates/c3-cli/tests/maintain.rs b/crates/c3-cli/tests/maintain.rs
+index 12fc935..f4bb8dc 100644
+--- a/crates/c3-cli/tests/maintain.rs
++++ b/crates/c3-cli/tests/maintain.rs
+@@ -1043,6 +1043,301 @@ fn models_dry_run_edits_nothing() {
+     assert!(e.mnt_log().is_empty(), "no engine CLI was run");
+ }
+ 
++/// (F02-18) `C3_MAINTAIN_MODELS=off` is authoritative: an explicit `--models` (dry run or not)
++/// fetches nothing - no public source, no endpoint list, no engine list - writes no state, edits
++/// nothing, and says why.
++#[test]
++fn models_off_is_authoritative_for_an_explicit_models_run() {
++    let e = setup("web-models-off");
++    let m = models_case(
++        &e,
++        &endpoint_roster(false),
++        "alibaba-claude::qwen4-max=pass",
++    );
++    for args in [
++        vec!["maintain", "--models"],
++        vec!["maintain", "--models", "--dry-run"],
++    ] {
++        let mut env = m.env();
++        env.retain(|(k, _)| *k != "C3_MAINTAIN_MODELS");
++        env.push(("C3_MAINTAIN_MODELS", "off"));
++        let o = e.run(&args, &env);
++        let t = text(&o);
++        assert_eq!(o.status.code(), Some(0), "{t}");
++        assert!(
++            t.contains("the model step is off (C3_MAINTAIN_MODELS=off) - --models fetched nothing"),
++            "{t}"
++        );
++        assert!(!m.http_log.exists(), "no public source was requested: {t}");
++        assert!(e.mnt_log().is_empty(), "no engine list was read: {t}");
++        assert!(!t.contains("qwen4-max"), "{t}");
++    }
++    assert!(!e.state_path().exists(), "nothing was written");
++    assert_eq!(m.roster_text(), endpoint_roster(false));
++}
++
++/// (F04-3) A candidate a catalog once dated older than the seated id is recorded in the state and
++/// stays rejected in a later pass, even when the catalog then re-dates it after the seated id.
++#[test]
++fn a_candidate_dated_older_once_stays_rejected_in_a_later_pass() {
++    let e = setup("web-older-recorded");
++    let now = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .unwrap()
++        .as_secs() as i64;
++    let older = format!(
++        r#"{{"data":[{{"id":"qwen/qwen3.8-max","created":{}}},{{"id":"qwen/qwen4-max","created":{}}}]}}"#,
++        now - 10 * 86_400,
++        now - 300 * 86_400
++    );
++    let m = models_case_with(
++        &e,
++        &endpoint_roster(false),
++        "alibaba-claude::qwen4-max=pass",
++        &older,
++    );
++    let t = text(&e.run(&["maintain", "--models"], &m.env()));
++    assert!(
++        t.contains("not a candidate (older than the seated model by the catalog's date)"),
++        "{t}"
++    );
++    let state = std::fs::read_to_string(e.state_path()).unwrap();
++    assert!(state.contains("\"older\""), "{state}");
++    assert!(state.contains("\"candidate\": \"qwen4-max\""), "{state}");
++    // the catalog now claims qwen4-max is newer than the seated model
++    let restamped = format!(
++        r#"{{"data":[{{"id":"qwen/qwen3.8-max","created":{}}},{{"id":"qwen/qwen4-max","created":{}}}]}}"#,
++        now - 10 * 86_400,
++        now - 86_400
++    );
++    std::fs::write(e.work.join("catalog.json"), restamped).unwrap();
++    let t = text(&e.run(&["maintain", "--models"], &m.env()));
++    assert!(
++        t.contains("qwen3.8-max -> qwen4-max not a candidate (recorded as older than the seated model in an earlier pass)"),
++        "{t}"
++    );
++    assert!(!t.contains("smoke passed"), "{t}");
++    assert_eq!(
++        m.roster_text(),
++        endpoint_roster(false),
++        "the roster is untouched"
++    );
++}
++
++const FAKE_CLAUDE_PS1: &str = include_str!("fixtures/fake-claude.ps1");
++const FAKE_CLAUDE_CMD: &str = include_str!("fixtures/fake-claude.cmd");
++
++/// (F02-16, RC2) The swap smoke runs through the EXACT roster entry being edited, not whatever its
++/// provider label resolves to. Two entries share the label `alibaba` on two stub endpoints; the
++/// first is on-request (and would be the label's first match). The real two-turn smoke (no script)
++/// runs through the fake claude, which records the endpoint each turn reached: both turns reach the
++/// candidate entry's endpoint, the on-request entry's endpoint receives zero calls, and the swap
++/// edits that same position only.
++#[test]
++fn a_swap_smoke_runs_through_the_exact_roster_entry_not_its_label() {
++    let e = setup("bind-entry");
++    std::fs::write(e.bin.join("fake-claude.ps1"), FAKE_CLAUDE_PS1).unwrap();
++    let reply = e.work.join("reply.txt");
++    std::fs::write(&reply, "OK").unwrap();
++    let argv_log = e.work.join("claude-argv.jsonl");
++    let claude_cfg = e.work.join("claude-config");
++    std::fs::create_dir_all(&claude_cfg).unwrap();
++    // The smoke's `c3 consult` children never see this process's CODEX_CONSULT_TEST_* variables
++    // (scrubbed like host markers), so the fake's drivers cannot travel through the test hook
++    // CODEX_CONSULT_TEST_CHILD_ENV_PASS: the wrapper sets them itself.
++    let claude = e.bin.join("fake-claude.cmd");
++    let wrapper = FAKE_CLAUDE_CMD.replace(
++        "set \"FAKE_CLAUDE_ARGS=%*\"",
++        &format!(
++            "set \"FAKE_CLAUDE_ARGS=%*\"\nset \"FAKE_CLAUDE_ARGV_LOG={}\"\nset \"FAKE_CLAUDE_REPLY={}\"\nset \"FAKE_CLAUDE_REPLY_FROM_CWD=token.txt\"",
++            argv_log.display(),
++            reply.display()
++        ),
++    );
++    assert!(wrapper.contains("FAKE_CLAUDE_REPLY_FROM_CWD"), "{wrapper}");
++    std::fs::write(&claude, crlf(&wrapper)).unwrap();
++    // Two stub endpoints on a closed local port: the endpoint list fetch (the keys are set, so it
++    // is attempted) is refused at once and never leaves the machine.
++    let roster_json = r#"{"roster_version":1,"reviewers":[{"provider":"alibaba","engine":"claude","model":"qwen3.7-max","auth":"endpoint","endpoint":{"base_url":"https://127.0.0.1:9/onrequest/anthropic","env_key":"C3T_KEY_ONREQ"},"ext":{"on_request":true}},{"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://127.0.0.1:9/seat/anthropic","env_key":"C3T_KEY_SEAT"}}]}"#;
++    // no C3_MAINTAIN_TEST_SMOKE: the real two-turn smoke runs
++    let m = models_case(&e, roster_json, "");
++    let s = |p: &Path| p.to_string_lossy().into_owned();
++    let (claude_s, cfg_s) = (s(&claude), s(&claude_cfg));
++    let mut env = m.env();
++    env.extend([
++        ("CODEX_CONSULT_CLAUDE_EXE", claude_s.as_str()),
++        ("CLAUDE_CONFIG_DIR", cfg_s.as_str()),
++        ("C3T_KEY_ONREQ", "tok-onreq"),
++        ("C3T_KEY_SEAT", "tok-seat"),
++    ]);
++    let o = e.run(&["maintain", "--models"], &env);
++    let t = text(&o);
++    assert_eq!(o.status.code(), Some(0), "{t}");
++    assert!(
++        t.contains("model alibaba :: qwen3.7-max -> qwen4-max not seated (on-request entry)"),
++        "{t}"
++    );
++    // every claude turn the smoke started, by the endpoint it reached
++    let turns: Vec<serde_json::Value> = std::fs::read_to_string(&argv_log)
++        .unwrap_or_default()
++        .lines()
++        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
++        .filter(|v| v["kind"] == "turn")
++        .collect();
++    let urls: Vec<String> = turns
++        .iter()
++        .map(|v| v["base_url"].as_str().unwrap_or("").to_string())
++        .collect();
++    assert_eq!(
++        urls,
++        vec![
++            "https://127.0.0.1:9/seat/anthropic".to_string(),
++            "https://127.0.0.1:9/seat/anthropic".to_string()
++        ],
++        "both smoke turns reached the candidate entry's endpoint: {t}"
++    );
++    assert!(
++        !urls.iter().any(|u| u.contains("onrequest")),
++        "the on-request entry's endpoint received no call"
++    );
++    assert!(
++        turns.iter().all(|v| v["argv"]
++            .as_array()
++            .is_some_and(|a| a.iter().any(|x| x == "qwen4-max"))),
++        "only the model was overridden: {turns:?}"
++    );
++    // the smoke passed (the turn read token.txt) and the swap edited that position only
++    assert!(
++        t.contains("model alibaba :: qwen3.8-max -> qwen4-max, smoke passed"),
++        "{t}"
++    );
++    assert_eq!(
++        m.roster_text(),
++        roster_json.replace("\"qwen3.8-max\"", "\"qwen4-max\""),
++        "only reviewers[2].model changed"
++    );
++    // the smoke's one-entry roster is gone with its scratch repo
++    let leftovers: Vec<String> = std::fs::read_dir(std::env::temp_dir())
++        .unwrap()
++        .flatten()
++        .map(|d| d.file_name().to_string_lossy().into_owned())
++        .filter(|n| n.starts_with("c3-maintain-smoke-claude-") && n.ends_with(".roster.json"))
++        .collect();
++    assert!(leftovers.is_empty(), "{leftovers:?}");
++}
++
++// ------------------------------------------------------------------ an unresolved pending update and a newer release
++
++/// (TECH_DEBT 2026-11-16) The no-rollback-path branch: agy has no rollback (and no check), so a
++/// pending record whose installed version fails its smoke stays unresolved, pass after pass, and
++/// nothing is installed.
++#[test]
++fn a_pending_update_without_a_rollback_path_stays_unresolved() {
++    let e = setup("pend-agy");
++    let agy = e.bin.join("fake-mnt-agy.cmd");
++    std::fs::write(&agy, crlf(&FAKE_GROK.replace("=grok", "=agy"))).unwrap();
++    let agy_s = agy.to_string_lossy().into_owned();
++    e.write_pending(
++        r#"[{"engine":"agy","previous":"1.1.0","target":"1.2.0","when":"2026-11-15T00:00:00Z"}]"#,
++    );
++    let env: Vec<(&str, &str)> = vec![
++        ("CODEX_CONSULT_AGY_EXE", agy_s.as_str()),
++        ("FAKE_AGY_VER", "1.2.0"),
++        ("FAKE_MNT_LOG", e.mnt_log_s()),
++        ("C3_MAINTAIN_SMOKE_AGY", "gemini::gemini-3.8-flash-high"),
++        (
++            "C3_MAINTAIN_TEST_SMOKE",
++            "gemini::gemini-3.8-flash-high=fail",
++        ),
++    ];
++    for _ in 0..2 {
++        let o = e.run(&["maintain", "--run", "--engine", "agy"], &env);
++        let t = text(&o);
++        assert_eq!(o.status.code(), Some(0), "{t}");
++        assert!(
++            t.contains("pending update unresolved: smoke failed, no rollback path"),
++            "{t}"
++        );
++        assert!(!t.contains("recovered"), "{t}");
++        assert!(!t.contains("trying the newer"), "agy has no check: {t}");
++        let pending = e.pending_json();
++        assert!(
++            pending.contains("\"engine\":\"agy\"") && pending.contains("\"previous\":\"1.1.0\""),
++            "the record stays as it was: {pending}"
++        );
++    }
++    assert!(
++        !e.mnt_log().contains("agy :: update"),
++        "nothing was installed: {}",
++        e.mnt_log()
++    );
++}
++
++/// (TECH_DEBT 2026-11-16) An unresolved pending update (the installed 1.0.80 fails its smoke and the
++/// rollback to 1.0.77 does not restore it) no longer freezes the engine: the vendor's newer 1.0.82
++/// is tried, smokes clean, and the record is cleared.
++#[test]
++fn an_unresolved_pending_update_tries_a_newer_release() {
++    let e = setup("pend-newer-ok");
++    e.write_pending(
++        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
++    );
++    let mut env = e.grok_env("1.0.80", "1.0.82", "grok::grok-4.7=fail-then-pass");
++    env.push(("FAKE_GROK_ROLLBACK_NOOP", "1"));
++    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
++    let t = text(&o);
++    assert_eq!(o.status.code(), Some(0), "{t}");
++    assert!(t.contains("rollback failed, still 1.0.80"), "{t}");
++    assert!(
++        t.contains(
++            "1.0.80 still fails its smoke; trying the newer 1.0.82 (rollback target 1.0.77)"
++        ),
++        "{t}"
++    );
++    assert!(t.contains("1.0.77 -> 1.0.82 ok"), "{t}");
++    assert_eq!(verfile(&e.grok_verfile), "1.0.82");
++    assert_eq!(
++        e.pending_json().trim(),
++        "[]",
++        "resolved: {}",
++        e.pending_json()
++    );
++}
++
++/// (TECH_DEBT 2026-11-16) The newer release fails its smoke too and its rollback does not restore:
++/// the record stays unresolved with the ORIGINAL previous (1.0.77) as the rollback target and the
++/// newer release as the target.
++#[test]
++fn a_newer_release_that_fails_too_keeps_the_original_previous() {
++    let e = setup("pend-newer-fail");
++    e.write_pending(
++        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
++    );
++    let mut env = e.grok_env("1.0.80", "1.0.82", "grok::grok-4.7=fail");
++    env.push(("FAKE_GROK_ROLLBACK_NOOP", "1"));
++    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
++    let t = text(&o);
++    assert_eq!(o.status.code(), Some(0), "{t}");
++    assert!(
++        t.contains("trying the newer 1.0.82 (rollback target 1.0.77)"),
++        "{t}"
++    );
++    assert!(
++        t.contains("smoke failed, rollback failed, still 1.0.82"),
++        "{t}"
++    );
++    let pending = e.pending_json();
++    assert!(
++        pending.contains("\"previous\":\"1.0.77\"") && pending.contains("\"target\":\"1.0.82\""),
++        "{pending}"
++    );
++    assert!(
++        e.mnt_log().contains("update --version 1.0.77"),
++        "{}",
++        e.mnt_log()
++    );
++}
++
+ // ------------------------------------------------------------------ no spawn under test mode
+ 
+ #[test]
+diff --git a/crates/c3/src/maintain/engine.rs b/crates/c3/src/maintain/engine.rs
+index e8fa8f2..05bc658 100644
+--- a/crates/c3/src/maintain/engine.rs
++++ b/crates/c3/src/maintain/engine.rs
+@@ -22,7 +22,7 @@ use std::path::Path;
+ 
+ use chrono::{DateTime, Utc};
+ 
+-use super::env::{Env, RunResult};
++use super::env::{Env, GetPolicy, Redirects, RunResult, HTTP_BODY_CAP};
+ use super::version::{parse_cli_version, CliVersion};
+ 
+ /// What a maintenance pass may do with an engine.
+@@ -209,8 +209,11 @@ fn check_kimi(env: &dyn Env) -> Latest {
+     match env.http_get(
+         KIMI_LATEST_URL,
+         &[],
+-        std::time::Duration::from_secs(5),
+-        true,
++        GetPolicy {
++            timeout: std::time::Duration::from_secs(5),
++            redirects: Redirects::Installer,
++            cap: HTTP_BODY_CAP,
++        },
+     ) {
+         // The marker answers 200 with the bare version and no text content-type, so the body is
+         // read as bytes (via http_get) and trimmed before validating it is a version.
+@@ -303,7 +306,15 @@ fn run_kimi_installer(
+         (KIMI_INSTALL_SH, "kimi-install.sh", "sh")
+     };
+     let (status, body) = env
+-        .http_get(url, &[], std::time::Duration::from_secs(30), true)
++        .http_get(
++            url,
++            &[],
++            GetPolicy {
++                timeout: std::time::Duration::from_secs(30),
++                redirects: Redirects::Installer,
++                cap: HTTP_BODY_CAP,
++            },
++        )
+         .map_err(|e| format!("could not download the kimi installer ({e})"))?;
+     if !(200..300).contains(&status) {
+         return Err(format!("the kimi installer download returned {status}"));
+@@ -340,7 +351,6 @@ fn run_kimi_installer(
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use std::time::Duration;
+ 
+     /// A fake Env whose HTTP GET fails (as a body over the cap, or any download error, makes it) and
+     /// which records every command it was asked to run.
+@@ -367,8 +377,7 @@ mod tests {
+             &self,
+             _url: &str,
+             _h: &[(&str, &str)],
+-            _t: Duration,
+-            _f: bool,
++            _p: GetPolicy,
+         ) -> Result<(u16, String), String> {
+             Err(
+                 "the response body exceeded the cap (a truncated download is never used)"
+diff --git a/crates/c3/src/maintain/env.rs b/crates/c3/src/maintain/env.rs
+index 959898e..c311eff 100644
+--- a/crates/c3/src/maintain/env.rs
++++ b/crates/c3/src/maintain/env.rs
+@@ -76,17 +76,16 @@ pub trait Env {
+         self.run(program, args, env, cwd)
+     }
+ 
+-    /// A plain HTTPS GET with the given request `headers`, returning `(status, body)` or an error.
+-    /// Used for the model-list endpoints and the kimi `latest` marker; failures are ignored by the
+-    /// caller. `follow_redirects` is set only for KEYLESS public GETs (the kimi marker/installer,
+-    /// which a CDN redirects by region) - NEVER for a request that carries an API key, so a key is
+-    /// never forwarded to a redirect target.
++    /// A plain HTTPS GET with the given request `headers` under `policy` (redirects, one absolute
++    /// deadline, the body cap), returning `(status, body)` or an error. Used for the model-list
++    /// endpoints, the public catalogs and pages, and the kimi `latest` marker and installer;
++    /// failures are ignored by the caller. A request that carries an API key uses
++    /// [`Redirects::Never`], so a key is never forwarded to a redirect target.
+     fn http_get(
+         &self,
+         url: &str,
+         headers: &[(&str, &str)],
+-        timeout: Duration,
+-        follow_redirects: bool,
++        policy: GetPolicy,
+     ) -> Result<(u16, String), String>;
+ 
+     /// Whether this is the production [`SystemEnv`] (the test-mode routing of the public model
+@@ -97,8 +96,8 @@ pub trait Env {
+ }
+ 
+ /// The production environment: a real `std::process::Command` (host markers scrubbed from the
+-/// child, exactly as the engine launchers scrub them) and a real ureq GET (`https` only, no
+-/// redirects).
++/// child, exactly as the engine launchers scrub them) and a real ureq GET (`https` only, redirects
++/// followed by hand per [`GetPolicy`]).
+ pub struct SystemEnv;
+ 
+ impl Env for SystemEnv {
+@@ -156,61 +155,142 @@ impl Env for SystemEnv {
+         &self,
+         url: &str,
+         headers: &[(&str, &str)],
+-        timeout: Duration,
+-        follow_redirects: bool,
++        policy: GetPolicy,
+     ) -> Result<(u16, String), String> {
+-        if !url.starts_with("https://") {
+-            return Err("only https is allowed".to_string());
+-        }
+-        // Redirects are followed by hand, never by ureq: every hop must stay on https and on the
+-        // site the request started from (`code.kimi.ai` -> `cdn.kimi.ai`), so a redirect can
+-        // neither downgrade the transport nor hand a download - the kimi installer script is run
+-        // after it is fetched - to another site.
++        // Redirects are followed by hand, never by ureq ([`fetch`] re-validates every hop against
++        // the policy), and the deadline is absolute: each hop gets only what is left of it, and
++        // ureq applies a request's timeout to its body read as well.
+         let agent = ureq::AgentBuilder::new()
+-            .timeout_connect(timeout)
+-            .timeout(timeout)
++            .timeout_connect(policy.timeout)
+             .redirects(0)
+             .build();
+         let ua = format!("c3/{}", env!("CARGO_PKG_VERSION"));
+-        let mut current = url.to_string();
+-        let mut hops = 0;
+-        loop {
+-            let mut req = agent.get(&current).set("User-Agent", &ua);
++        fetch(url, policy, |current, remaining| {
++            let mut req = agent.get(current).timeout(remaining).set("User-Agent", &ua);
+             for (k, v) in headers {
+                 req = req.set(k, v);
+             }
+             match req.call() {
+                 Ok(resp) => {
+                     let status = resp.status();
+-                    if follow_redirects && matches!(status, 301 | 302 | 303 | 307 | 308) {
+-                        hops += 1;
+-                        if hops > MAX_REDIRECTS {
+-                            return Err("too many redirects".to_string());
+-                        }
+-                        current = redirect_target(&current, resp.header("location").unwrap_or(""))?;
+-                        continue;
++                    if policy.redirects != Redirects::Never
++                        && matches!(status, 301 | 302 | 303 | 307 | 308)
++                    {
++                        return Ok(Hop::Redirect(
++                            resp.header("location").unwrap_or("").to_string(),
++                        ));
+                     }
+-                    // Read the body as bytes and lossily decode: the kimi `latest` marker answers
+-                    // with no text content-type, which `into_string()` can choke on. A body that
+-                    // reaches the cap is an ERROR, never a truncated prefix: the kimi installer is
+-                    // run after it is fetched, so a cut-off script must never be written or executed.
+-                    let buf = read_capped(resp.into_reader(), HTTP_BODY_CAP)?;
+-                    return Ok((status, String::from_utf8_lossy(&buf).into_owned()));
++                    Ok(Hop::Body(status, resp.into_reader()))
++                }
++                Err(ureq::Error::Status(code, _)) => Ok(Hop::Status(code)),
++                Err(e) => Err(c3_core::one_line(&e.to_string())),
++            }
++        })
++    }
++}
++
++/// How a GET follows a redirect. Always by hand ([`fetch`]), never by the HTTP client, and every
++/// hop is re-validated: https, the port the request started on, no userinfo.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Redirects {
++    /// Never: a request that carries a key (an endpoint's model list). A redirect answer is
++    /// returned as it is, so a key never reaches another URL.
++    Never,
++    /// The kimi vendor installer and its `latest` marker: the same host as the previous hop, or the
++    /// one mirror listed for it in [`INSTALLER_REDIRECT_HOSTS`].
++    Installer,
++    /// A public catalog or page: the host the request started on - no exception, not even the
++    /// installer's mirror pair.
++    SameOrigin,
++}
++
++/// The policy of one GET.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct GetPolicy {
++    /// ONE absolute deadline for the whole fetch: connecting, every redirect hop and the body read.
++    pub timeout: Duration,
++    pub redirects: Redirects,
++    /// The largest body accepted. The reader stops after `cap + 1` bytes, and a body that long is
++    /// an error, never a truncated prefix.
++    pub cap: usize,
++}
++
++/// One answer of a hop in [`fetch`]: a redirect to follow (its `location`), a body to read, or an
++/// error status (no body).
++pub(crate) enum Hop<R> {
++    Redirect(String),
++    Body(u16, R),
++    Status(u16),
++}
++
++/// The redirect loop of a GET over an injected transport `hop(url, remaining)` (production: one
++/// ureq request whose timeout is `remaining`). The start URL and every redirect target are
++/// validated by the policy ([`check_start`], [`redirect_target`]), at most [`MAX_REDIRECTS`]
++/// redirects are followed, the deadline is absolute across all hops, and the body is read through
++/// [`read_capped`] with the policy's cap.
++pub(crate) fn fetch<R: std::io::Read>(
++    url: &str,
++    policy: GetPolicy,
++    mut hop: impl FnMut(&str, Duration) -> Result<Hop<R>, String>,
++) -> Result<(u16, String), String> {
++    check_start(url)?;
++    let deadline = std::time::Instant::now() + policy.timeout;
++    let mut current = url.to_string();
++    let mut hops = 0;
++    loop {
++        let remaining = deadline
++            .checked_duration_since(std::time::Instant::now())
++            .filter(|d| !d.is_zero())
++            .ok_or_else(|| {
++                format!(
++                    "the request did not finish within {} ms (one deadline over every redirect)",
++                    policy.timeout.as_millis()
++                )
++            })?;
++        match hop(&current, remaining)? {
++            Hop::Redirect(location) => {
++                hops += 1;
++                if hops > MAX_REDIRECTS {
++                    return Err("too many redirects".to_string());
+                 }
+-                Err(ureq::Error::Status(code, _)) => return Ok((code, String::new())),
+-                Err(e) => return Err(c3_core::one_line(&e.to_string())),
++                current = redirect_target(url, &current, &location, policy.redirects)?;
+             }
++            Hop::Body(status, reader) => {
++                // Read the body as bytes and lossily decode: the kimi `latest` marker answers with
++                // no text content-type. A body that reaches the cap is an ERROR, never a truncated
++                // prefix: the kimi installer is run after it is fetched, so a cut-off script must
++                // never be written or executed.
++                let buf = read_capped(reader, policy.cap)?;
++                return Ok((status, String::from_utf8_lossy(&buf).into_owned()));
++            }
++            Hop::Status(code) => return Ok((code, String::new())),
+         }
+     }
+ }
+ 
+-/// How many redirects a keyless GET follows.
++/// The start URL of a GET: https, with a host, without userinfo.
++fn check_start(url: &str) -> Result<(), String> {
++    if !url.starts_with("https://") {
++        return Err("only https is allowed".to_string());
++    }
++    let u = url::Url::parse(url).map_err(|e| format!("bad url: {e}"))?;
++    if u.host_str().unwrap_or("").is_empty() {
++        return Err("a url without a host".to_string());
++    }
++    if !u.username().is_empty() || u.password().is_some() {
++        return Err("a url with credentials is never requested".to_string());
++    }
++    Ok(())
++}
++
++/// How many redirects a GET follows.
+ const MAX_REDIRECTS: u32 = 3;
+ 
+-/// The largest HTTP body a maintenance GET accepts. A body that reaches this cap is refused (a
+-/// truncated installer is never written or run); legitimate installers and model lists are well
+-/// under it.
+-const HTTP_BODY_CAP: usize = 8 * 1024 * 1024;
++/// The largest body the kimi installer download, its `latest` marker and the model-list endpoints
++/// accept. A body that reaches this cap is refused (a truncated installer is never written or run);
++/// legitimate installers and model lists are well under it. The public catalogs and pages have
++/// their own, smaller cap (`web::BODY_CAP`).
++pub const HTTP_BODY_CAP: usize = 8 * 1024 * 1024;
+ 
+ /// Run a prepared command and capture its output (a spawn failure is `code: None`).
+ fn run_command(mut cmd: std::process::Command) -> RunResult {
+@@ -256,20 +336,33 @@ fn read_capped<R: std::io::Read>(r: R, cap: usize) -> Result<Vec<u8>, String> {
+     Ok(buf)
+ }
+ 
+-/// The hosts a keyless download may be redirected to from another host: `(from, to)`, both exact.
+-/// Seen live 2026-11-15: `code.kimi.ai` answers the version marker and the installer with a 302 to
+-/// `cdn.kimi.ai`. Any other cross-host redirect is refused - "some subdomain of the same site" is
+-/// not good enough for a script that is run after it is fetched.
+-const REDIRECT_HOSTS: &[(&str, &str)] = &[("code.kimi.ai", "cdn.kimi.ai")];
++/// The hosts the kimi installer download may be redirected to from another host: `(from, to)`,
++/// both exact, for [`Redirects::Installer`] only. Seen live 2026-11-15: `code.kimi.ai` answers the
++/// version marker and the installer with a 302 to `cdn.kimi.ai`. Any other cross-host redirect is
++/// refused - "some subdomain of the same site" is not good enough for a script that is run after
++/// it is fetched - and a public catalog or page never gets even this pair.
++const INSTALLER_REDIRECT_HOSTS: &[(&str, &str)] = &[("code.kimi.ai", "cdn.kimi.ai")];
+ 
+-/// The URL a redirect from `from` to `location` leads to, or why it is refused: the target must be
+-/// https and either on the same host as `from` or on a host listed for it in [`REDIRECT_HOSTS`].
+-/// A relative `location` is resolved against `from`.
+-pub(crate) fn redirect_target(from: &str, location: &str) -> Result<String, String> {
++/// The URL a redirect from `from` to `location` leads to, or why it is refused. `start` is the URL
++/// the request started on. Every policy: the target is https, on the start's port (the scheme's
++/// default when none is written) and carries no userinfo. [`Redirects::SameOrigin`]: on the start's
++/// host. [`Redirects::Installer`]: on the host of `from` or on the one listed for it in
++/// [`INSTALLER_REDIRECT_HOSTS`]. [`Redirects::Never`] follows nothing. A relative `location` is
++/// resolved against `from`.
++pub(crate) fn redirect_target(
++    start: &str,
++    from: &str,
++    location: &str,
++    policy: Redirects,
++) -> Result<String, String> {
++    if policy == Redirects::Never {
++        return Err("this request follows no redirect".to_string());
++    }
+     let location = location.trim();
+     if location.is_empty() {
+         return Err("a redirect without a location".to_string());
+     }
++    let start_u = url::Url::parse(start).map_err(|e| format!("bad url: {e}"))?;
+     let base = url::Url::parse(from).map_err(|e| format!("bad url: {e}"))?;
+     let next = base
+         .join(location)
+@@ -277,13 +370,25 @@ pub(crate) fn redirect_target(from: &str, location: &str) -> Result<String, Stri
+     if next.scheme() != "https" {
+         return Err(format!("refused a redirect to {}", next.scheme()));
+     }
++    if !next.username().is_empty() || next.password().is_some() {
++        return Err("refused a redirect to a url with credentials".to_string());
++    }
++    if next.port_or_known_default() != start_u.port_or_known_default() {
++        return Err("refused a redirect to another port".to_string());
++    }
++    let start_host = start_u.host_str().unwrap_or("").to_ascii_lowercase();
+     let from_host = base.host_str().unwrap_or("").to_ascii_lowercase();
+     let to_host = next.host_str().unwrap_or("").to_ascii_lowercase();
+-    let allowed = !from_host.is_empty()
+-        && (from_host == to_host
+-            || REDIRECT_HOSTS
+-                .iter()
+-                .any(|(f, t)| *f == from_host && *t == to_host));
++    let allowed = match policy {
++        Redirects::SameOrigin => !start_host.is_empty() && to_host == start_host,
++        _ => {
++            !from_host.is_empty()
++                && (from_host == to_host
++                    || INSTALLER_REDIRECT_HOSTS
++                        .iter()
++                        .any(|(f, t)| *f == from_host && *t == to_host))
++        }
++    };
+     if !allowed {
+         return Err(format!(
+             "refused a redirect to another host ({})",
+@@ -295,7 +400,7 @@ pub(crate) fn redirect_target(from: &str, location: &str) -> Result<String, Stri
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::{is_secret_env, read_capped, redirect_target};
++    use super::{fetch, is_secret_env, read_capped, redirect_target, GetPolicy, Hop, Redirects};
+ 
+     #[test]
+     fn the_secret_env_filter() {
+@@ -336,10 +441,15 @@ mod tests {
+         assert!(read_capped(vec![b'x'; 101].as_slice(), 100).is_err());
+     }
+ 
++    /// The installer policy from a single hop (start == from).
++    fn installer(from: &str, location: &str) -> Result<String, String> {
++        redirect_target(from, from, location, Redirects::Installer)
++    }
++
+     #[test]
+     fn a_redirect_stays_on_https_and_on_the_same_site() {
+         assert_eq!(
+-            redirect_target(
++            installer(
+                 "https://code.kimi.ai/kimi-code/latest",
+                 "https://cdn.kimi.ai/kimi-code/latest"
+             )
+@@ -348,32 +458,196 @@ mod tests {
+         );
+         // a relative location is resolved against the request
+         assert_eq!(
+-            redirect_target("https://code.kimi.ai/kimi-code/latest", "/v2/latest").unwrap(),
++            installer("https://code.kimi.ai/kimi-code/latest", "/v2/latest").unwrap(),
+             "https://code.kimi.ai/v2/latest"
+         );
+         // a transport downgrade, another site and an empty location are refused
+-        assert!(redirect_target(
++        assert!(installer(
+             "https://code.kimi.ai/kimi-code/install.ps1",
+             "http://cdn.kimi.ai/kimi-code/install.ps1"
+         )
+         .is_err());
+-        assert!(redirect_target(
++        assert!(installer(
+             "https://code.kimi.ai/kimi-code/install.ps1",
+             "https://cdn.example.net/kimi-code/install.ps1"
+         )
+         .is_err());
+-        assert!(redirect_target("https://code.kimi.ai/kimi-code/latest", "  ").is_err());
++        assert!(installer("https://code.kimi.ai/kimi-code/latest", "  ").is_err());
+         // another subdomain of the same site is not enough: only the listed mirror is accepted,
+         // and only from the host it is listed for
+-        assert!(redirect_target(
++        assert!(installer(
+             "https://code.kimi.ai/kimi-code/install.ps1",
+             "https://files.kimi.ai/kimi-code/install.ps1"
+         )
+         .is_err());
+-        assert!(redirect_target(
++        assert!(installer(
+             "https://cdn.kimi.ai/kimi-code/install.ps1",
+             "https://code.kimi.ai/kimi-code/install.ps1"
+         )
+         .is_err());
++        // (F02-12) the installer pair, too, keeps the port and refuses userinfo
++        assert!(installer(
++            "https://code.kimi.ai/kimi-code/latest",
++            "https://cdn.kimi.ai:8443/kimi-code/latest"
++        )
++        .is_err());
++        assert!(installer(
++            "https://code.kimi.ai/kimi-code/latest",
++            "https://u:p@cdn.kimi.ai/kimi-code/latest"
++        )
++        .is_err());
++        // a key-carrying request follows nothing
++        assert!(redirect_target(
++            "https://api.z.ai/v1/models",
++            "https://api.z.ai/v1/models",
++            "/v2/models",
++            Redirects::Never
++        )
++        .is_err());
++    }
++
++    /// (F02-12, F04-8) A public catalog or page has its own redirect policy: the start's host AND
++    /// port, no userinfo, re-validated at every hop - the kimi installer's mirror pair does not
++    /// apply to it.
++    #[test]
++    fn a_public_source_redirect_stays_on_its_origin() {
++        let same = |start: &str, from: &str, loc: &str| {
++            redirect_target(start, from, loc, Redirects::SameOrigin)
++        };
++        let s = "https://catalog.example/api/v1/models";
++        assert_eq!(
++            same(s, s, "/api/v2/models").unwrap(),
++            "https://catalog.example/api/v2/models"
++        );
++        assert_eq!(
++            same(s, s, "https://CATALOG.example:443/x").unwrap(),
++            "https://catalog.example/x",
++            "the explicit default port and the host's case are the same origin"
++        );
++        // the installer's pair is NOT honoured for a public source
++        assert!(same(
++            "https://code.kimi.ai/models.json",
++            "https://code.kimi.ai/models.json",
++            "https://cdn.kimi.ai/models.json"
++        )
++        .is_err());
++        // another port, userinfo, another host, a downgrade
++        assert!(same(s, s, "https://catalog.example:8443/x").is_err());
++        assert!(same(s, s, "https://user@catalog.example/x").is_err());
++        assert!(same(s, s, "https://user:pw@catalog.example/x").is_err());
++        assert!(same(s, s, "https://evil.example/x").is_err());
++        assert!(same(s, s, "http://catalog.example/x").is_err());
++        // a later hop is still judged against the START, not the previous hop
++        assert!(same(s, "https://evil.example/x", "https://evil.example/y").is_err());
++    }
++
++    fn policy(ms: u64, redirects: Redirects, cap: usize) -> GetPolicy {
++        GetPolicy {
++            timeout: std::time::Duration::from_millis(ms),
++            redirects,
++            cap,
++        }
++    }
++
++    /// (F02-12, F02-13) The redirect loop: the start URL is validated, every hop is re-validated
++    /// (a userinfo or cross-host hop stops the fetch before it is requested), at most three
++    /// redirects are followed, and the body is read through the policy's cap.
++    #[test]
++    fn the_fetch_loop_validates_every_hop_and_caps_the_body() {
++        // a start with credentials or over http is never requested
++        let mut asked: Vec<String> = Vec::new();
++        let r = fetch::<&[u8]>(
++            "https://u:p@catalog.example/m",
++            policy(5_000, Redirects::SameOrigin, 100),
++            |u, _| {
++                asked.push(u.to_string());
++                Ok(Hop::Status(500))
++            },
++        );
++        assert!(r.is_err() && asked.is_empty(), "{r:?} {asked:?}");
++        assert!(fetch::<&[u8]>(
++            "http://catalog.example/m",
++            policy(5_000, Redirects::SameOrigin, 100),
++            |_, _| Ok(Hop::Status(500))
++        )
++        .is_err());
++
++        // a same-origin hop is followed, a userinfo hop is refused before it is requested
++        let mut asked: Vec<String> = Vec::new();
++        let r = fetch::<&[u8]>(
++            "https://catalog.example/m",
++            policy(5_000, Redirects::SameOrigin, 100),
++            |u, _| {
++                asked.push(u.to_string());
++                Ok(match asked.len() {
++                    1 => Hop::Redirect("/m2".into()),
++                    _ => Hop::Redirect("https://x:y@catalog.example/m3".into()),
++                })
++            },
++        );
++        assert!(r.unwrap_err().contains("credentials"));
++        assert_eq!(
++            asked,
++            vec!["https://catalog.example/m", "https://catalog.example/m2"]
++        );
++
++        // at most three redirects
++        let mut n = 0;
++        let r = fetch::<&[u8]>(
++            "https://catalog.example/m",
++            policy(5_000, Redirects::SameOrigin, 100),
++            |_, _| {
++                n += 1;
++                Ok(Hop::Redirect(format!("/m{n}")))
++            },
++        );
++        assert_eq!(r.unwrap_err(), "too many redirects");
++        assert_eq!(n, 4, "the start and three redirects were requested");
++
++        // the body: at the cap is read, one byte past it is an error (the reader stops at cap+1)
++        let body = vec![b'x'; 100];
++        let r = fetch(
++            "https://catalog.example/m",
++            policy(5_000, Redirects::SameOrigin, 100),
++            |_, _| Ok(Hop::Body(200, body.as_slice())),
++        );
++        assert_eq!(r.unwrap().1.len(), 100);
++        let body = vec![b'x'; 101];
++        assert!(fetch(
++            "https://catalog.example/m",
++            policy(5_000, Redirects::SameOrigin, 100),
++            |_, _| Ok(Hop::Body(200, body.as_slice())),
++        )
++        .is_err());
++    }
++
++    /// (F02-13) ONE absolute deadline over every hop: each hop is given only what is left, and a
++    /// chain of slow redirects ends at the deadline instead of restarting the clock per hop.
++    #[test]
++    fn the_fetch_deadline_is_absolute_across_hops() {
++        let mut given: Vec<std::time::Duration> = Vec::new();
++        let start = std::time::Instant::now();
++        let r = fetch::<&[u8]>(
++            "https://catalog.example/m",
++            policy(300, Redirects::SameOrigin, 100),
++            |_, remaining| {
++                given.push(remaining);
++                std::thread::sleep(std::time::Duration::from_millis(120));
++                Ok(Hop::Redirect("/again".into()))
++            },
++        );
++        let elapsed = start.elapsed();
++        let err = r.unwrap_err();
++        assert!(err.contains("did not finish within 300 ms"), "{err}");
++        assert!(given.len() >= 2 && given.len() <= 3, "{given:?}");
++        assert!(
++            given.windows(2).all(|w| w[1] < w[0]),
++            "each hop gets less time: {given:?}"
++        );
++        assert!(given[0] <= std::time::Duration::from_millis(300));
++        assert!(
++            elapsed < std::time::Duration::from_millis(1_000),
++            "the chain ended at the deadline: {elapsed:?}"
++        );
+     }
+ }
+diff --git a/crates/c3/src/maintain/mod.rs b/crates/c3/src/maintain/mod.rs
+index 30b79db..4df6730 100644
+--- a/crates/c3/src/maintain/mod.rs
++++ b/crates/c3/src/maintain/mod.rs
+@@ -717,6 +717,7 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
+                     &roster,
+                     dir,
+                     &self_exe,
++                    opts.force,
+                     now,
+                     &p,
+                 );
+@@ -794,6 +795,14 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
+ /// collected ids, the report (printed once by the next SessionStart hook) and the notes; a dry run
+ /// stores nothing.
+ fn models_pass(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) -> i32 {
++    // (F02-18) `C3_MAINTAIN_MODELS=off` is authoritative: an explicit `--models` fetches nothing
++    // (no engine, endpoint or public list) and writes nothing, and says why.
++    if models_mode() == ModelsMode::Off {
++        println!(
++            "c3 maintain: the model step is off (C3_MAINTAIN_MODELS=off) - --models fetched nothing; set C3_MAINTAIN_MODELS=announce or swap to run it"
++        );
++        return 0;
++    }
+     let mut state = read_state(dir);
+     let roster = crate::providers::read_reviewer_roster().unwrap_or_default();
+     let self_exe = std::env::current_exe()
+@@ -893,7 +902,10 @@ fn maintain_one_engine(
+     };
+ 
+     // 1. smoke the installed version first.
+-    if let smoke::Smoke::Fail(why) = run_one_smoke(env, self_exe, &target, name, now) {
++    let roster_text = roster_text_of(roster);
++    if let smoke::Smoke::Fail(why) =
++        run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref())
++    {
+         let msg = format!("held: smoke fails on the installed version ({why})");
+         println!("c3 maintain: {name} {installed_text} {msg}");
+         return (
+@@ -936,6 +948,7 @@ fn maintain_one_engine(
+         &new_text,
+         caps,
+         &target,
++        roster,
+         self_exe,
+         dir,
+         now,
+@@ -966,6 +979,7 @@ fn update_and_verify(
+     new_text: &str,
+     caps: &engine::Caps,
+     target: &smoke::Target,
++    roster: &c3_core::roster::Roster,
+     self_exe: &str,
+     dir: &Path,
+     now: DateTime<Utc>,
+@@ -1006,7 +1020,10 @@ fn update_and_verify(
+         .unwrap_or_else(|| new_text.to_string());
+ 
+     // 3. smoke the new version.
+-    if let smoke::Smoke::Fail(why) = run_one_smoke(env, self_exe, target, name, now) {
++    let roster_text = roster_text_of(roster);
++    if let smoke::Smoke::Fail(why) =
++        run_one_smoke(env, self_exe, target, name, now, roster_text.as_deref())
++    {
+         if caps.has_rollback {
+             if let Some(res) = engine::do_rollback(env, name, launcher, installed_text, dir) {
+                 let cmd_ok = matches!(res, Ok(ref r) if r.ok());
+@@ -1061,7 +1078,10 @@ fn update_and_verify(
+ /// cleared only when the rollback command succeeds AND the previous version is actually restored. A
+ /// failed rollback, a rollback that does not restore the previous version, and the absence of any
+ /// rollback path all leave the record in place (resolved = false) so a later due pass smokes it
+-/// again - the installed engine still fails its smoke, so the record must not be cleared.
++/// again - the installed engine still fails its smoke, so the record must not be cleared. Then,
++/// instead of sitting on the failing version until the operator steps in, a vendor release NEWER
++/// than it is tried ([`try_newer_release`]), with the record's original `previous` kept as the
++/// rollback target.
+ #[allow(clippy::too_many_arguments)]
+ fn handle_pending(
+     env: &dyn Env,
+@@ -1071,34 +1091,85 @@ fn handle_pending(
+     installed: Option<&version::CliVersion>,
+     caps: &engine::Caps,
+     roster: &c3_core::roster::Roster,
+-    _dir: &Path,
++    dir: &Path,
+     self_exe: &str,
++    force: bool,
+     now: DateTime<Utc>,
+     p: &PendingUpdate,
+ ) -> (String, String, bool) {
++    let outcome = handle_pending_smoke(
++        env,
++        name,
++        launcher,
++        installed_text,
++        installed,
++        caps,
++        roster,
++        dir,
++        self_exe,
++        now,
++        p,
++    );
++    match outcome {
++        PendingOutcome::Done(clause, action, resolved) => (clause, action, resolved),
++        PendingOutcome::StillFailing(clause, action, target) => {
++            match try_newer_release(
++                env, name, launcher, installed, caps, roster, dir, self_exe, force, now, p, &target,
++            ) {
++                Some(next) => next,
++                None => (clause, action, false),
++            }
++        }
++    }
++}
++
++/// What the recovery smoke of a pending update decided: resolved or not (and why), or the installed
++/// version still FAILS its smoke with no working rollback - the case a newer release may fix.
++enum PendingOutcome {
++    Done(String, String, bool),
++    StillFailing(String, String, smoke::Target),
++}
++
++/// The recovery smoke of [`handle_pending`] (the behaviour before the newer-release step).
++#[allow(clippy::too_many_arguments)]
++fn handle_pending_smoke(
++    env: &dyn Env,
++    name: &str,
++    launcher: &str,
++    installed_text: &str,
++    installed: Option<&version::CliVersion>,
++    caps: &engine::Caps,
++    roster: &c3_core::roster::Roster,
++    _dir: &Path,
++    self_exe: &str,
++    now: DateTime<Utc>,
++    p: &PendingUpdate,
++) -> PendingOutcome {
++    use PendingOutcome::{Done, StillFailing};
+     let prev = version::parse_cli_version(&p.previous);
+     // The installed version is still the previous one: the interrupted update never took. Clear.
+     if let (Some(inst), Some(prev)) = (installed, prev.as_ref()) {
+         if inst.parts == prev.parts {
+             let msg = "pending update cleared (installed version unchanged)".to_string();
+             println!("c3 maintain: {name} {installed_text} - {msg}");
+-            return (format!("{installed_text} {msg}"), msg, true);
++            return Done(format!("{installed_text} {msg}"), msg, true);
+         }
+     }
+     // Otherwise verify the installed version by a smoke.
+     let Some(target) = smoke::pick_target(&smoke_override(name), roster, name, now) else {
+         let msg = "pending update unresolved: no quota for a smoke".to_string();
+         println!("c3 maintain: {name} {installed_text} - {msg}");
+-        return (format!("{installed_text} {msg}"), msg, false); // keep the pending record
++        return Done(format!("{installed_text} {msg}"), msg, false); // keep the pending record
+     };
+-    match run_one_smoke(env, self_exe, &target, name, now) {
++    let roster_text = roster_text_of(roster);
++    match run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref()) {
+         smoke::Smoke::Pass => {
+             let msg = format!(
+                 "recovered: update to {} verified after an interrupted pass",
+                 p.target
+             );
+             println!("c3 maintain: {name} {installed_text} - {msg}");
+-            (format!("{installed_text} {msg}"), msg, true)
++            Done(format!("{installed_text} {msg}"), msg, true)
+         }
+         smoke::Smoke::Fail(why) => {
+             if caps.has_rollback {
+@@ -1118,7 +1189,7 @@ fn handle_pending(
+                             p.previous
+                         );
+                         println!("c3 maintain: {name} {installed_text} - {msg}");
+-                        return (format!("{installed_text} {msg}"), msg, true);
++                        return Done(format!("{installed_text} {msg}"), msg, true);
+                     }
+                     // Rollback command failed, or it ran but the previous version is not back: the
+                     // installed engine still fails its smoke. Keep the record so a later pass tries
+@@ -1131,27 +1202,117 @@ fn handle_pending(
+                         "pending update unresolved: rollback failed, still {now_t} ({why})"
+                     );
+                     println!("c3 maintain: {name} {installed_text} - {msg}");
+-                    return (format!("{installed_text} {msg}"), msg, false);
++                    return StillFailing(format!("{installed_text} {msg}"), msg, target);
+                 }
+             }
+             // No rollback path (unsupported, or do_rollback returned None): the engine is stuck on a
+             // failing version. Keep the record for another pass; this is not a recovery.
+             let msg = format!("pending update unresolved: smoke failed, no rollback path ({why})");
+             println!("c3 maintain: {name} {installed_text} - {msg}");
+-            (format!("{installed_text} {msg}"), msg, false)
++            StillFailing(format!("{installed_text} {msg}"), msg, target)
++        }
++    }
++}
++
++/// (TECH_DEBT 2026-11-16) An unresolved pending record no longer freezes its engine on the failing
++/// version: when the vendor offers a release NEWER than the installed (failing) one, that release
++/// is tried - the same cool-down (unless `--force`), in-use re-check, write-before-install record
++/// and post-update smoke as a normal update, with the record's ORIGINAL `previous` kept as the
++/// rollback target (and in the record). `None` when there is nothing to try (no check command, no
++/// newer release, an unparsable previous or installed version, a cool-down hold, the engine in
++/// use, or the record could not be written) - the caller then keeps the unresolved record as it is.
++#[allow(clippy::too_many_arguments)]
++fn try_newer_release(
++    env: &dyn Env,
++    name: &str,
++    launcher: &str,
++    installed: Option<&version::CliVersion>,
++    caps: &engine::Caps,
++    roster: &c3_core::roster::Roster,
++    dir: &Path,
++    self_exe: &str,
++    force: bool,
++    now: DateTime<Utc>,
++    p: &PendingUpdate,
++    target: &smoke::Target,
++) -> Option<(String, String, bool)> {
++    if !caps.has_check {
++        return None;
++    }
++    let failing = installed?;
++    let prev = version::parse_cli_version(&p.previous)?;
++    let latest = engine::check_latest(env, name, launcher);
++    let latest_v = latest.version.clone()?;
++    if &latest_v <= failing {
++        return None;
++    }
++    let new_text = latest_v.text().to_string();
++    let failing_text = failing.text().to_string();
++    if let Some(released) = latest.released {
++        let age = (now - released).num_days();
++        if !force && age < min_age_days() {
++            println!(
++                "c3 maintain: {name} the newer {new_text} is held: released {age} days ago (the pending update on {failing_text} stays unresolved)"
++            );
++            return None;
+         }
+     }
++    if engine_in_use(name, launcher) {
++        println!("c3 maintain: {name} the newer {new_text} is not tried: in use");
++        return None;
++    }
++    // (R2) the record first, keeping the ORIGINAL previous as the rollback target.
++    if let Err(e) = set_pending(
++        dir,
++        PendingUpdate {
++            engine: name.to_string(),
++            previous: p.previous.clone(),
++            target: new_text.clone(),
++            when: rfc3339(now),
++        },
++    ) {
++        println!(
++            "c3 maintain: {name} the newer {new_text} is not tried: could not record the pending update ({e})"
++        );
++        return None;
++    }
++    println!(
++        "c3 maintain: {name} {failing_text} still fails its smoke; trying the newer {new_text} (rollback target {})",
++        p.previous
++    );
++    let (clause, action, resolved) = update_and_verify(
++        env,
++        name,
++        launcher,
++        &p.previous,
++        &prev,
++        &latest_v,
++        &new_text,
++        caps,
++        target,
++        roster,
++        self_exe,
++        dir,
++        now,
++    );
++    Some((
++        format!("{clause} (after {failing_text} failed)"),
++        action,
++        resolved,
++    ))
+ }
+ 
+ /// Run one smoke in a fresh scratch repo (under the OS temp dir, random name) with a random token.
+ /// The smoke leaves no state behind: the scratch repo is removed afterwards and never lives under
+-/// the maintain state directory.
++/// the maintain state directory. `roster_text` is the roster a seat-bound target
++/// ([`smoke::Bind::Entry`]) is taken from.
+ fn run_one_smoke(
+     env: &dyn Env,
+     self_exe: &str,
+     target: &smoke::Target,
+     engine: &str,
+     now: DateTime<Utc>,
++    roster_text: Option<&str>,
+ ) -> smoke::Smoke {
+     let nonce = now
+         .timestamp_nanos_opt()
+@@ -1164,11 +1325,20 @@ fn run_one_smoke(
+         std::process::id(),
+         nonce as u64
+     ));
+-    let out = smoke::run_smoke(env, self_exe, target, engine, &work, &token);
++    let out = smoke::run_smoke(env, self_exe, target, engine, &work, &token, roster_text);
+     let _ = std::fs::remove_dir_all(&work);
+     out
+ }
+ 
++/// The roster text an engine smoke's seat is bound to, read at smoke time (`None` when there is no
++/// roster file: a seat-bound smoke then fails instead of re-resolving the label).
++fn roster_text_of(roster: &c3_core::roster::Roster) -> Option<String> {
++    if roster.path.is_empty() {
++        return None;
++    }
++    std::fs::read_to_string(&roster.path).ok()
++}
++
+ /// Whether an engine is within a pass's scope: inside the `--engine` filter (empty = all) and not in
+ /// the `C3_MAINTAIN_SKIP` set. Mirrors the engine step's own filter so the model step never touches a
+ /// seat the operator excluded.
+@@ -1204,13 +1374,9 @@ fn run_models(
+     _dir: &Path,
+     opts: &PassOpts,
+ ) -> ModelOutcome {
+-    let mut mode = models_mode();
+-    if opts.models_only && mode == ModelsMode::Off {
+-        // an explicit `--models` is the operator's request: it collects and announces even when the
+-        // periodic model step is off, but never edits the roster then
+-        println!("c3 maintain: C3_MAINTAIN_MODELS=off - --models announces only");
+-        mode = ModelsMode::Announce;
+-    }
++    // (F02-18) `off` is authoritative for every pass, an explicit `--models` included (which returns
++    // before it gets here): nothing is collected or fetched.
++    let mode = models_mode();
+     if mode == ModelsMode::Off {
+         return ModelOutcome {
+             clauses: Vec::new(),
+@@ -1248,8 +1414,16 @@ fn run_models(
+         .collect();
+     let skip = skip_set();
+ 
++    let older_found: Vec<models::OlderPair>;
+     {
+-        let (candidates, rejected) = models::swap_plan(roster, &current, Utc::now().timestamp());
++        let plan = models::plan_swaps(
++            roster,
++            &current,
++            &state.models.older,
++            Utc::now().timestamp(),
++        );
++        older_found = plan.older;
++        let (candidates, rejected) = (plan.candidates, plan.rejected);
+         // A public id the version rule alone would take, without the date evidence that it is newer
+         // than the seated model: reported in the notes (never smoked, never in the short line).
+         for r in &rejected {
+@@ -1282,6 +1456,10 @@ fn run_models(
+                 Some("protected entry")
+             } else if c.on_request {
+                 Some("on-request entry")
++            } else if c.engine == "http" {
++                // an `ext.c3.reviewers` http reviewer is not a `reviewers[]` element: the swap
++                // edits only `reviewers[<position>].model` (F02-17), so it is never smoked either
++                Some("an ext.c3.reviewers http entry is announced only")
+             } else if mode == ModelsMode::Announce {
+                 Some("mode announce")
+             } else {
+@@ -1316,12 +1494,15 @@ fn run_models(
+             // The candidate's smoke obeys the saturation rule pick_target applies: a swap on a plan
+             // whose governing window is at 90 %+ is held, the roster untouched. (0.2.4) a protected
+             // or on-request seat is never smoked either - its quota is kept / it runs only when named.
+-            // The entry must still be present with this exact provider + old model (else the roster
+-            // changed under us and the swap is abandoned).
+-            let entry = fresh
+-                .entries
+-                .iter()
+-                .find(|e| e.provider == c.provider && e.model == c.old);
++            // (F02-16) The entry is the one at the candidate's POSITION, and it must still be this
++            // exact provider + old model and active (else the roster changed under us and the swap
++            // is abandoned) - never another entry that happens to share the label or the model.
++            let entry = fresh.entries.iter().find(|e| {
++                e.position == c.position
++                    && e.provider == c.provider
++                    && e.model == c.old
++                    && !e.inactive
++            });
+             let blocked = match entry {
+                 None => Some("roster changed"),
+                 Some(e) if e.reserve_percent > 0 => Some("protected entry"),
+@@ -1337,18 +1518,23 @@ fn run_models(
+                 clauses.push(msg);
+                 continue;
+             }
++            // (F02-16) Both smoke turns run through exactly that entry - its endpoint, auth, plan
++            // and quota policy, taken from the same snapshot (`basis`) - with only the model
++            // overridden; the swap below edits the same position.
+             let target = smoke::Target {
+                 provider: c.provider.clone(),
+                 model: c.new.clone(),
++                bind: smoke::Bind::Entry(c.position),
+             };
+             // One smoke per entry and pass: the highest successor only. A failed candidate is tried
+             // again on a later pass.
+-            match run_one_smoke(env, self_exe, &target, &c.engine, now) {
++            match run_one_smoke(env, self_exe, &target, &c.engine, now, Some(&basis)) {
+                 smoke::Smoke::Pass => {
+                     let today = now.format("%Y%m%d").to_string();
+                     match models::apply_swap(
+                         &roster.path,
+                         &basis,
++                        c.position,
+                         &c.provider,
+                         &c.old,
+                         &c.new,
+@@ -1433,7 +1619,9 @@ fn run_models(
+             sources.push(prev.clone());
+         }
+     }
+-    state.models = models::ModelsState { sources };
++    // (F04-3) a candidate a public source dated as not newer stays rejected in later passes
++    let older = models::merge_older(&state.models.older, &older_found);
++    state.models = models::ModelsState { sources, older };
+     let findings = format!(
+         "{seated} swap(s), {} new id(s), {} new in the family",
+         new_ids.len(),
+@@ -1487,7 +1675,8 @@ pub fn run_smoke_only(engines: Vec<String>, dry_run: bool) -> i32 {
+                     );
+                 } else {
+                     let seat = format!("{}::{}", t.provider, t.model);
+-                    match run_one_smoke(&env, &self_exe, &t, name, now) {
++                    let roster_text = roster_text_of(&roster);
++                    match run_one_smoke(&env, &self_exe, &t, name, now, roster_text.as_deref()) {
+                         smoke::Smoke::Pass => {
+                             println!("c3 maintain smoke: {name} -> {seat} pass")
+                         }
+diff --git a/crates/c3/src/maintain/models.rs b/crates/c3/src/maintain/models.rs
+index 306905a..c99ac89 100644
+--- a/crates/c3/src/maintain/models.rs
++++ b/crates/c3/src/maintain/models.rs
+@@ -8,14 +8,15 @@ use std::time::Duration;
+ 
+ use serde::{Deserialize, Serialize};
+ 
+-use super::env::Env;
++use super::env::{Env, GetPolicy, Redirects, HTTP_BODY_CAP};
+ use super::version::{parse_model_id, successor, valid_model_id};
+ use super::web::{is_public_source, strip_vendor};
+ use c3_core::roster::{Roster, RosterEntry};
+ 
+ /// The model ids collected from one source in a pass. Sources: `grok` / `agy` (the engines' own
+-/// lists), `endpoint:<host>` (an endpoint's `/v1/models`, which may be PRIVATE), `web:<host>` (a
+-/// public catalog, ids kept as `<vendor>/<model>`) and `page:<name>` (a configured public page).
++/// lists), `endpoint:<canonical endpoint>|<key env name>|<plan>` (an endpoint's authenticated
++/// `/v1/models`, which may be PRIVATE - [`endpoint_source`]), `web:<host>` (a public catalog, ids
++/// kept as `<vendor>/<model>`) and `page:<name>` (a configured public page).
+ #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+ pub struct SourceList {
+     pub source: String,
+@@ -27,11 +28,51 @@ pub struct SourceList {
+     pub created: BTreeMap<String, i64>,
+ }
+ 
+-/// The persisted model state: the last-seen id list per source.
++/// The persisted model state: the last-seen id list per source, and the successors a public source
++/// once dated older than the seated id.
+ #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+ pub struct ModelsState {
+     #[serde(default)]
+     pub sources: Vec<SourceList>,
++    /// (F04-3) Every `(seated, candidate)` pair a public source dated as not newer than the seated
++    /// id. Such a candidate stays rejected for that seated id in every later pass, whatever a source
++    /// says then (a catalog that re-stamps an old model later cannot smuggle it in). Persisted; a
++    /// state written before it existed loads with none.
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub older: Vec<OlderPair>,
++}
++
++/// A successor a public source dated as not newer than the seated id (both lower-cased, the
++/// candidate without a vendor part).
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct OlderPair {
++    pub seated: String,
++    pub candidate: String,
++}
++
++impl OlderPair {
++    pub fn new(seated: &str, candidate: &str) -> Self {
++        OlderPair {
++            seated: seated.to_ascii_lowercase(),
++            candidate: strip_vendor(candidate).to_ascii_lowercase(),
++        }
++    }
++}
++
++/// The most recorded [`OlderPair`]s kept (the newest win).
++pub const MAX_OLDER_PAIRS: usize = 500;
++
++/// `previous` plus the pairs found in this pass, de-duplicated, the newest [`MAX_OLDER_PAIRS`] kept.
++pub fn merge_older(previous: &[OlderPair], found: &[OlderPair]) -> Vec<OlderPair> {
++    let mut out: Vec<OlderPair> = previous.to_vec();
++    for p in found {
++        if !out.contains(p) {
++            out.push(p.clone());
++        }
++    }
++    let excess = out.len().saturating_sub(MAX_OLDER_PAIRS);
++    out.drain(..excess);
++    out
+ }
+ 
+ impl ModelsState {
+@@ -48,8 +89,8 @@ impl ModelsState {
+     }
+ }
+ 
+-/// The source an entry's models come from (`grok` / `agy` for those engines, `endpoint:<host>` for
+-/// an Anthropic-compatible endpoint entry). `None` when the entry has no known model source.
++/// The source an entry's models come from (`grok` / `agy` for those engines, [`endpoint_source`]
++/// for an Anthropic-compatible endpoint entry). `None` when the entry has no known model source.
+ pub fn source_for(e: &RosterEntry) -> Option<String> {
+     let engine = if e.engine.is_empty() {
+         "codex"
+@@ -59,16 +100,48 @@ pub fn source_for(e: &RosterEntry) -> Option<String> {
+     match engine {
+         "grok" => Some("grok".to_string()),
+         "agy" => Some("agy".to_string()),
+-        _ => e
+-            .endpoint
+-            .as_ref()
+-            .map(|ep| format!("endpoint:{}", ep.host_name)),
++        _ => e.endpoint.as_ref().map(|ep| endpoint_source(ep, &e.plan)),
+     }
+ }
+ 
++/// (F02-15) The source name of an endpoint's authenticated model list:
++/// `endpoint:<scheme>://<host>:<port><path>|<key env name>|<plan>` - the lower-case scheme and host,
++/// the port (the scheme's default when none is written), the path without a trailing slash, the
++/// NAME of the variable that holds the token, and the entry's plan. Two entries share one list (and
++/// its ids are candidates for them) only when all of it agrees - never by host alone, so a model
++/// one endpoint path or credential serves is never offered to, or smoked on, another.
++pub fn endpoint_source(ep: &c3_core::claude::ClaudeEndpoint, plan: &str) -> String {
++    let canonical = match url::Url::parse(ep.base_url.trim()) {
++        Ok(u) => format!(
++            "{}://{}:{}{}",
++            u.scheme().to_ascii_lowercase(),
++            u.host_str().unwrap_or("").to_ascii_lowercase(),
++            u.port_or_known_default().unwrap_or(0),
++            u.path().trim_end_matches('/')
++        ),
++        Err(_) => ep.canonical.clone(),
++    };
++    let plan = if plan.is_empty() {
++        ep.plan.as_str()
++    } else {
++        plan
++    };
++    format!("endpoint:{canonical}|{}|{plan}", ep.env_key)
++}
++
++/// The host-only name an endpoint list was recorded under before [`endpoint_source`]
++/// (`endpoint:<host>`), so the first pass after the change does not announce the whole list as new.
++fn legacy_endpoint_source(source: &str) -> Option<String> {
++    let rest = source.strip_prefix("endpoint:")?;
++    let (_, after) = rest.split_once("://")?;
++    let host = after.split([':', '/', '|']).next()?;
++    (!host.is_empty()).then(|| format!("endpoint:{host}"))
++}
++
+ /// Collect the model ids of every source present in `roster`. `grok models` / `agy models` through
+-/// the launchers; each distinct Anthropic-compatible endpoint through `GET <base_url>/v1/models`
+-/// with its key. Every failure is ignored (an empty list for that source).
++/// the launchers; each distinct endpoint list ([`endpoint_source`]: endpoint, key variable and plan)
++/// through `GET <base_url>/v1/models` with its key. Every failure is ignored (an empty list for that
++/// source).
+ pub fn collect(env: &dyn Env, roster: &Roster) -> Vec<SourceList> {
+     let mut out: Vec<SourceList> = Vec::new();
+     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+@@ -153,7 +226,12 @@ fn fetch_endpoint_models(env: &dyn Env, base_url: &str, env_key: &str) -> Vec<St
+         ("Authorization", bearer.as_str()),
+     ];
+     // never follow a redirect: this request carries the API key.
+-    match env.http_get(&url, &headers, Duration::from_secs(5), false) {
++    let policy = GetPolicy {
++        timeout: Duration::from_secs(5),
++        redirects: Redirects::Never,
++        cap: HTTP_BODY_CAP,
++    };
++    match env.http_get(&url, &headers, policy) {
+         Ok((status, body)) if (200..300).contains(&status) => parse_models_json(&body),
+         _ => Vec::new(),
+     }
+@@ -190,7 +268,13 @@ pub fn new_ids(previous: &ModelsState, current: &[SourceList]) -> Vec<String> {
+         if is_public_source(&s.source) {
+             continue;
+         }
+-        let prev = previous.ids_of(&s.source);
++        let prev = if previous.has_source(&s.source) {
++            previous.ids_of(&s.source)
++        } else {
++            legacy_endpoint_source(&s.source)
++                .map(|l| previous.ids_of(&l))
++                .unwrap_or(&[])
++        };
+         for id in &s.ids {
+             if !prev.contains(id) {
+                 out.insert(id.clone());
+@@ -233,8 +317,9 @@ pub fn public_candidates(current: &[SourceList]) -> Vec<String> {
+     out
+ }
+ 
+-/// A public id that the version rule would take for a successor but that lacks the date evidence a
+-/// public candidate needs ([`public_verdict`]); reported in the notes, never smoked.
++/// An id that the version rule would take for a successor but that the date gate refused (a public
++/// id without the date evidence it needs - [`public_verdict`] - or an id a public source dates as
++/// not newer - [`own_verdict`]); reported in the notes, never smoked.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct RejectedCandidate {
+     pub provider: String,
+@@ -289,18 +374,91 @@ fn seated_created(source: &SourceList, seated: &str, vendor: &str) -> Option<i64
+     source.created.get(*pick).copied()
+ }
+ 
++/// A catalog date later than now by more than this (seconds) is not believed: such a candidate is
++/// rejected (F02-14).
++pub const FUTURE_SLACK_SECS: i64 = 86_400;
++
++/// Why the date gate refused an id, and whether the refusal is NEGATIVE date evidence that the
++/// state records ([`OlderPair`]).
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct GateRefusal {
++    pub why: &'static str,
++    pub older: bool,
++}
++
++const WHY_OLDER: &str = "older than the seated model by the catalog's date";
++const WHY_FUTURE: &str = "dated in the future by the catalog";
++const WHY_RECORDED: &str = "recorded as older than the seated model in an earlier pass";
++
++/// Whether the state recorded `cand` as older than `seated` in an earlier pass.
++fn recorded_older(older: &[OlderPair], seated: &str, cand: &str) -> bool {
++    let probe = OlderPair::new(seated, cand);
++    older.contains(&probe)
++}
++
++/// The NEGATIVE date evidence against `cand` as a successor of `seated` in the public sources of
++/// `current`: an occurrence dated in the future (beyond [`FUTURE_SLACK_SECS`]), or one dated not
++/// later than the seated id in the same source. With `only_both_dated`, an occurrence counts only
++/// when the same source dates the seated id as well (the gate of an id from the entry's own list).
++/// "Older" wins over "future" (it is the one the state records).
++fn negative_evidence(
++    current: &[SourceList],
++    seated: &str,
++    cand: &str,
++    now_unix: i64,
++    only_both_dated: bool,
++) -> Option<GateRefusal> {
++    let mut found: Option<GateRefusal> = None;
++    for h in public_hits(current, cand) {
++        let Some(c) = h.created else {
++            continue;
++        };
++        let cs = seated_created(h.source, seated, h.vendor);
++        if only_both_dated && cs.is_none() {
++            continue;
++        }
++        if matches!(cs, Some(cs) if c <= cs) {
++            return Some(GateRefusal {
++                why: WHY_OLDER,
++                older: true,
++            });
++        }
++        if c > now_unix + FUTURE_SLACK_SECS {
++            found = Some(GateRefusal {
++                why: WHY_FUTURE,
++                older: false,
++            });
++        }
++    }
++    found
++}
++
+ /// Whether a public id may be a swap candidate for `seated`: the smoke cannot tell a newer model
+ /// from an older one the plan still serves (`grok-4.20` is a 2025 model, older than `grok-4.7`), so
+-/// a catalog id needs DATE evidence. Per occurrence: a page id (no dates) or a catalog entry without
+-/// `created` never qualifies; when the seated id is in the same catalog with a date, the candidate
+-/// must be created strictly later; when it is not, the candidate must be created within
+-/// [`UNANCHORED_MAX_AGE_DAYS`]. Any qualifying occurrence qualifies; otherwise the reason.
++/// a catalog id needs DATE evidence, and negative evidence wins (F02-14, F04-3):
++/// * a candidate the state recorded as older than the seated id is refused;
++/// * if ANY public source dates it in the future (beyond [`FUTURE_SLACK_SECS`]) or not later than
++///   the seated id it lists too, it is refused, whatever another source says;
++/// * otherwise one qualifying occurrence qualifies: the seated id in the same catalog with an
++///   earlier date, or - when that catalog does not list the seated id - a date within
++///   [`UNANCHORED_MAX_AGE_DAYS`]. A page id (no dates) or a catalog entry without `created` never
++///   qualifies.
+ fn public_verdict(
+     current: &[SourceList],
+     seated: &str,
+     cand: &str,
++    older: &[OlderPair],
+     now_unix: i64,
+-) -> Result<(), &'static str> {
++) -> Result<(), GateRefusal> {
++    if recorded_older(older, seated, cand) {
++        return Err(GateRefusal {
++            why: WHY_RECORDED,
++            older: false,
++        });
++    }
++    if let Some(neg) = negative_evidence(current, seated, cand, now_unix, false) {
++        return Err(neg);
++    }
+     // reasons ranked: the most informative one found is reported
+     let mut why: (u8, &'static str) = (0, "not in a public source");
+     let mut note = |rank: u8, w: &'static str| {
+@@ -318,13 +476,38 @@ fn public_verdict(
+             continue;
+         };
+         match seated_created(h.source, seated, h.vendor) {
+-            Some(cs) if c > cs => return Ok(()),
+-            Some(_) => note(4, "older than the seated model by the catalog's date"),
++            // (negative evidence was ruled out above: a listed seated id is dated earlier here)
++            Some(_) => return Ok(()),
+             None if c >= now_unix - UNANCHORED_MAX_AGE_DAYS * 86_400 => return Ok(()),
+             None => note(3, "older than 180 days by the catalog's date"),
+         }
+     }
+-    Err(why.1)
++    Err(GateRefusal {
++        why: why.1,
++        older: false,
++    })
++}
++
++/// (F04-2) The gate of an id from the entry's OWN list (engine / endpoint - what the plan offers):
++/// no date is needed, but a candidate the state recorded as older is refused, and so is one that a
++/// public source dating BOTH ids shows not newer than the seated id (or dates in the future).
++fn own_verdict(
++    current: &[SourceList],
++    seated: &str,
++    cand: &str,
++    older: &[OlderPair],
++    now_unix: i64,
++) -> Result<(), GateRefusal> {
++    if recorded_older(older, seated, cand) {
++        return Err(GateRefusal {
++            why: WHY_RECORDED,
++            older: false,
++        });
++    }
++    match negative_evidence(current, seated, cand, now_unix, true) {
++        Some(neg) => Err(neg),
++        None => Ok(()),
++    }
+ }
+ 
+ /// [`swap_plan`]'s candidates only.
+@@ -336,23 +519,43 @@ pub fn swap_candidates(
+     swap_plan(roster, current, now_unix).0
+ }
+ 
+-/// The seated ids with an available successor ([`successor`]: same prefix and suffix, a higher
+-/// version - a higher major included), and the public ids rejected for lack of date evidence. The
+-/// candidates of an entry are the ids of its own source (if it has one - what the plan offers, no
+-/// dates needed) PLUS the public catalog ids with the vendor part stripped that pass
+-/// [`public_verdict`]. When the version rule's pick among ALL ids is a public id that fails the
+-/// verdict, it is returned as rejected (with the reason) and the best qualifying id, if any, is the
+-/// candidate. Entries of inactive plans are never touched (iterated via `active_entries`);
+-/// protected and on-request entries ARE returned (flagged) so the pass can announce them, never
+-/// smoke them.
++/// [`plan_swaps`] with no recorded history: the candidates and the rejected ids.
+ pub fn swap_plan(
+     roster: &Roster,
+     current: &[SourceList],
+     now_unix: i64,
+ ) -> (Vec<SwapCandidate>, Vec<RejectedCandidate>) {
++    let p = plan_swaps(roster, current, &[], now_unix);
++    (p.candidates, p.rejected)
++}
++
++/// What [`plan_swaps`] found.
++#[derive(Debug, Clone, Default)]
++pub struct SwapPlan {
++    pub candidates: Vec<SwapCandidate>,
++    pub rejected: Vec<RejectedCandidate>,
++    /// (F04-3) Every `(seated, id)` pair a public source dated as not newer in this pass - the pass
++    /// records them in the state, so the id stays rejected later.
++    pub older: Vec<OlderPair>,
++}
++
++/// The seated ids with an available successor ([`successor`]: same prefix and suffix, a higher
++/// version - a higher major included), and the ids the date gate rejected. The candidates of an
++/// entry are the ids of its own source (if it has one - what the plan offers - through
++/// [`own_verdict`]) PLUS the public catalog ids with the vendor part stripped that pass
++/// [`public_verdict`]; `older` is the history the state recorded. When the version rule's pick
++/// among ALL ids fails its gate, it is returned as rejected (with the reason) and the best
++/// qualifying id, if any, is the candidate. Entries of inactive plans are never touched (iterated
++/// via `active_entries`); protected and on-request entries ARE returned (flagged) so the pass can
++/// announce them, never smoke them.
++pub fn plan_swaps(
++    roster: &Roster,
++    current: &[SourceList],
++    older: &[OlderPair],
++    now_unix: i64,
++) -> SwapPlan {
+     let public = public_candidates(current);
+-    let mut out = Vec::new();
+-    let mut rejected = Vec::new();
++    let mut plan = SwapPlan::default();
+     for e in roster.active_entries() {
+         if e.model.is_empty() {
+             continue;
+@@ -366,31 +569,59 @@ pub fn swap_plan(
+             .and_then(|source| current.iter().find(|s| s.source == source))
+             .map(|s| s.ids.as_slice())
+             .unwrap_or(&[]);
+-        let others: Vec<&String> = public.iter().filter(|p| !own.contains(p)).collect();
+         let mut all: Vec<String> = own.to_vec();
+-        all.extend(others.iter().map(|p| (*p).clone()));
+-        let mut cands: Vec<String> = own.to_vec();
+-        cands.extend(
+-            others
++        all.extend(public.iter().filter(|p| !own.contains(p)).cloned());
++        // Only the ids the version rule takes for a successor of the seated id are gated (and can
++        // be recorded as older) - each once.
++        let succ_ids: Vec<String> = all
++            .iter()
++            .filter(|id| successor(&e.model, std::slice::from_ref(*id)).is_some())
++            .cloned()
++            .collect();
++        let verdicts: Vec<Result<(), GateRefusal>> = succ_ids
++            .iter()
++            .map(|id| {
++                if own.contains(id) {
++                    own_verdict(current, &e.model, id, older, now_unix)
++                } else {
++                    public_verdict(current, &e.model, id, older, now_unix)
++                }
++            })
++            .collect();
++        let verdict_of = |id: &str| -> Result<(), GateRefusal> {
++            succ_ids
+                 .iter()
+-                .filter(|p| public_verdict(current, &e.model, p, now_unix).is_ok())
+-                .map(|p| (*p).clone()),
+-        );
+-        if let Some(raw) = successor(&e.model, &all) {
+-            if !own.iter().any(|o| o == raw) {
+-                if let Err(why) = public_verdict(current, &e.model, raw, now_unix) {
+-                    rejected.push(RejectedCandidate {
+-                        provider: e.provider.clone(),
+-                        engine: engine.clone(),
+-                        old: e.model.clone(),
+-                        new: raw.to_string(),
+-                        why: why.to_string(),
+-                    });
++                .position(|x| x == id)
++                .map(|i| verdicts[i])
++                .unwrap_or(Ok(()))
++        };
++        for (id, v) in succ_ids.iter().zip(&verdicts) {
++            if matches!(v, Err(r) if r.older) {
++                let pair = OlderPair::new(&e.model, id);
++                if !plan.older.contains(&pair) {
++                    plan.older.push(pair);
+                 }
+             }
+         }
++        let cands: Vec<String> = succ_ids
++            .iter()
++            .zip(&verdicts)
++            .filter(|(_, v)| v.is_ok())
++            .map(|(id, _)| id.clone())
++            .collect();
++        if let Some(raw) = successor(&e.model, &all) {
++            if let Err(r) = verdict_of(raw) {
++                plan.rejected.push(RejectedCandidate {
++                    provider: e.provider.clone(),
++                    engine: engine.clone(),
++                    old: e.model.clone(),
++                    new: raw.to_string(),
++                    why: r.why.to_string(),
++                });
++            }
++        }
+         if let Some(succ) = successor(&e.model, &cands) {
+-            out.push(SwapCandidate {
++            plan.candidates.push(SwapCandidate {
+                 position: e.position,
+                 provider: e.provider.clone(),
+                 engine,
+@@ -402,7 +633,7 @@ pub fn swap_plan(
+             });
+         }
+     }
+-    (out, rejected)
++    plan
+ }
+ 
+ /// A "new in the family" announcement: public ids not seen in the previous pass that share the
+@@ -541,8 +772,9 @@ pub fn published_ids() -> &'static std::collections::HashSet<String> {
+     })
+ }
+ 
+-/// Seat a successor by editing exactly the target entry's `model` in the roster file, keeping the
+-/// file's formatting: copy to `<path>.bak-maintain-<yyyymmdd>`, replace that one `model` value,
++/// Seat a successor by editing exactly the `model` of `reviewers[position]` (1-based, the roster
++/// position) in the roster file, keeping the file's formatting: copy to
++/// `<path>.bak-maintain-<yyyymmdd>`, replace that one string value ([`replace_entry_model`]),
+ /// re-parse to verify the result still loads, and write it. The backup is left in place; on a
+ /// verify failure nothing is written and the backup stands. `today` is `yyyymmdd`.
+ ///
+@@ -554,6 +786,7 @@ pub fn published_ids() -> &'static std::collections::HashSet<String> {
+ pub fn apply_swap(
+     roster_path: &str,
+     basis: &str,
++    position: usize,
+     provider: &str,
+     old: &str,
+     new: &str,
+@@ -573,7 +806,7 @@ pub fn apply_swap(
+         return Err("roster changed during the smoke; the swap was not applied".to_string());
+     }
+     // The edit is computed from the gated snapshot, so it targets exactly that entry.
+-    let updated = replace_entry_model(basis, provider, old, new)?;
++    let updated = replace_entry_model(basis, position, provider, old, new)?;
+     // Re-parse to verify the edited roster still loads before writing it.
+     let home = std::env::var("USERPROFILE")
+         .ok()
+@@ -611,13 +844,18 @@ fn commit_swap(roster_path: &str, basis: &str, updated: &str, today: &str) -> Re
+         .map_err(|e| format!("could not write the roster ({e})"))
+ }
+ 
+-/// Replace the `model` value of exactly the entry whose provider is `provider` and whose model is
+-/// `old` with `new`, leaving the rest of the file byte-for-byte unchanged. A single `"model":
+-/// "old"` occurrence is replaced directly; several are disambiguated by the one whose enclosing
+-/// object also names `provider`. Zero matches, or an ambiguity the provider cannot resolve, is an
+-/// error (the swap is then skipped, never guessed).
++/// (F02-17) Replace the `model` of `reviewers[position]` (1-based: the roster position of a
++/// plugin-visible entry) with `new`, leaving the rest of the file byte-for-byte unchanged. The
++/// value is located by PARSING ([`reviewer_model_span`]: the top-level `reviewers` member, that
++/// element, its `model` member - never a text search, so an escaped model, an `ext` object holding
++/// the same string, or another entry with the same model cannot be hit). The element must still
++/// name `provider` and `old` (decoded). The whole string literal is replaced by `new` serialised as
++/// JSON, and the result is verified SEMANTICALLY: re-parsed, it must equal the old roster with only
++/// `reviewers[position].model` changed. Any mismatch is an error (the swap is skipped, never
++/// guessed).
+ pub fn replace_entry_model(
+     text: &str,
++    position: usize,
+     provider: &str,
+     old: &str,
+     new: &str,
+@@ -625,124 +863,203 @@ pub fn replace_entry_model(
+     if !valid_model_id(new) {
+         return Err(format!("the successor id {new:?} is not a valid model id"));
+     }
+-    let needle_positions = find_model_values(text, old);
+-    let chosen = match needle_positions.as_slice() {
+-        [] => return Err(format!("the model {old} was not found in the roster")),
+-        [only] => *only,
+-        many => {
+-            let matching: Vec<(usize, usize)> = many
+-                .iter()
+-                .copied()
+-                .filter(|&(vs, _)| object_names_provider(text, vs, provider))
+-                .collect();
+-            match matching.as_slice() {
+-                [one] => *one,
+-                _ => {
+-                    return Err(format!(
+-                        "the model {old} is ambiguous in the roster (provider {provider})"
+-                    ))
+-                }
+-            }
+-        }
+-    };
+-    let (vstart, vend) = chosen;
+-    let mut out = String::with_capacity(text.len() + new.len());
++    let idx = position
++        .checked_sub(1)
++        .ok_or_else(|| "roster position 0 does not exist".to_string())?;
++    let before: serde_json::Value =
++        serde_json::from_str(text).map_err(|_| "the roster does not parse".to_string())?;
++    let entry = before
++        .get("reviewers")
++        .and_then(|r| r.as_array())
++        .and_then(|a| a.get(idx))
++        .ok_or_else(|| format!("the roster has no reviewers entry {position}"))?;
++    if entry.get("provider").and_then(|p| p.as_str()) != Some(provider) {
++        return Err(format!(
++            "reviewers entry {position} is no longer provider {provider}"
++        ));
++    }
++    let (vstart, vend) = reviewer_model_span(text, idx)?;
++    let current: String = serde_json::from_str(&text[vstart..vend])
++        .map_err(|_| format!("the model of reviewers entry {position} does not decode"))?;
++    if current != old {
++        return Err(format!(
++            "the model of reviewers entry {position} is no longer {old}"
++        ));
++    }
++    let literal = serde_json::to_string(new).map_err(|e| e.to_string())?;
++    let mut out = String::with_capacity(text.len() + literal.len());
+     out.push_str(&text[..vstart]);
+-    out.push_str(new);
++    out.push_str(&literal);
+     out.push_str(&text[vend..]);
++    // The semantic delta: exactly reviewers[position].model changed, nothing else.
++    let mut expected = before.clone();
++    expected["reviewers"][idx]["model"] = serde_json::Value::String(new.to_string());
++    let after: serde_json::Value = serde_json::from_str(&out)
++        .map_err(|_| "the edited roster does not parse; nothing written".to_string())?;
++    if after != expected {
++        return Err(format!(
++            "the edit would change more than the model of reviewers entry {position}; nothing written"
++        ));
++    }
+     Ok(out)
+ }
+ 
+-/// The (start, end) byte ranges of the VALUE string of every `"model": "<value>"` whose value is
+-/// exactly `value` (the range covers the value text only, inside the quotes).
+-fn find_model_values(text: &str, value: &str) -> Vec<(usize, usize)> {
+-    let mut out = Vec::new();
+-    let bytes = text.as_bytes();
+-    let mut i = 0;
+-    while let Some(rel) = text[i..].find("\"model\"") {
+-        let key = i + rel;
+-        // skip to the opening quote of the value: past "model", optional ws, ':', optional ws, '"'
+-        let mut j = key + "\"model\"".len();
+-        while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+-            j += 1;
++/// (F02-17) The byte span (quotes included) of the `model` string of `reviewers[idx]` in a roster
++/// text, found by parsing: the top-level object's single `reviewers` member, its element `idx`, that
++/// object's single `model` member, which must be a string. A repeated key on that path is refused
++/// (a parser would take the last one; the edit must never guess).
++fn reviewer_model_span(text: &str, idx: usize) -> Result<(usize, usize), String> {
++    let b = text.as_bytes();
++    let top = json_ws(b, 0);
++    let members = json_object_members(text, top)?;
++    let single =
++        |members: &[(String, (usize, usize))], key: &str| -> Result<(usize, usize), String> {
++            let hits: Vec<(usize, usize)> = members
++                .iter()
++                .filter(|(k, _)| k == key)
++                .map(|(_, s)| *s)
++                .collect();
++            match hits.as_slice() {
++                [one] => Ok(*one),
++                [] => Err(format!("no {key} member")),
++                _ => Err(format!("the {key} member is repeated")),
++            }
++        };
++    let reviewers = single(&members, "reviewers")?;
++    let elements = json_array_elements(text, reviewers.0)?;
++    let element = *elements
++        .get(idx)
++        .ok_or_else(|| format!("the roster has no reviewers entry {}", idx + 1))?;
++    let fields = json_object_members(text, element.0)?;
++    let model = single(&fields, "model")?;
++    if b.get(model.0) != Some(&b'"') {
++        return Err(format!(
++            "the model of reviewers entry {} is not a string",
++            idx + 1
++        ));
++    }
++    Ok(model)
++}
++
++/// The deepest nesting the roster scanner follows.
++const JSON_MAX_DEPTH: usize = 64;
++
++fn json_ws(b: &[u8], mut i: usize) -> usize {
++    while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r') {
++        i += 1;
++    }
++    i
++}
++
++/// The end (exclusive) of the JSON string starting at `i` (a `"`).
++fn json_string_end(b: &[u8], i: usize) -> Result<usize, String> {
++    if b.get(i) != Some(&b'"') {
++        return Err("a string was expected".to_string());
++    }
++    let mut k = i + 1;
++    while k < b.len() {
++        match b[k] {
++            b'\\' => k += 2,
++            b'"' => return Ok(k + 1),
++            _ => k += 1,
+         }
+-        if j < bytes.len() && bytes[j] == b':' {
+-            j += 1;
+-            while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+-                j += 1;
++    }
++    Err("an unterminated string".to_string())
++}
++
++/// The end (exclusive) of the JSON value starting at `i`.
++fn json_value_end(text: &str, i: usize, depth: usize) -> Result<usize, String> {
++    let b = text.as_bytes();
++    if depth > JSON_MAX_DEPTH {
++        return Err("the roster nests too deeply".to_string());
++    }
++    match b.get(i) {
++        Some(b'"') => json_string_end(b, i),
++        Some(b'{') => json_object_members_at(text, i, depth).map(|(_, end)| end),
++        Some(b'[') => json_array_elements_at(text, i, depth).map(|(_, end)| end),
++        Some(_) => {
++            let mut k = i;
++            while k < b.len() && !matches!(b[k], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
++            {
++                k += 1;
+             }
+-            if j < bytes.len() && bytes[j] == b'"' {
+-                let vstart = j + 1;
+-                // the value ends at the next unescaped quote
+-                let mut k = vstart;
+-                while k < bytes.len() {
+-                    if bytes[k] == b'\\' {
+-                        k += 2;
+-                        continue;
+-                    }
+-                    if bytes[k] == b'"' {
+-                        break;
+-                    }
+-                    k += 1;
+-                }
+-                if k <= bytes.len() && &text[vstart..k] == value {
+-                    out.push((vstart, k));
+-                }
++            if k == i {
++                Err("a value was expected".to_string())
++            } else {
++                Ok(k)
+             }
+         }
+-        i = key + "\"model\"".len();
++        None => Err("the roster ends early".to_string()),
+     }
+-    out
+ }
+ 
+-/// Whether the JSON object enclosing byte `pos` contains a `"provider": "<provider>"` member.
+-fn object_names_provider(text: &str, pos: usize, provider: &str) -> bool {
+-    let bytes = text.as_bytes();
+-    // scan back to the enclosing '{' (depth-aware)
+-    let mut depth = 0i32;
+-    let mut start = None;
+-    let mut i = pos;
++/// The members (decoded key, value span) of the object starting at `i`.
++fn json_object_members(text: &str, i: usize) -> Result<Members, String> {
++    json_object_members_at(text, i, 0).map(|(m, _)| m)
++}
++
++type Members = Vec<(String, (usize, usize))>;
++
++fn json_object_members_at(text: &str, i: usize, depth: usize) -> Result<(Members, usize), String> {
++    let b = text.as_bytes();
++    if b.get(i) != Some(&b'{') {
++        return Err("an object was expected".to_string());
++    }
++    let mut out = Vec::new();
++    let mut k = json_ws(b, i + 1);
++    if b.get(k) == Some(&b'}') {
++        return Ok((out, k + 1));
++    }
+     loop {
+-        if i == 0 {
+-            break;
++        let ks = k;
++        let ke = json_string_end(b, ks)?;
++        let key: String =
++            serde_json::from_str(&text[ks..ke]).map_err(|_| "a key does not decode".to_string())?;
++        k = json_ws(b, ke);
++        if b.get(k) != Some(&b':') {
++            return Err("a ':' was expected".to_string());
+         }
+-        i -= 1;
+-        match bytes[i] {
+-            b'}' => depth += 1,
+-            b'{' => {
+-                if depth == 0 {
+-                    start = Some(i);
+-                    break;
+-                }
+-                depth -= 1;
+-            }
+-            _ => {}
++        let vs = json_ws(b, k + 1);
++        let ve = json_value_end(text, vs, depth + 1)?;
++        out.push((key, (vs, ve)));
++        k = json_ws(b, ve);
++        match b.get(k) {
++            Some(b',') => k = json_ws(b, k + 1),
++            Some(b'}') => return Ok((out, k + 1)),
++            _ => return Err("a ',' or '}' was expected".to_string()),
+         }
+     }
+-    let Some(start) = start else {
+-        return false;
+-    };
+-    // scan forward to the matching '}'
+-    let mut depth = 0i32;
+-    let mut end = text.len();
+-    let mut j = start;
+-    while j < bytes.len() {
+-        match bytes[j] {
+-            b'{' => depth += 1,
+-            b'}' => {
+-                depth -= 1;
+-                if depth == 0 {
+-                    end = j + 1;
+-                    break;
+-                }
+-            }
+-            _ => {}
++}
++
++/// The element spans of the array starting at `i`.
++fn json_array_elements(text: &str, i: usize) -> Result<Vec<(usize, usize)>, String> {
++    json_array_elements_at(text, i, 0).map(|(e, _)| e)
++}
++
++fn json_array_elements_at(
++    text: &str,
++    i: usize,
++    depth: usize,
++) -> Result<(Vec<(usize, usize)>, usize), String> {
++    let b = text.as_bytes();
++    if b.get(i) != Some(&b'[') {
++        return Err("an array was expected".to_string());
++    }
++    let mut out = Vec::new();
++    let mut k = json_ws(b, i + 1);
++    if b.get(k) == Some(&b']') {
++        return Ok((out, k + 1));
++    }
++    loop {
++        let ve = json_value_end(text, k, depth + 1)?;
++        out.push((k, ve));
++        k = json_ws(b, ve);
++        match b.get(k) {
++            Some(b',') => k = json_ws(b, k + 1),
++            Some(b']') => return Ok((out, k + 1)),
++            _ => return Err("a ',' or ']' was expected".to_string()),
+         }
+-        j += 1;
+     }
+-    let slice = &text[start..end];
+-    let marker = format!("\"{provider}\"");
+-    slice.contains("\"provider\"") && slice.contains(&marker)
+ }
+ 
+ #[cfg(test)]
+@@ -785,6 +1102,7 @@ mod tests {
+         assert!(new_ids(&prev, &cur).is_empty(), "first pass is a baseline");
+         let prev = ModelsState {
+             sources: vec![sl("grok", &["grok-4.7"])],
++            ..Default::default()
+         };
+         let cur = vec![
+             sl("grok", &["grok-4.7", "grok-5.0"]),
+@@ -844,8 +1162,9 @@ mod tests {
+         assert_eq!(c[1].new, "gpt-7-astra");
+         assert!(c[1].protected);
+         // the entry's own list wins the origin when it lists the successor too
++        let own = source_for(&alibaba_endpoint_entry()).unwrap();
+         let cur = vec![
+-            sl("endpoint:alibaba.example", &["qwen4-max"]),
++            sl(&own, &["qwen4-max"]),
+             sl("web:openrouter.ai", &["qwen/qwen4-max"]),
+         ];
+         let c = swap_candidates(&roster, &cur, now);
+@@ -908,7 +1227,8 @@ mod tests {
+         let (c, rejected) = swap_plan(&roster, &cur, now);
+         assert!(c.is_empty());
+         assert_eq!(rejected.len(), 1);
+-        // the entry's OWN list keeps today's rule (no dates needed)
++        // the entry's OWN list keeps today's rule (no dates needed) while no public source dates
++        // both ids
+         let cur = vec![
+             sl("grok", &["grok-4.7", "grok-4.20"]),
+             dated("web:openrouter.ai", &[("x-ai/grok-4.7", Some(at(30, now)))]),
+@@ -916,6 +1236,211 @@ mod tests {
+         assert_eq!(swap_candidates(&roster, &cur, now)[0].new, "grok-4.20");
+     }
+ 
++    /// (F04-2) An id from the entry's OWN list goes through the date gate when a public source
++    /// dates both ids: `grok models` listing `grok-4.20` beside `grok-4.7` no longer seats it when
++    /// the catalog dates it older; a newer own id still wins without a date.
++    #[test]
++    fn an_own_list_id_a_catalog_dates_older_is_not_a_candidate() {
++        let now = 1_795_000_000;
++        let roster = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
++        let cur = vec![
++            sl("grok", &["grok-4.7", "grok-4.20", "grok-4.8"]),
++            dated(
++                "web:openrouter.ai",
++                &[
++                    ("x-ai/grok-4.7", Some(at(30, now))),
++                    ("x-ai/grok-4.20", Some(at(300, now))),
++                ],
++            ),
++        ];
++        let p = plan_swaps(&roster, &cur, &[], now);
++        assert_eq!(p.candidates.len(), 1, "{:?}", p.candidates);
++        assert_eq!(p.candidates[0].new, "grok-4.8");
++        assert!(!p.candidates[0].from_public);
++        assert_eq!(p.rejected.len(), 1, "{:?}", p.rejected);
++        assert_eq!(p.rejected[0].new, "grok-4.20");
++        assert_eq!(p.rejected[0].why, WHY_OLDER);
++        assert_eq!(p.older, vec![OlderPair::new("grok-4.7", "grok-4.20")]);
++        // only the older own id: no candidate at all
++        let cur = vec![
++            sl("grok", &["grok-4.7", "grok-4.20"]),
++            dated(
++                "web:openrouter.ai",
++                &[
++                    ("x-ai/grok-4.7", Some(at(30, now))),
++                    ("x-ai/grok-4.20", Some(at(300, now))),
++                ],
++            ),
++        ];
++        assert!(plan_swaps(&roster, &cur, &[], now).candidates.is_empty());
++    }
++
++    /// (F02-14) A candidate dated in the future (beyond a day) is rejected, whether the seated id is
++    /// in the catalog or not; a date within the slack is believed.
++    #[test]
++    fn a_future_dated_candidate_is_rejected() {
++        let now = 1_795_000_000;
++        let roster = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
++        for cur in [
++            vec![dated(
++                "web:openrouter.ai",
++                &[
++                    ("x-ai/grok-4.7", Some(at(30, now))),
++                    ("x-ai/grok-4.8", Some(now + 3 * 86_400)),
++                ],
++            )],
++            vec![dated(
++                "web:openrouter.ai",
++                &[("x-ai/grok-4.8", Some(now + 3 * 86_400))],
++            )],
++        ] {
++            let p = plan_swaps(&roster, &cur, &[], now);
++            assert!(p.candidates.is_empty(), "{:?}", p.candidates);
++            assert_eq!(p.rejected[0].why, WHY_FUTURE);
++            assert!(p.older.is_empty(), "a future date is not recorded as older");
++        }
++        let cur = vec![dated(
++            "web:openrouter.ai",
++            &[
++                ("x-ai/grok-4.7", Some(at(30, now))),
++                ("x-ai/grok-4.8", Some(now + 3_600)),
++            ],
++        )];
++        assert_eq!(swap_candidates(&roster, &cur, now)[0].new, "grok-4.8");
++    }
++
++    /// (F02-14) Negative date evidence wins: one catalog dates the candidate older than the seated
++    /// id, a second catalog lists only the candidate with a recent date (which alone would qualify
++    /// it, unanchored) - it is not a candidate, in either source order.
++    #[test]
++    fn negative_date_evidence_in_any_source_wins() {
++        let now = 1_795_000_000;
++        let roster = roster_of(vec![alibaba_endpoint_entry()]);
++        let older = dated(
++            "web:openrouter.ai",
++            &[
++                ("qwen/qwen3.8-max", Some(at(10, now))),
++                ("qwen/qwen4-max", Some(at(300, now))),
++            ],
++        );
++        let recent = dated("web:other.example", &[("qwen/qwen4-max", Some(at(2, now)))]);
++        for cur in [
++            vec![older.clone(), recent.clone()],
++            vec![recent.clone(), older.clone()],
++        ] {
++            let p = plan_swaps(&roster, &cur, &[], now);
++            assert!(p.candidates.is_empty(), "{:?}", p.candidates);
++            assert_eq!(p.rejected[0].why, WHY_OLDER);
++            assert_eq!(p.older, vec![OlderPair::new("qwen3.8-max", "qwen4-max")]);
++        }
++        // the recent copy alone qualifies (unanchored, within 180 days)
++        assert_eq!(swap_candidates(&roster, &[recent], now)[0].new, "qwen4-max");
++    }
++
++    /// (F04-3) A candidate once recorded as older stays rejected, even when a later catalog re-dates
++    /// it after the seated id - for a public id and for an own-list id alike; the record is keyed by
++    /// the seated id, so another seated id is not affected.
++    #[test]
++    fn a_candidate_recorded_as_older_stays_rejected() {
++        let now = 1_795_000_000;
++        let roster = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
++        let recorded = vec![OlderPair::new("grok-4.7", "x-ai/grok-4.20")];
++        let restamped = dated(
++            "web:openrouter.ai",
++            &[
++                ("x-ai/grok-4.7", Some(at(30, now))),
++                ("x-ai/grok-4.20", Some(at(1, now))),
++            ],
++        );
++        let p = plan_swaps(&roster, std::slice::from_ref(&restamped), &recorded, now);
++        assert!(p.candidates.is_empty(), "{:?}", p.candidates);
++        assert_eq!(p.rejected[0].why, WHY_RECORDED);
++        // the same id in the entry's own list
++        let cur = vec![sl("grok", &["grok-4.7", "grok-4.20"])];
++        let p = plan_swaps(&roster, &cur, &recorded, now);
++        assert!(p.candidates.is_empty());
++        assert_eq!(p.rejected[0].why, WHY_RECORDED);
++        // another seated id is judged afresh
++        let roster2 = roster_of(vec![entry("grok", "grok", "grok-4.5")]);
++        assert_eq!(
++            plan_swaps(&roster2, std::slice::from_ref(&restamped), &recorded, now).candidates[0]
++                .new,
++            "grok-4.20"
++        );
++        // the merge keeps old records, adds new ones once, and is bounded
++        let merged = merge_older(
++            &recorded,
++            &[OlderPair::new("a-1", "a-2"), recorded[0].clone()],
++        );
++        assert_eq!(merged.len(), 2);
++        let many: Vec<OlderPair> = (0..MAX_OLDER_PAIRS + 7)
++            .map(|i| OlderPair::new("m-1", &format!("m-{i}")))
++            .collect();
++        let capped = merge_older(&[], &many);
++        assert_eq!(capped.len(), MAX_OLDER_PAIRS);
++        assert_eq!(capped.last(), many.last(), "the newest are kept");
++        // a state with records round-trips; an older state loads with none
++        let st = ModelsState {
++            sources: vec![],
++            older: recorded.clone(),
++        };
++        let back: ModelsState = serde_json::from_str(&serde_json::to_string(&st).unwrap()).unwrap();
++        assert_eq!(back.older, recorded);
++        let old: ModelsState = serde_json::from_str(r#"{"sources":[]}"#).unwrap();
++        assert!(old.older.is_empty());
++    }
++
++    /// (F02-15) An endpoint's authenticated list is keyed by the canonical endpoint (scheme, host,
++    /// port, path) plus the key variable and the plan: two entries on one host with another path or
++    /// another key do not share it, so a successor only one of them lists is never offered to the
++    /// other; the same endpoint written with the explicit default port and a trailing slash does.
++    #[test]
++    fn an_endpoint_list_is_keyed_by_endpoint_key_and_plan_not_host() {
++        let ep = |base: &str, key: &str, plan: &str, model: &str, pos: usize| RosterEntry {
++            position: pos,
++            plan: plan.into(),
++            endpoint: Some(c3_core::claude::ClaudeEndpoint {
++                base_url: base.into(),
++                host_name: "api.example".into(),
++                env_key: key.into(),
++                ..Default::default()
++            }),
++            ..entry(&format!("e{pos}"), "claude", model)
++        };
++        let a = ep("https://api.example/one", "KEY_A", "pa", "glm-5.3", 1);
++        let b = ep("https://api.example/two", "KEY_A", "pa", "glm-5.3-air", 2);
++        let c = ep("https://api.example/one", "KEY_C", "pa", "glm-5.3", 3);
++        let d = ep("https://API.example:443/one/", "KEY_A", "pa", "glm-5.3", 4);
++        let e2 = ep("https://api.example/one", "KEY_A", "pb", "glm-5.3", 5);
++        let sa = source_for(&a).unwrap();
++        assert_eq!(sa, "endpoint:https://api.example:443/one|KEY_A|pa");
++        assert_ne!(sa, source_for(&b).unwrap());
++        assert_ne!(sa, source_for(&c).unwrap());
++        assert_ne!(sa, source_for(&e2).unwrap());
++        assert_eq!(sa, source_for(&d).unwrap());
++        // the first entry's list holds a private successor; only the entries with its key get it
++        let roster = roster_of(vec![a, b, c, d, e2]);
++        let cur = vec![sl(
++            &sa,
++            &["glm-5.3", "glm-5.4", "glm-5.3-air", "glm-5.4-air"],
++        )];
++        let got: Vec<(usize, String)> = swap_candidates(&roster, &cur, 0)
++            .into_iter()
++            .map(|c| (c.position, c.new))
++            .collect();
++        assert_eq!(
++            got,
++            vec![(1, "glm-5.4".to_string()), (4, "glm-5.4".to_string())]
++        );
++        // the first pass after the key change reads the old host-only record (no flood of "new")
++        let prev = ModelsState {
++            sources: vec![sl("endpoint:api.example", &["glm-5.3", "glm-5.4"])],
++            ..Default::default()
++        };
++        let cur = vec![sl(&sa, &["glm-5.3", "glm-5.4", "glm-5.5"])];
++        assert_eq!(new_ids(&prev, &cur), vec!["glm-5.5"]);
++    }
++
+     #[test]
+     fn a_seated_id_absent_from_the_catalog_needs_a_recent_candidate() {
+         let now = 1_795_000_000;
+@@ -958,6 +1483,7 @@ mod tests {
+         let now = 1_795_000_000;
+         let st = ModelsState {
+             sources: vec![dated("web:openrouter.ai", &[("qwen/qwen4-max", Some(now))])],
++            ..Default::default()
+         };
+         let back: ModelsState = serde_json::from_str(&serde_json::to_string(&st).unwrap()).unwrap();
+         assert_eq!(back.sources[0].created.get("qwen/qwen4-max"), Some(&now));
+@@ -983,6 +1509,7 @@ mod tests {
+         )];
+         let prev = ModelsState {
+             sources: vec![sl("web:openrouter.ai", &[])],
++            ..Default::default()
+         };
+         let news = family_news(&roster, &prev, &cur, now);
+         let zai: Vec<&FamilyNews> = news.iter().filter(|n| n.provider == "ZAI").collect();
+@@ -1029,12 +1556,14 @@ mod tests {
+         // a later pass: an id absent from the previous record is new whatever its stamp
+         let prev = ModelsState {
+             sources: vec![sl("web:openrouter.ai", &["google/gemini-4-hydrogen"])],
++            ..Default::default()
+         };
+         let news = family_news(&roster, &prev, &cur, now);
+         assert_eq!(news[0].ids, vec!["gemini-3.9-pro"]);
+         // nothing new -> nothing announced
+         let prev = ModelsState {
+             sources: cur.clone(),
++            ..Default::default()
+         };
+         assert!(family_news(&roster, &prev, &cur, now).is_empty());
+     }
+@@ -1051,6 +1580,7 @@ mod tests {
+         let cur = vec![sl("web:openrouter.ai", &refs)];
+         let prev = ModelsState {
+             sources: vec![sl("web:openrouter.ai", &[])],
++            ..Default::default()
+         };
+         let news = family_news(&roster, &prev, &cur, 0);
+         assert_eq!(news[0].ids.len(), FAMILY_NEWS_PER_ENTRY);
+@@ -1063,14 +1593,23 @@ mod tests {
+                 sl("web:openrouter.ai", &["qwen/Qwen4-Max"]),
+                 sl("page:zai-docs", &["glm-6"]),
+                 sl("endpoint:api.z.ai", &["glm-9-secret"]),
++                sl(
++                    "endpoint:https://api.z.ai:443/api/anthropic|ZAI_API_KEY|zai",
++                    &["glm-9-x"],
++                ),
+                 sl("grok", &["grok-4.7"]),
+             ],
++            ..Default::default()
+         };
+         let p = published_from(&st);
+         assert!(p.contains("qwen/qwen4-max"));
+         assert!(p.contains("qwen4-max"));
+         assert!(p.contains("glm-6"));
+         assert!(!p.contains("glm-9-secret"));
++        assert!(
++            !p.contains("glm-9-x"),
++            "a keyed endpoint list stays private"
++        );
+         assert!(!p.contains("grok-4.7"));
+     }
+ 
+@@ -1081,36 +1620,80 @@ mod tests {
+     { "provider": "grok", "engine": "grok", "model": "grok-4.7", "plan": "supergrok" }
+   ]
+ }"#;
+-        let out = replace_entry_model(text, "grok", "grok-4.7", "grok-4.8").unwrap();
++        let out = replace_entry_model(text, 1, "grok", "grok-4.7", "grok-4.8").unwrap();
+         assert!(out.contains("\"model\": \"grok-4.8\""));
+         assert_eq!(out, text.replace("grok-4.7", "grok-4.8"));
+     }
+ 
+     #[test]
+-    fn replace_disambiguates_by_provider_when_model_repeats() {
++    fn replace_targets_the_position_when_model_repeats() {
+         let text = r#"{"reviewers":[
+           {"provider":"a","model":"m1"},
+           {"provider":"b","model":"m1"}
+         ]}"#;
+-        // same model string in two entries → provider disambiguates
+-        let out = replace_entry_model(text, "b", "m1", "m2").unwrap();
++        // same model string in two entries -> the position decides
++        let out = replace_entry_model(text, 2, "b", "m1", "m2").unwrap();
+         assert_eq!(out.matches("\"model\":\"m2\"").count(), 1);
+         assert!(out.contains("{\"provider\":\"b\",\"model\":\"m2\"}"));
+         assert!(out.contains("{\"provider\":\"a\",\"model\":\"m1\"}"));
++        // the position must still name the provider and the old model
++        assert!(replace_entry_model(text, 1, "b", "m1", "m2").is_err());
++        assert!(replace_entry_model(text, 3, "b", "m1", "m2").is_err());
++        assert!(replace_entry_model(text, 0, "a", "m1", "m2").is_err());
+     }
+ 
+     #[test]
+     fn replace_errors_when_absent() {
+         let text = r#"{"reviewers":[{"provider":"a","model":"m1"}]}"#;
+-        assert!(replace_entry_model(text, "a", "nope", "x").is_err());
++        assert!(replace_entry_model(text, 1, "a", "nope", "x").is_err());
+     }
+ 
+     #[test]
+     fn replace_refuses_a_hostile_successor_id() {
+         // a quote-bearing successor can never be spliced: refused, the roster text is not consulted
+         let text = r#"{"reviewers":[{"provider":"a","model":"m1"}]}"#;
+-        assert!(replace_entry_model(text, "a", "m1", "m2\",\"x\":\"y").is_err());
+-        assert!(replace_entry_model(text, "a", "m1", "m2\nextra").is_err());
++        assert!(replace_entry_model(text, 1, "a", "m1", "m2\",\"x\":\"y").is_err());
++        assert!(replace_entry_model(text, 1, "a", "m1", "m2\nextra").is_err());
++    }
++
++    /// (F02-17) The writer edits the parsed `reviewers[position].model` string: a JSON-escaped model
++    /// (`m-1` is `m-1`) is found and replaced whole, while an `ext` object holding the same
++    /// decoded id as a plain `"model"` (the old text search's only literal match) is untouched; the
++    /// re-parsed roster differs from the old one in that one field only.
++    #[test]
++    fn replace_edits_the_parsed_entry_model_not_a_literal_elsewhere() {
++        let text = r#"{"roster_version":1,"reviewers":[{"provider":"a","engine":"claude","model":"m-1","ext":{"note":{"model":"m-1"}}}],"ext":{"c3":{"model":"m-1"}}}"#;
++        let out = replace_entry_model(text, 1, "a", "m-1", "m-2").unwrap();
++        assert_eq!(
++            out,
++            r#"{"roster_version":1,"reviewers":[{"provider":"a","engine":"claude","model":"m-2","ext":{"note":{"model":"m-1"}}}],"ext":{"c3":{"model":"m-1"}}}"#
++        );
++        let before: serde_json::Value = serde_json::from_str(text).unwrap();
++        let mut after: serde_json::Value = serde_json::from_str(&out).unwrap();
++        assert_eq!(after["reviewers"][0]["model"], "m-2");
++        assert_eq!(after["reviewers"][0]["ext"]["note"]["model"], "m-1");
++        after["reviewers"][0]["model"] = serde_json::Value::String("m-1".into());
++        assert_eq!(after, before, "nothing else changed");
++        // a repeated model key in the entry is refused (a parser takes the last one; never guess)
++        let dup = r#"{"reviewers":[{"provider":"a","model":"m-1","model":"m-1"}]}"#;
++        assert!(replace_entry_model(dup, 1, "a", "m-1", "m-2").is_err());
++        // a non-string model is refused
++        let num = r#"{"reviewers":[{"provider":"a","model":7}]}"#;
++        assert!(replace_entry_model(num, 1, "a", "7", "m-2").is_err());
++    }
++
++    /// (F02-17) The span scanner walks nested values, strings with escaped quotes and brackets, and
++    /// whitespace, and lands on the right element.
++    #[test]
++    fn the_roster_scanner_finds_the_element_model_span() {
++        let text = "{ \"ext\": {\"x\": [1, {\"model\": \"no\"}], \"s\": \"a\\\"]}\"},\n  \"reviewers\" : [ {\"model\":\"first\"} ,\n {\"provider\":\"p\", \"model\" : \"se\\\"cond\", \"n\": null, \"b\": true} ] }";
++        let (s, e) = reviewer_model_span(text, 1).unwrap();
++        assert_eq!(&text[s..e], "\"se\\\"cond\"");
++        let (s, e) = reviewer_model_span(text, 0).unwrap();
++        assert_eq!(&text[s..e], "\"first\"");
++        assert!(reviewer_model_span(text, 2).is_err());
++        assert!(reviewer_model_span("{\"reviewers\": [ {\"model\": \"x\" ", 0).is_err());
++        assert!(reviewer_model_span("[]", 0).is_err());
+     }
+ 
+     #[test]
+@@ -1172,15 +1755,20 @@ mod tests {
+ 
+         // unchanged on disk since the snapshot -> the swap lands
+         std::fs::write(&path, basis).unwrap();
+-        apply_swap(&path_s, basis, "grok", "grok-4.7", "grok-4.8", "20261115").unwrap();
++        apply_swap(
++            &path_s, basis, 1, "grok", "grok-4.7", "grok-4.8", "20261115",
++        )
++        .unwrap();
+         assert!(std::fs::read_to_string(&path).unwrap().contains("grok-4.8"));
+ 
+         // the operator PROTECTS the entry mid-smoke: on disk the roster now differs from the basis
+         // the gate judged, so a swap computed from that stale basis aborts and writes nothing.
+         let protected = r#"{"roster_version":1,"reviewers":[{"provider":"grok","engine":"grok","model":"grok-4.8","plan":"supergrok","ext":{"reserve_percent":15}}]}"#;
+         std::fs::write(&path, protected).unwrap();
+-        let err =
+-            apply_swap(&path_s, basis, "grok", "grok-4.7", "grok-4.9", "20261116").unwrap_err();
++        let err = apply_swap(
++            &path_s, basis, 1, "grok", "grok-4.7", "grok-4.9", "20261116",
++        )
++        .unwrap_err();
+         assert!(err.contains("roster changed during the smoke"), "{err}");
+         assert_eq!(
+             std::fs::read_to_string(&path).unwrap(),
+@@ -1209,7 +1797,8 @@ mod tests {
+             }],
+             ..Default::default()
+         };
+-        let cur = vec![sl("endpoint:api.z.ai", &["glm-5.3", "glm-5.4"])];
++        let own = source_for(&roster.entries[0]).unwrap();
++        let cur = vec![sl(&own, &["glm-5.3", "glm-5.4"])];
+         let c = swap_candidates(&roster, &cur, 0);
+         assert_eq!(c.len(), 1);
+         assert_eq!(c[0].old, "glm-5.3");
+diff --git a/crates/c3/src/maintain/smoke.rs b/crates/c3/src/maintain/smoke.rs
+index cca4b41..bff4847 100644
+--- a/crates/c3/src/maintain/smoke.rs
++++ b/crates/c3/src/maintain/smoke.rs
+@@ -8,6 +8,10 @@
+ //! `disabled` and no multi-agent tool ([`subagent_switch_check`]) - otherwise it fails, and a
+ //! post-update smoke failure rolls the update back.
+ //!
++//! (F02-16) A roster seat's smoke is bound to that exact entry ([`Bind::Entry`]): both turns see a
++//! one-entry roster holding it ([`bound_roster`]), so the label can never resolve to another entry
++//! (an on-request or protected one with another endpoint, auth, plan or quota policy).
++//!
+ //! The real two-turn path lives in [`run_consult_smoke`]; under `CODEX_CONSULT_TEST_MODE` a test can
+ //! script the outcome with `C3_MAINTAIN_TEST_SMOKE=provider::model=pass|fail,...` so the pass
+ //! orchestration (update → smoke → rollback) is exercised deterministically without a real model.
+@@ -24,11 +28,30 @@ pub enum Smoke {
+     Fail(String),
+ }
+ 
+-/// A smoke target: the provider label and model id to consult.
++/// A smoke target: the provider label and model id to consult, and what the smoke's consults are
++/// bound to.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct Target {
+     pub provider: String,
+     pub model: String,
++    pub bind: Bind,
++}
++
++/// (F02-16) What a smoke's two `c3 consult` turns resolve the reviewer against. A roster seat is
++/// never re-resolved by its provider label (a label can name several entries - an on-request or a
++/// protected one first - with other endpoints, auth, plans and quota policies).
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Bind {
++    /// Exactly the roster entry at this position: the consults see a one-entry roster holding it
++    /// (the operator's own JSON for that entry, its `model` overridden by [`Target::model`]), so its
++    /// endpoint, auth, plan and quota policy are the ones the turns use ([`bound_roster`]).
++    Entry(usize),
++    /// A codex-config custom provider (not a roster entry): the consults run with no roster, so the
++    /// label cannot resolve to a roster entry of the same name.
++    CodexConfig,
++    /// An explicit `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model`: resolved by its label against the
++    /// operator's roster, exactly like a consultation the operator named by hand.
++    Label,
+ }
+ 
+ /// Pick the smoke target for engine `name`. `override_spec` is the `C3_MAINTAIN_SMOKE_<ENGINE>`
+@@ -50,6 +73,7 @@ pub fn pick_target(
+                 return Some(Target {
+                     provider: p.trim().to_string(),
+                     model: m.trim().to_string(),
++                    bind: Bind::Label,
+                 });
+             }
+         }
+@@ -81,6 +105,7 @@ pub fn pick_target(
+             Target {
+                 provider: e.provider.clone(),
+                 model: e.model.clone(),
++                bind: Bind::Entry(e.position),
+             },
+             rank,
+             headroom,
+@@ -137,6 +162,7 @@ pub fn codex_custom_targets() -> Vec<Target> {
+                     out.push(Target {
+                         provider: provider.clone(),
+                         model,
++                        bind: Bind::CodexConfig,
+                     });
+                 }
+             }
+@@ -193,8 +219,9 @@ fn plan_headroom(roster: &Roster, e: &RosterEntry, now: DateTime<Utc>) -> (f64,
+ }
+ 
+ /// Run the smoke for a target. `self_exe` is this binary; `work` a scratch directory to build the
+-/// throwaway repo in; `token` the random token written into `token.txt`. Under test mode a
+-/// `C3_MAINTAIN_TEST_SMOKE` script decides the outcome without a real consult.
++/// throwaway repo in; `token` the random token written into `token.txt`; `roster_text` the roster
++/// a [`Bind::Entry`] target is taken from (for a model swap: the very snapshot the gate judged).
++/// Under test mode a `C3_MAINTAIN_TEST_SMOKE` script decides the outcome without a real consult.
+ pub fn run_smoke(
+     env: &dyn Env,
+     self_exe: &str,
+@@ -202,6 +229,7 @@ pub fn run_smoke(
+     engine: &str,
+     work: &std::path::Path,
+     token: &str,
++    roster_text: Option<&str>,
+ ) -> Smoke {
+     if c3_core::test_hooks::mode_on() {
+         if let Some(script) = std::env::var("C3_MAINTAIN_TEST_SMOKE")
+@@ -211,7 +239,85 @@ pub fn run_smoke(
+             return scripted(&script, target);
+         }
+     }
+-    run_consult_smoke(env, self_exe, target, engine, work, token)
++    run_consult_smoke(env, self_exe, target, engine, work, token, roster_text)
++}
++
++/// (F02-16) The one-entry roster a [`Bind::Entry`] smoke's consults see: the operator's own JSON
++/// object of `reviewers[position]` (1-based) from `roster_text`, its `model` set to `model`, and
++/// nothing else of the roster - no other entry the label could resolve to, no `require`, no
++/// `ext.c3.reviewers`. Refused when the element is gone or no longer names `provider`, when it is
++/// protected (`ext.reserve_percent`) or on-request (`ext.on_request`) - such an entry is never
++/// smoked, not even indirectly - or when the roster's `ext.c3.inactive` names its plan or label.
++pub fn bound_roster(
++    roster_text: &str,
++    position: usize,
++    provider: &str,
++    model: &str,
++) -> Result<String, String> {
++    let v: serde_json::Value =
++        serde_json::from_str(roster_text).map_err(|_| "the roster does not parse".to_string())?;
++    let entry = position
++        .checked_sub(1)
++        .and_then(|i| v.get("reviewers")?.as_array()?.get(i))
++        .and_then(|e| e.as_object())
++        .ok_or_else(|| format!("the roster has no reviewers entry {position}"))?;
++    let str_of = |k: &str| entry.get(k).and_then(|x| x.as_str()).unwrap_or("");
++    if str_of("provider") != provider {
++        return Err(format!(
++            "reviewers entry {position} is no longer provider {provider}"
++        ));
++    }
++    let ext = entry.get("ext");
++    if ext
++        .and_then(|x| x.get("on_request"))
++        .and_then(|b| b.as_bool())
++        == Some(true)
++    {
++        return Err(format!(
++            "reviewers entry {position} runs only on request; it is never smoked"
++        ));
++    }
++    if ext
++        .and_then(|x| x.get("reserve_percent"))
++        .and_then(|n| n.as_i64())
++        .unwrap_or(0)
++        > 0
++    {
++        return Err(format!(
++            "reviewers entry {position} is protected; it is never smoked"
++        ));
++    }
++    let inactive = v
++        .pointer("/ext/c3/inactive")
++        .and_then(|a| a.as_array())
++        .map(|a| {
++            a.iter().filter_map(|x| x.as_str()).any(|i| {
++                i.trim() == provider || (!str_of("plan").is_empty() && i.trim() == str_of("plan"))
++            })
++        })
++        .unwrap_or(false);
++    if inactive {
++        return Err(format!("reviewers entry {position} is inactive"));
++    }
++    let mut one = entry.clone();
++    one.insert(
++        "model".to_string(),
++        serde_json::Value::String(model.to_string()),
++    );
++    Ok(serde_json::json!({
++        "roster_version": 1,
++        "reviewers": [serde_json::Value::Object(one)],
++    })
++    .to_string())
++}
++
++/// A file removed when dropped (the bound roster of one smoke).
++struct RemoveOnDrop(std::path::PathBuf);
++
++impl Drop for RemoveOnDrop {
++    fn drop(&mut self) {
++        let _ = std::fs::remove_file(&self.0);
++    }
+ }
+ 
+ /// Per-seat call counter so a `pass-then-fail` verdict can distinguish the installed-version smoke
+@@ -223,10 +329,18 @@ fn call_counts() -> &'static std::sync::Mutex<std::collections::HashMap<String,
+ }
+ 
+ /// The scripted outcome under `C3_MAINTAIN_TEST_SMOKE=provider::model=<verdict>,...` where the
+-/// verdict is `pass`, `fail` or `pass-then-fail` (the first smoke of that seat passes, the rest
+-/// fail). A seat not listed fails, so a test opts a seat into passing explicitly.
++/// verdict is `pass`, `fail`, `pass-then-fail` (the first smoke of that seat passes, the rest
++/// fail) or `fail-then-pass` (the first fails, the rest pass). A seat not listed fails, so a test
++/// opts a seat into passing explicitly.
+ fn scripted(script: &str, target: &Target) -> Smoke {
+     let key = format!("{}::{}", target.provider, target.model);
++    let first_call = |key: &str| {
++        let mut g = call_counts().lock().unwrap_or_else(|e| e.into_inner());
++        let n = g.entry(key.to_string()).or_insert(0);
++        let first = *n == 0;
++        *n += 1;
++        first
++    };
+     for item in script.split(',') {
+         if let Some((seat, verdict)) = item.split_once('=') {
+             if seat.trim() != key {
+@@ -236,16 +350,19 @@ fn scripted(script: &str, target: &Target) -> Smoke {
+             return match verdict.as_str() {
+                 "pass" => Smoke::Pass,
+                 "pass-then-fail" => {
+-                    let mut g = call_counts().lock().unwrap_or_else(|e| e.into_inner());
+-                    let n = g.entry(key.clone()).or_insert(0);
+-                    let first = *n == 0;
+-                    *n += 1;
+-                    if first {
++                    if first_call(&key) {
+                         Smoke::Pass
+                     } else {
+                         Smoke::Fail("scripted post-update failure".to_string())
+                     }
+                 }
++                "fail-then-pass" => {
++                    if first_call(&key) {
++                        Smoke::Fail("scripted first failure".to_string())
++                    } else {
++                        Smoke::Pass
++                    }
++                }
+                 _ => Smoke::Fail("scripted failure".to_string()),
+             };
+         }
+@@ -253,7 +370,9 @@ fn scripted(script: &str, target: &Target) -> Smoke {
+     Smoke::Fail("no scripted verdict".to_string())
+ }
+ 
+-/// The real two-turn smoke through `c3 consult`.
++/// The real two-turn smoke through `c3 consult`. Both turns run under the target's binding
++/// ([`Bind`]): a roster seat through a one-entry roster written beside the scratch repo (outside
++/// it) and named by `CODEX_CONSULT_ROSTER`, a codex-config provider with no roster.
+ fn run_consult_smoke(
+     env: &dyn Env,
+     self_exe: &str,
+@@ -261,7 +380,43 @@ fn run_consult_smoke(
+     engine: &str,
+     work: &std::path::Path,
+     token: &str,
++    roster_text: Option<&str>,
+ ) -> Smoke {
++    // 0. the binding, before anything is created
++    let mut _bound_file: Option<RemoveOnDrop> = None;
++    let roster_env: Option<String> = match target.bind {
++        Bind::Label => None,
++        Bind::CodexConfig => Some("none".to_string()),
++        Bind::Entry(position) => {
++            let Some(text) = roster_text else {
++                return Smoke::Fail(format!(
++                    "the roster entry {position} could not be read for the smoke"
++                ));
++            };
++            let one = match bound_roster(text, position, &target.provider, &target.model) {
++                Ok(one) => one,
++                Err(why) => return Smoke::Fail(format!("not smoked: {why}")),
++            };
++            let name = format!(
++                "{}.roster.json",
++                work.file_name()
++                    .map(|n| n.to_string_lossy().into_owned())
++                    .unwrap_or_else(|| "c3-maintain-smoke".to_string())
++            );
++            let path = work.with_file_name(name);
++            if std::fs::write(&path, one).is_err() {
++                return Smoke::Fail("could not write the smoke's roster".to_string());
++            }
++            let s = path.to_string_lossy().into_owned();
++            _bound_file = Some(RemoveOnDrop(path));
++            Some(s)
++        }
++    };
++    let turn_env: Vec<(&str, &str)> = roster_env
++        .as_deref()
++        .map(|r| vec![("CODEX_CONSULT_ROSTER", r)])
++        .unwrap_or_default();
++
+     // 1. a throwaway git repo with token.txt
+     if std::fs::create_dir_all(work).is_err() {
+         return Smoke::Fail("could not create the smoke workdir".to_string());
+@@ -300,11 +455,12 @@ fn run_consult_smoke(
+         self_exe,
+         work,
+         &reviewer,
++        &turn_env,
+         "new",
+         "reply with exactly OK",
+     );
+     if !turn1.ok() {
+-        return Smoke::Fail(format!("turn 1 failed ({})", turn1.fail_reason()));
++        return Smoke::Fail(format!("turn 1 failed ({})", turn_reason(&turn1)));
+     }
+ 
+     // Turn 2: must read the file (a tool call) and echo its content; auto-mode forks the thread.
+@@ -313,11 +469,12 @@ fn run_consult_smoke(
+         self_exe,
+         work,
+         &reviewer,
++        &turn_env,
+         "",
+         "Reply with the exact content of the file token.txt in this repository.",
+     );
+     if !turn2.ok() {
+-        return Smoke::Fail(format!("turn 2 failed ({})", turn2.fail_reason()));
++        return Smoke::Fail(format!("turn 2 failed ({})", turn_reason(&turn2)));
+     }
+ 
+     // Pass when the reply of turn 2 contains the token (the file was read) — the proxy for a
+@@ -420,6 +577,7 @@ fn consult_turn(
+     self_exe: &str,
+     work: &std::path::Path,
+     reviewer: &[String],
++    turn_env: &[(&str, &str)],
+     mode: &str,
+     prompt: &str,
+ ) -> super::env::RunResult {
+@@ -438,7 +596,18 @@ fn consult_turn(
+     for r in reviewer {
+         args.push(r.as_str());
+     }
+-    env.run(self_exe, &args, &[], Some(work))
++    env.run(self_exe, &args, turn_env, Some(work))
++}
++
++/// Why a consult turn failed: its `codex-consult: ...` outcome line when it printed one (the first
++/// stderr line is often the informational `Roster: ...` line), else the first output line.
++fn turn_reason(r: &super::env::RunResult) -> String {
++    r.combined()
++        .lines()
++        .map(str::trim)
++        .rfind(|l| l.starts_with("codex-consult:"))
++        .map(|l| l.to_string())
++        .unwrap_or_else(|| r.fail_reason())
+ }
+ 
+ /// Whether any handoff reply file under the smoke task contains the token.
+@@ -709,6 +878,7 @@ mod tests {
+         let t = Target {
+             provider: "grok".into(),
+             model: "grok-4.7".into(),
++            bind: Bind::Entry(1),
+         };
+         assert_eq!(scripted("grok::grok-4.7=pass", &t), Smoke::Pass);
+         assert!(matches!(
+@@ -716,5 +886,75 @@ mod tests {
+             Smoke::Fail(_)
+         ));
+         assert!(matches!(scripted("other::x=pass", &t), Smoke::Fail(_)));
++        // fail-then-pass: the first smoke of the seat fails, the next passes
++        let u = Target {
++            provider: "unit-ftp".into(),
++            model: "m-1".into(),
++            bind: Bind::Label,
++        };
++        assert!(matches!(
++            scripted("unit-ftp::m-1=fail-then-pass", &u),
++            Smoke::Fail(_)
++        ));
++        assert_eq!(scripted("unit-ftp::m-1=fail-then-pass", &u), Smoke::Pass);
++    }
++
++    /// (F02-16) A roster seat is bound by its position; an explicit override is a label.
++    #[test]
++    fn a_roster_seat_target_is_bound_to_its_position() {
++        let mut on_req = entry(1, "alibaba", "claude", "qwen3.7-max", "", "unit-nobudget");
++        on_req.on_request = true;
++        let r = roster(vec![
++            on_req,
++            entry(2, "alibaba", "claude", "qwen3.8-max", "", "unit-nobudget"),
++        ]);
++        let t = pick_target("", &r, "claude", now()).unwrap();
++        assert_eq!(t.model, "qwen3.8-max");
++        assert_eq!(t.bind, Bind::Entry(2));
++        let t = pick_target("alibaba::qwen3.7-max", &r, "claude", now()).unwrap();
++        assert_eq!(t.bind, Bind::Label);
++    }
++
++    /// (F02-16) The bound roster holds exactly the entry at that position - the operator's own JSON
++    /// for it, the model overridden - and nothing else a label could resolve to; a protected,
++    /// on-request, inactive, moved or missing entry is refused.
++    #[test]
++    fn the_bound_roster_holds_only_that_entry() {
++        let text = r##"{"roster_version":1,"require":{"framing":["#1"]},"reviewers":[
++            {"provider":"alibaba","engine":"claude","model":"qwen3.7-max","auth":"endpoint","endpoint":{"base_url":"https://a.example/v1","env_key":"KEY_A"},"ext":{"on_request":true}},
++            {"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://b.example/v1","env_key":"KEY_B"},"plan":"alibaba","panel":"weighty"},
++            {"provider":"grok","engine":"grok","model":"grok-4.7","ext":{"reserve_percent":15}}
++        ],"ext":{"c3":{"inactive":["dormant"],"reviewers":[]}}}"##;
++        let one = bound_roster(text, 2, "alibaba", "qwen4-max").unwrap();
++        let v: serde_json::Value = serde_json::from_str(&one).unwrap();
++        let mut expected: serde_json::Value = serde_json::from_str(text).unwrap();
++        let mut e = expected["reviewers"][1].take();
++        e["model"] = serde_json::Value::String("qwen4-max".into());
++        assert_eq!(
++            v,
++            serde_json::json!({"roster_version": 1, "reviewers": [e]}),
++            "only that entry, model overridden"
++        );
++        // and it is a roster the validator accepts, with the entry's own endpoint
++        let r = c3_core::roster::validate_roster("bound.json", &one, None);
++        assert!(r.error.is_empty(), "{}", r.error);
++        assert_eq!(r.entries.len(), 1);
++        assert_eq!(
++            r.entries[0].endpoint.as_ref().unwrap().base_url,
++            "https://b.example/v1"
++        );
++        assert!(bound_roster(text, 1, "alibaba", "qwen4-max")
++            .unwrap_err()
++            .contains("on request"));
++        assert!(bound_roster(text, 3, "grok", "grok-4.8")
++            .unwrap_err()
++            .contains("protected"));
++        assert!(bound_roster(text, 2, "grok", "qwen4-max").is_err());
++        assert!(bound_roster(text, 4, "alibaba", "qwen4-max").is_err());
++        assert!(bound_roster(text, 0, "alibaba", "qwen4-max").is_err());
++        let dormant = text.replace("\"plan\":\"alibaba\"", "\"plan\":\"dormant\"");
++        assert!(bound_roster(&dormant, 2, "alibaba", "qwen4-max")
++            .unwrap_err()
++            .contains("inactive"));
+     }
+ }
+diff --git a/crates/c3/src/maintain/web.rs b/crates/c3/src/maintain/web.rs
+index 1e833f3..15f227d 100644
+--- a/crates/c3/src/maintain/web.rs
++++ b/crates/c3/src/maintain/web.rs
+@@ -1,8 +1,9 @@
+ //! The public model sources of the model step: catalogs (a JSON list of models, by default
+ //! OpenRouter's `GET https://openrouter.ai/api/v1/models`) and plain pages (a vendor's documentation
+ //! page, read with a configured regex). Both are fetched with a plain KEYLESS GET through
+-//! [`Env::http_get`] - no credential is ever attached, redirects stay on https and on the same host
+-//! (the `env.rs` rule), the body is capped - and both are UNTRUSTED input: they only ever yield
++//! [`Env::http_get`] - no credential is ever attached, redirects stay on https and on the start's
++//! own host and port ([`PUBLIC_GET`]), one deadline covers every hop, the body is capped while it
++//! is read - and both are UNTRUSTED input: they only ever yield
+ //! candidate id strings, each of which must pass [`valid_model_id`]. A catalog id never seats
+ //! anything by itself; the smoke on the entry's own plan decides.
+ //!
+@@ -13,7 +14,7 @@
+ use std::collections::BTreeMap;
+ use std::time::Duration;
+ 
+-use super::env::Env;
++use super::env::{Env, GetPolicy, Redirects};
+ use super::models::SourceList;
+ use super::version::valid_model_id;
+ 
+@@ -145,9 +146,8 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
+     out
+ }
+ 
+-/// A keyless GET of a public source: https only, no header but the client's own User-Agent,
+-/// redirects followed only within the `env.rs` rule, the body refused past [`BODY_CAP`]. `None` on
+-/// any failure.
++/// A keyless GET of a public source: https only, no header but the client's own generic
++/// User-Agent (`c3/<version>`), under [`PUBLIC_GET`]. `None` on any failure.
+ ///
+ /// Under `CODEX_CONSULT_TEST_MODE` no request of the real [`SystemEnv`](super::env::SystemEnv)
+ /// reaches the network: `C3_MAINTAIN_TEST_HTTP`
+@@ -186,8 +186,17 @@ fn keyless_get(env: &dyn Env, url: &str) -> Option<String> {
+     get_via_env(env, url)
+ }
+ 
++/// The policy of a public GET (F02-12, F02-13): redirects only to the start's own host and port
++/// with no userinfo, re-validated at every hop (never the kimi installer's mirror pair); ONE 15 s
++/// deadline over every hop; the reader stops at [`BODY_CAP`] + 1 bytes.
++pub const PUBLIC_GET: GetPolicy = GetPolicy {
++    timeout: TIMEOUT,
++    redirects: Redirects::SameOrigin,
++    cap: BODY_CAP,
++};
++
+ fn get_via_env(env: &dyn Env, url: &str) -> Option<String> {
+-    match env.http_get(url, &[], TIMEOUT, true) {
++    match env.http_get(url, &[], PUBLIC_GET) {
+         Ok((status, body)) if (200..300).contains(&status) && body.len() <= BODY_CAP => Some(body),
+         _ => None,
+     }
+@@ -289,7 +298,7 @@ mod tests {
+     struct FakeHttp {
+         body: String,
+         status: u16,
+-        seen: std::cell::RefCell<Vec<(String, usize, bool)>>,
++        seen: std::cell::RefCell<Vec<(String, usize, GetPolicy)>>,
+     }
+     impl Env for FakeHttp {
+         fn run(&self, _p: &str, _a: &[&str], _e: &[(&str, &str)], _c: Option<&Path>) -> RunResult {
+@@ -299,12 +308,11 @@ mod tests {
+             &self,
+             url: &str,
+             headers: &[(&str, &str)],
+-            _t: Duration,
+-            follow: bool,
++            policy: GetPolicy,
+         ) -> Result<(u16, String), String> {
+             self.seen
+                 .borrow_mut()
+-                .push((url.to_string(), headers.len(), follow));
++                .push((url.to_string(), headers.len(), policy));
+             Ok((self.status, self.body.clone()))
+         }
+     }
+@@ -382,6 +390,16 @@ mod tests {
+         let seen = env.seen.borrow();
+         assert_eq!(seen.len(), 1);
+         assert_eq!(seen[0].1, 0, "no header (no key) is ever attached");
++        // (F02-12, F02-13) the public policy: same origin only, one 15 s deadline, the 4 MiB cap
++        // enforced by the reader
++        assert_eq!(
++            seen[0].2,
++            GetPolicy {
++                timeout: Duration::from_secs(15),
++                redirects: Redirects::SameOrigin,
++                cap: BODY_CAP,
++            }
++        );
+         // an http catalog is never fetched; a failing status yields nothing
+         drop(seen);
+         let env2 = FakeHttp {

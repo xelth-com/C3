@@ -652,15 +652,20 @@ both reports this (`c3 doctor`) and repairs it in place.
   repository-root `AGENTS.md` (the OpenCode agent file eckSnapshot writes) follows the roster: when
   one of the active roster entries is the successor of its `model:` (same family and suffix, a
   higher version), its line is rewritten to that id (keeping the original casing, `GLM-5.3` ->
-  `GLM-5.4`, `Qwen3.8-Max` -> `Qwen4-Max`) — and because `c3 maintain` only seats a successor after its smoke passed, `AGENTS.md`
+  `GLM-5.4`, `Qwen3.8-Max` -> `Qwen4-Max`), never to an id the maintain state's catalog dates as
+  not newer (`grok-4.20` is older than `grok-4.7`) — and because `c3 maintain` only seats a successor after its smoke passed, `AGENTS.md`
   never runs ahead of a tested id. Each edit changes one line and nothing else, and is **left
   uncommitted** for `c3 finish`.
 - **When.** `c3 doctor --fix` applies the repairs and then reports what is left; the SessionStart
   hook applies them automatically and prints one line only when it changed something. No git
   command is run and nothing is written outside the repository (an agents directory or a file that
-  is a link is skipped). The hook does not do this inside a session C3 itself started: every
-  reviewer, worker and launcher probe gets `C3_CHILD=1`, so a read-only reviewer on the `claude`
-  engine cannot change the tree it reviews and a worker's patch holds only its own change.
+  is a link or another reparse point is skipped; a `.git` that is no repository, and `GIT_DIR` set
+  in the environment, mean no repair). A file is replaced by rename after it is read again: a file
+  that changed since the repair read it is left as it is (an edit landing between that re-read and
+  the rename itself is not seen). The hook does not do this inside a session C3 itself started:
+  every reviewer, worker and launcher probe, and every child of `c3 update`, gets `C3_CHILD=1`, so a
+  read-only reviewer on the `claude` engine cannot change the tree it reviews and a worker's patch
+  holds only its own change.
 - **Switch (default ON).** `C3_REPO_MODELS=off`, or `"repo_models": false` in
   `<codex home>/c3/config.json`, turns the automatic hook refresh off (`c3 doctor --fix` is always
   explicit).
@@ -676,8 +681,10 @@ one session's memory. C3 keeps the state in the repository and checks it.
   session or person), `waits` (finished, waits for the operator; the text is the question put to
   him), `parked` (a WIP put aside; the text is the condition for merging it). A description whose
   first line is not such a full record (a note starting with `c3: hello` included) is somebody's own
-  note: it is kept byte for byte, and the branch counts as unrecorded. A description C3 cannot read
-  exactly, or one that changes while C3 writes, is never written over.
+  note: it is kept byte for byte, and the branch counts as unrecorded; so is a line whose date field
+  is not a real `YYYY-MM-DD`. A description C3 cannot read exactly is never written over; the
+  description is read again immediately before the write, and the write is skipped when it changed
+  since C3 read it (a writer landing between that re-read and git's own write is not seen).
 - **The default branch** is found independently of the checkout: `c3.defaultBranch` in the local git
   config (`c3 branches --default <name>`; it wins), then `origin/HEAD`, `init.defaultBranch`, `main`,
   `master` - each only when that local branch exists. Otherwise it is reported unknown (a `c3
@@ -693,7 +700,8 @@ one session's memory. C3 keeps the state in the repository and checks it.
   branch's upstream as the local refs know it (no fetch) and its uncommitted-change count. `--json`
   gives the same data. `c3 branches --set <branch> --state work|waits|parked --note "<text>"
   [--owner <name>]` records a state (the owner defaults to `CODEX_CONSULT_COORDINATOR`; `waits` and
-  `parked` need a note); `c3 branches --clear <branch>` removes it. Nothing is ever deleted or merged.
+  `parked` need a note); `c3 branches --clear <branch>` removes it. Both refuse inside a session C3
+  itself started (`C3_CHILD`). Nothing is ever deleted or merged.
 - **The checks.** `c3 doctor` reports unknown branches and unrecorded worktrees as leftovers (exit 1)
   and warns, without changing the exit code, when the start folder is off the default branch or
   dirty. The SessionStart hook prints one line only when there is something to say (cheap: ancestry
@@ -712,11 +720,14 @@ one session's memory. C3 keeps the state in the repository and checks it.
 - **C3's own throwaway worktree.** Before the `kimi` engine removes the worktree its reviewer ran in,
   every symlink and junction inside it is unlinked without being followed, so a forced removal can
   never empty a checkout a link points into. Such a worktree (directly in the system temp directory,
-  named exactly `c3-kimi-wt-<32 hex digits>`) is never a finding while its run lives; once the
-  owning process recorded in its git admin directory is gone (no record: older than 6 hours) it is
-  a "stale c3 worktree" in `c3 branches` and `c3 doctor`, and `c3 doctor --fix` removes it the same
-  link-safe way. Every read path runs git with `GIT_OPTIONAL_LOCKS=0`, so no check ever rewrites or
-  locks the index.
+  named exactly `c3-kimi-wt-<32 hex digits>`) is never a finding while its run lives: the run
+  records its process in the worktree's git admin directory, and a worktree whose record cannot be
+  written is not used. Once that process is gone, or the worktree's folder is gone (git calls it
+  prunable), it is a "stale c3 worktree" in `c3 branches` and `c3 doctor`, and `c3 doctor --fix`
+  removes it the same link-safe way. A throwaway path that is itself a link, one without an owner
+  record (whatever its age) and one whose owner cannot be checked (its start time cannot be read)
+  are reported and left alone. Every read path runs git with `GIT_OPTIONAL_LOCKS=0`, so no check
+  ever rewrites or locks the index.
 
 ## License
 

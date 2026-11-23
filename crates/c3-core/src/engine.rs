@@ -235,7 +235,8 @@ pub struct ConversationId(pub String);
 /// `agents.enabled=false` ([`crate::quota::SUBAGENT_OFF`]). Passed on review turns only, never on a
 /// `c3 work` worker turn; an older CLI ignores a key it does not know. Proven on codex-cli 0.169.0
 /// (2026-11-22, ZAI `glm-5.3-flash`, both off switches): 30 skills with both coordinate skills, 14
-/// with plugins off, no skill block at all with both items.
+/// with plugins off, no skill block at all with both items. The oldest Codex CLI these keys were
+/// exercised on is 0.169.0 (F10-6: `c3 maintain` keeps the CLI at or above it).
 pub const REVIEW_ISOLATION: [&str; 2] = [
     "features.plugins=false",
     "skills.include_instructions=false",

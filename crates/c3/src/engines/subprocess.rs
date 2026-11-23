@@ -862,6 +862,25 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
             }
         }
     };
+    // (F11-9) The guard inspects the rollout ONCE MORE after the child exited on its own, before
+    // the turn is accepted as normal: a turn that made a spawn call (or left a child rollout) and
+    // exited between two polls - the poll is 15 s apart - is still seen. The child is gone, so
+    // nothing is killed; the turn is a sub-agent stop like one caught while it ran.
+    if stop == TurnStop::Exited {
+        if let Some(b) = req.budget.filter(|b| b.guard_subagents) {
+            if budget_thread.is_empty() {
+                budget_thread = c3_core::quota::thread_id_from_stream_head(req.events_path);
+            }
+            if !budget_thread.is_empty() {
+                if let Some(sig) =
+                    c3_core::quota::subagent_in_run(&budget_thread, launch, &b.codex_home)
+                {
+                    subagent_hit = Some(sig);
+                    stop = TurnStop::Subagent;
+                }
+            }
+        }
+    }
     // (wave 26c, D1) check once more after the process ended on its own: a kick found now had no
     // live turn to stop — it is taken LATE (the outcome is unchanged), acknowledged as `late`.
     if stop == TurnStop::Exited {
@@ -1801,10 +1820,20 @@ mod tests {
         timeout_secs: u64,
         on_running: Option<&dyn Fn(u32, String)>,
     ) -> TurnResult {
+        guarded_turn_polled(f, timeout_secs, on_running, 100)
+    }
+
+    /// [`guarded_turn`] with the watch's poll interval.
+    fn guarded_turn_polled(
+        f: &GuardFixture,
+        timeout_secs: u64,
+        on_running: Option<&dyn Fn(u32, String)>,
+        poll_ms: u64,
+    ) -> TurnResult {
         let watch = BudgetWatch {
             percent: 0,
             codex_home: f.home.clone(),
-            poll_ms: 100,
+            poll_ms,
             guard_subagents: true,
         };
         run_turn(&SpawnRequest {
@@ -1888,6 +1917,35 @@ mod tests {
             Some(c3_core::quota::SubagentSignal::SpawnCall),
             "caught by the call in the run's own rollout, not by a child rollout"
         );
+    }
+
+    /// (F11-9) A turn that makes a current `spawn_agent` call and EXITS before the guard's first poll
+    /// (here the poll is a minute away) is still caught: the guard inspects the rollout once more
+    /// after the child exited, before the turn is accepted as normal.
+    #[test]
+    fn f11_9_a_spawn_by_a_turn_that_exits_before_the_first_poll_is_caught() {
+        let f = guard_fixture("fast", 0);
+        std::fs::write(
+            &f.rollout,
+            format!(
+                "{}\n",
+                guard_meta_line(chrono::Utc::now() - chrono::Duration::seconds(5), &f.thread)
+            ),
+        )
+        .unwrap();
+        let rollout = f.rollout.clone();
+        let spawn_now = move |_pid: u32, _start: String| {
+            let mut text = std::fs::read_to_string(&rollout).unwrap();
+            text.push_str(&guard_spawn_line(chrono::Utc::now()));
+            text.push('\n');
+            std::fs::write(&rollout, text).unwrap();
+        };
+        let r = guarded_turn_polled(&f, 30, Some(&spawn_now), 60_000);
+        let _ = std::fs::remove_dir_all(&f.dir);
+        assert!(r.started, "{:?}", r.error);
+        assert_eq!(r.stop, TurnStop::Subagent, "{r:?}");
+        assert_eq!(r.subagent, Some(c3_core::quota::SubagentSignal::SpawnCall));
+        assert_eq!(r.exit_code, Some(0), "the child had exited on its own");
     }
 
     // (wave 28b, D12) an open tool call suspends the stall timer for at most 2 x stall without

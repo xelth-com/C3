@@ -949,3 +949,322 @@ fn kimi_throwaways_are_recognised_exactly_and_stale_ones_are_reported_and_remove
     let _ = std::fs::remove_dir_all(&repo);
     let _ = std::fs::remove_dir_all(&elsewhere_dir);
 }
+
+/// A directory link `link` -> `target`: a junction on Windows (no privilege needed), a symlink
+/// elsewhere.
+fn dir_link(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    {
+        let ok = Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert!(ok, "mklink /J failed");
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+/// Remove a directory link made by [`dir_link`] - the link only, never its target.
+fn remove_dir_link(link: &Path) {
+    #[cfg(windows)]
+    let _ = std::fs::remove_dir(link);
+    #[cfg(not(windows))]
+    let _ = std::fs::remove_file(link);
+}
+
+/// The reported throwaway worktree whose path ends with `name` (`c3 branches --json`).
+fn reported<'a>(j: &'a Value, name: &str) -> Option<&'a Value> {
+    j["stale_worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["path"].as_str().unwrap_or("").ends_with(name))
+}
+
+/// `c3 branches --json` with extra environment variables.
+fn branches_json_env(repo: &Path, envs: &[(&str, &str)]) -> Value {
+    let (code, out, err) = run_c3(repo, &["branches", "--json"], envs);
+    assert_eq!(code, 0, "c3 branches --json: {out}\n{err}");
+    serde_json::from_str(out.trim()).unwrap_or_else(|e| panic!("bad json ({e}): {out}\n{err}"))
+}
+
+/// A registered throwaway worktree of `repo` at `$TEMP/c3-kimi-wt-<32 hex>`: (its name, its path).
+fn add_throwaway(repo: &Path, salt: u128) -> (String, PathBuf) {
+    let name = format!("c3-kimi-wt-{}", hex_id(salt));
+    let wt = std::env::temp_dir().join(&name);
+    git(
+        repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &wt.to_string_lossy(),
+            "HEAD",
+        ],
+    );
+    (name, wt)
+}
+
+// (R2, F13-1 blocker) The reviewer's scenario: a registered worktree at $TEMP/c3-kimi-wt-<32 hex>
+// whose path is a junction (a symlink elsewhere) to an outside directory, its owner record naming a
+// process that is gone - the old classification called it stale and removable. It is reported as
+// a link and left alone: `c3 doctor --fix` attempts nothing, and the target, its sentinel and the
+// link itself survive.
+#[test]
+fn a_throwaway_path_that_is_a_link_is_reported_and_never_removed() {
+    let repo = fixture_repo("kimi-link");
+    make_doctor_clean(&repo);
+    let (name, wt) = add_throwaway(&repo, 5);
+    write_owner(
+        &wt,
+        &format!("{} 1999-01-01T00:00:00.0000000Z\n", std::process::id()),
+    );
+    // the checkout moves to an outside directory and a link takes its place
+    let outside = scratch_dir("kimi-link-target");
+    let target = outside.join("target");
+    std::fs::rename(&wt, &target).unwrap();
+    std::fs::write(target.join("sentinel.txt"), "keep me\n").unwrap();
+    dir_link(&wt, &target);
+    assert!(
+        wt.join("sentinel.txt").exists(),
+        "the link does not resolve"
+    );
+
+    let j = branches_json(&repo);
+    let r = reported(&j, &name).unwrap_or_else(|| panic!("the link is not reported: {j}"));
+    assert_eq!(r["removable"], false, "{j}");
+    let why = r["why"].as_str().unwrap();
+    assert!(
+        why.starts_with("a link") && why.ends_with("left alone"),
+        "{why}"
+    );
+
+    let (code, out, _e) = run_c3(&repo, &["doctor"], &[("C3_CONFIG", "none")]);
+    assert_eq!(code, 1, "a link left alone is still a finding: {out}");
+    assert!(
+        out.contains("[!] c3 worktree")
+            && out.contains(&name)
+            && out.contains("(c3 doctor --fix does not remove it)"),
+        "{out}"
+    );
+    let (_c, out, err) = run_c3(
+        &repo,
+        &["doctor", "--fix"],
+        &[("C3_CONFIG", "none"), ("CODEX_CONSULT_ROSTER", "none")],
+    );
+    assert!(
+        !out.contains("removed the stale c3 worktree") && !out.contains("could not remove"),
+        "a removal was attempted through the link: {out}\n{err}"
+    );
+    assert!(
+        target.join("sentinel.txt").exists(),
+        "the link's target lost its sentinel"
+    );
+    assert!(target.join("README.md").exists(), "the target was emptied");
+    assert!(
+        std::fs::symlink_metadata(&wt).is_ok(),
+        "the link itself was removed"
+    );
+    let list = git_out(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(list.contains(&name), "{list}");
+
+    // clean up the link only, then git forgets the worktree
+    remove_dir_link(&wt);
+    assert!(target.join("sentinel.txt").exists());
+    git(&repo, &["worktree", "prune"]);
+    let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
+// (R2, F13-8) A throwaway worktree without an owner record is reported "no owner record - remove
+// it by hand" and left alone, whatever its age; once its directory is gone - git calls it prunable
+// - `c3 doctor --fix` removes it.
+#[test]
+fn a_throwaway_without_an_owner_record_is_left_alone_until_git_calls_it_prunable() {
+    let repo = fixture_repo("kimi-noowner");
+    make_doctor_clean(&repo);
+    let (name, wt) = add_throwaway(&repo, 6);
+
+    let j = branches_json(&repo);
+    let r = reported(&j, &name).unwrap_or_else(|| panic!("not reported: {j}"));
+    assert_eq!(r["removable"], false, "{j}");
+    assert_eq!(r["why"], "no owner record - remove it by hand", "{j}");
+    let (_c, out, err) = run_c3(
+        &repo,
+        &["doctor", "--fix"],
+        &[("C3_CONFIG", "none"), ("CODEX_CONSULT_ROSTER", "none")],
+    );
+    assert!(
+        !out.contains("removed the stale c3 worktree"),
+        "{out}\n{err}"
+    );
+    assert!(
+        wt.join("README.md").exists(),
+        "a worktree with no owner record was removed"
+    );
+
+    // its directory goes: git calls it prunable, and only now is it removable
+    std::fs::remove_dir_all(&wt).unwrap();
+    let j = branches_json(&repo);
+    let r = reported(&j, &name).unwrap_or_else(|| panic!("not reported: {j}"));
+    assert_eq!(r["removable"], true, "{j}");
+    assert_eq!(r["why"], "its directory is gone", "{j}");
+    let (_c, out, err) = run_c3(
+        &repo,
+        &["doctor", "--fix"],
+        &[("C3_CONFIG", "none"), ("CODEX_CONSULT_ROSTER", "none")],
+    );
+    assert!(
+        out.contains("[fixed] removed the stale c3 worktree") && out.contains(&name),
+        "{out}\n{err}"
+    );
+    let list = git_out(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(!list.contains(&name), "{list}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (R2, F12-1) An owner whose start time cannot be read (another user's or an elevated process -
+// here the test hook that makes this test process's start unreadable) cannot be checked: reported,
+// left alone, never removed by `c3 doctor --fix`. Without the hook the same owner is alive: no
+// finding at all.
+#[test]
+fn a_throwaway_whose_owner_cannot_be_checked_is_left_alone() {
+    let repo = fixture_repo("kimi-unsure");
+    make_doctor_clean(&repo);
+    let (name, wt) = add_throwaway(&repo, 7);
+    let me = std::process::id().to_string();
+    write_owner(&wt, &format!("{me} \n"));
+    let unreadable = [
+        ("CODEX_CONSULT_TEST_MODE", "1"),
+        ("CODEX_CONSULT_TEST_START_UNREADABLE", me.as_str()),
+    ];
+    let j = branches_json_env(&repo, &unreadable);
+    let r = reported(&j, &name).unwrap_or_else(|| panic!("not reported: {j}"));
+    assert_eq!(r["removable"], false, "{j}");
+    let why = r["why"].as_str().unwrap();
+    assert!(
+        why.contains(&format!("pid {me}")) && why.contains("cannot be checked"),
+        "{why}"
+    );
+    let mut fix_env = unreadable.to_vec();
+    fix_env.extend([("C3_CONFIG", "none"), ("CODEX_CONSULT_ROSTER", "none")]);
+    let (_c, out, err) = run_c3(&repo, &["doctor", "--fix"], &fix_env);
+    assert!(
+        !out.contains("removed the stale c3 worktree"),
+        "{out}\n{err}"
+    );
+    assert!(
+        wt.join("README.md").exists(),
+        "a worktree whose owner may live was removed"
+    );
+
+    let j = branches_json(&repo);
+    assert!(
+        reported(&j, &name).is_none(),
+        "a live owner's worktree is a finding: {j}"
+    );
+
+    git(
+        &repo,
+        &["worktree", "remove", "--force", &wt.to_string_lossy()],
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (R2, F13-3) `c3: work | alice | tomorrow | keep me` is not C3's record - its date is no date - so
+// the listing counts the branch as unrecorded, `--clear` leaves the line byte for byte and `--set`
+// keeps it below the new record.
+#[test]
+fn a_c3_line_without_a_real_date_is_a_foreign_note() {
+    let repo = fixture_repo("nodate");
+    let note = "c3: work | alice | tomorrow | keep me";
+    git(
+        &repo,
+        &["config", "--local", "branch.open.description", note],
+    );
+    let j = branches_json(&repo);
+    let b = branch(&j, "open");
+    assert_eq!(b["state"], Value::Null, "{j}");
+    assert_eq!(b["foreign_description"], true, "{j}");
+    assert_eq!(b["unknown"], true, "{j}");
+
+    let (code, out, err) = run_c3(&repo, &["branches", "--clear", "open"], &[]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("not a C3 record"), "{out}");
+    assert_eq!(raw_description(&repo, "open").as_deref(), Some(note));
+
+    let (code, out, err) = run_c3(
+        &repo,
+        &[
+            "branches",
+            "--set",
+            "open",
+            "--state",
+            "parked",
+            "--note",
+            "after review",
+            "--owner",
+            "o",
+        ],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    let d = raw_description(&repo, "open").unwrap();
+    assert!(
+        d.starts_with("c3: parked | o | ") && d.ends_with(&format!(" | after review\n{note}")),
+        "{d:?}"
+    );
+    let (code, _o, err) = run_c3(&repo, &["branches", "--clear", "open"], &[]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(raw_description(&repo, "open").as_deref(), Some(note));
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (R2, F13-4) Inside a C3 child `--set` and `--clear` refuse - exit 1, one line saying why - and
+// write nothing; the listing stays available there.
+#[test]
+fn set_and_clear_refuse_inside_a_c3_child() {
+    let repo = fixture_repo("child");
+    let child = [("C3_CHILD", "1")];
+    let (code, out, err) = run_c3(
+        &repo,
+        &[
+            "branches", "--set", "open", "--state", "work", "--note", "t",
+        ],
+        &child,
+    );
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert_eq!(err.trim().lines().count(), 1, "{err}");
+    assert!(err.contains("inside a C3 child"), "{err}");
+    assert_eq!(
+        raw_description(&repo, "open").as_deref(),
+        Some("my own note")
+    );
+
+    // a record set outside a child stays when a child tries to clear it
+    let (code, _o, err) = run_c3(
+        &repo,
+        &["branches", "--set", "open", "--state", "work"],
+        &[],
+    );
+    assert_eq!(code, 0, "{err}");
+    let recorded = raw_description(&repo, "open").unwrap();
+    let (code, _o, err) = run_c3(&repo, &["branches", "--clear", "open"], &child);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("inside a C3 child"), "{err}");
+    assert_eq!(raw_description(&repo, "open"), Some(recorded));
+
+    let j = branches_json_env(&repo, &child);
+    assert_eq!(branch(&j, "open")["state"], "work", "{j}");
+
+    // the default branch is one more config value a child does not write
+    let (code, _o, err) = run_c3(&repo, &["branches", "--default", "open"], &child);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("inside a C3 child"), "{err}");
+    let _ = std::fs::remove_dir_all(&repo);
+}

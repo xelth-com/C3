@@ -170,12 +170,14 @@ pub(super) fn engine_tree_check(
         let names = distinct(&agy.names);
         // (A1) a complete, schema-valid reply is kept whatever changed around it.
         let kept = if reply_complete { " - reply kept" } else { "" };
+        // (F11-1) agy runs without a write sandbox: a change its tool log does not explain is
+        // UNATTRIBUTED (a write can be missing from the log), never "someone else's".
         if names.is_empty() {
             // only reached as a warning when the reply is complete and schema-valid.
-            format!("agy's event stream named no tool call, the change is not the reviewer's{kept}")
+            format!("agy's event stream named no tool call, the change is unattributed{kept}")
         } else {
             format!(
-                "agy called no writing tool ({}), the change is not the reviewer's{kept}",
+                "agy's tool log shows no writing step ({}), the change is unattributed{kept}",
                 names.join(", ")
             )
         }
@@ -245,11 +247,22 @@ pub(super) fn engine_tree_check(
             ));
         }
     }
+    // (F11-2) agy reads the live brief and artifacts while they may change: a change of a BOUND
+    // input is not ambient drift - the reply may answer other bytes than the ones the review is
+    // bound to - so it is collected apart and withholds the reply ([`with_bound_input_change`]).
+    let bound_apart = !isolated && ctx.engine == "agy";
+    let mut bound_changed: Vec<String> = Vec::new();
     if drift.brief_changed {
         if isolated {
             main_warn.push(format!(
                 "the brief changed during the run (the reviewer read the copy staged at launch) - {NOT_THE_WORKTREE}"
             ));
+        } else if bound_apart {
+            bound_changed.push(if ctx.brief_ref.is_empty() {
+                "the brief".to_string()
+            } else {
+                format!("the brief `{}`", ctx.brief_ref)
+            });
         } else {
             files.push("brief".to_string());
             why.push(
@@ -264,6 +277,13 @@ pub(super) fn engine_tree_check(
             main_warn.push(format!(
                 "artifact(s) changed during the run ({list}) - {NOT_THE_WORKTREE}"
             ));
+        } else if bound_apart {
+            bound_changed.extend(
+                drift
+                    .artifacts_changed_paths
+                    .iter()
+                    .map(|p| format!("the artifact `{p}`")),
+            );
         } else {
             files.extend(drift.artifacts_changed_paths.iter().cloned());
             why.push(format!(
@@ -315,7 +335,33 @@ pub(super) fn engine_tree_check(
         claude_note.as_deref(),
         TreeChanges { why, warn, files },
     );
-    with_live_tree_warnings(check, main_warn)
+    with_live_tree_warnings(with_bound_input_change(check, &bound_changed), main_warn)
+}
+
+/// (F11-2) A BOUND input - the brief, an artifact - that changed while agy read it: the outcome is
+/// `failed` (the reply is not recorded as usable; the finish keeps its raw text, and the forced
+/// class is the one of a failed read-only check, `permission`), and the problem names the changed
+/// input(s). Ambient drift (the tree, the collab directory) stays a warning. `check` unchanged when
+/// no bound input changed.
+pub(super) fn with_bound_input_change(
+    mut check: EngineTreeCheck,
+    bound_changed: &[String],
+) -> EngineTreeCheck {
+    if bound_changed.is_empty() {
+        return check;
+    }
+    let list = bound_changed.join(", ");
+    let problem = format!(
+        "a bound input changed during the run: {list} - the reply may answer other bytes than the review is bound to, so it is not recorded as usable"
+    );
+    check.files.extend(bound_changed.iter().cloned());
+    if check.outcome == "failed" && !check.problem.is_empty() {
+        check.problem = format!("{}; {problem}", check.problem);
+    } else {
+        check.outcome = "failed".into();
+        check.problem = problem;
+    }
+    check
 }
 
 /// Decide the tree-check outcome from the collected change reasons (`why`), their warning form

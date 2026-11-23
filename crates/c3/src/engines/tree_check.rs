@@ -184,62 +184,182 @@ pub fn agy_tool_is_writing(tool: &str) -> bool {
     !AGY_READ_ONLY_TOOLS.contains(&t.as_str())
 }
 
-/// (A1) Whether ONE agy tool step may have written, decided from the step's own tool-log entry
-/// rather than from a list of write-tool names (a list misses every new tool: agy's `finish` - its
-/// normal reply hand-over - was taken for a write on every panel seat of 2026-11-07). A step is NOT
-/// writing when:
-///   * its name is on [`AGY_READ_ONLY_TOOLS`] (a known read-only file tool); or
-///   * it is the run's hand-over step (`handover`: the stream closed its `step_index` with a
-///     `step_type: "finish"` event - agy's `finish` tool, whose parameters ARE the reply); or
-///   * agy logged its `tool_info.parameters` as an object and no top-level parameter names a
-///     filesystem location or a command ([`agy_param_names_fs_target`]) - a tool that is given no
-///     path, file, directory or command cannot touch the filesystem.
+/// (A1, F11-1, F10-1, F10-2) Whether ONE agy tool step may have written, decided from the step's
+/// whole tool-log evidence (its ACTIVE / DONE / ERROR events merged by the reader:
+/// `engines::agy::read_agy_events`). A step is NOT writing only when:
+///   * it is a VERIFIED finish call (`verified_finish`: a tool named `finish` whose `step_index` the
+///     stream closed with a `step_type: "finish"` event - agy's reply hand-over, whose parameters
+///     ARE the reply; an index alone exempts nothing); or
+///   * its name is on [`AGY_READ_ONLY_TOOLS`] (a known reader - so a pure read never fails the run)
+///     and its parameters, searched at every depth, show no command or written content
+///     ([`agy_params_show_write`]).
 ///
-/// Everything else is writing - in particular a step whose parameters were not logged (the nature
-/// of the tool is unknown) and every tool that names a path or a command and is not a known reader
-/// (fail-safe: a writing call FAILS the run even when the monitored compare is clean).
+/// Everything else is writing (fail-safe: a writing call FAILS the run even when the monitored
+/// compare is clean): a tool not on the reader allow-list - with object parameters (whatever they
+/// are named; a command nested in `{"config": {...}}` or carried in a value is still a command), with
+/// other parameters, or with none logged (its nature is unknown) - and an unnamed step.
 pub fn agy_tool_step_is_writing(
     name: &str,
     parameters: Option<&serde_json::Value>,
-    handover: bool,
+    verified_finish: bool,
 ) -> bool {
-    if !agy_tool_is_writing(name) || handover {
+    if verified_finish && name.trim().eq_ignore_ascii_case("finish") {
         return false;
     }
-    match parameters.and_then(|p| p.as_object()) {
-        Some(obj) => obj.keys().any(|k| agy_param_names_fs_target(k)),
-        None => true,
+    if agy_tool_is_writing(name) {
+        return true;
     }
+    parameters.is_some_and(agy_params_show_write)
 }
 
-/// (A1) Whether an agy tool parameter NAME names a filesystem location or a command: the name,
-/// lowercased with every non-alphanumeric dropped (`TargetFile`, `AbsolutePath`, `CommandLine`,
-/// `Cwd`, `dir_path`), contains one of [`AGY_FS_PARAM_MARKERS`]. A false positive only makes a
-/// non-writing tool count as writing (fail-safe).
-pub fn agy_param_names_fs_target(key: &str) -> bool {
-    let k: String = key
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_ascii_lowercase();
-    AGY_FS_PARAM_MARKERS.iter().any(|m| k.contains(m))
+/// (F10-1) Whether a reader's logged parameters, searched at EVERY depth, show a command or written
+/// content: a key whose name (lowercased, non-alphanumerics dropped) contains one of
+/// [`AGY_WRITE_PARAM_MARKERS`], or a string value - outside a search key (`query`, `pattern`,
+/// `regex`, `search`, `glob`, `includes`, `excludes`) - shaped like a command
+/// ([`command_shaped`]). A false positive only makes a reader count as writing (fail-safe).
+pub fn agy_params_show_write(v: &serde_json::Value) -> bool {
+    fn fold(k: &str) -> String {
+        k.chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_ascii_lowercase()
+    }
+    fn walk(v: &serde_json::Value, search_key: bool) -> bool {
+        match v {
+            serde_json::Value::Object(m) => m.iter().any(|(k, x)| {
+                let f = fold(k);
+                AGY_WRITE_PARAM_MARKERS.iter().any(|w| f.contains(w))
+                    || walk(x, AGY_SEARCH_PARAM_MARKERS.iter().any(|s| f.contains(s)))
+            }),
+            serde_json::Value::Array(a) => a.iter().any(|x| walk(x, search_key)),
+            serde_json::Value::String(s) => !search_key && command_shaped(s),
+            _ => false,
+        }
+    }
+    walk(v, false)
 }
 
-/// (A1) The parameter-name fragments that mark an agy tool as touching the filesystem (a path, a
-/// file, a directory, a working directory, a command line, a write target, a file URI).
-pub const AGY_FS_PARAM_MARKERS: &[&str] = &[
-    "path", "file", "dir", "folder", "cwd", "command", "cmd", "target", "uri",
+/// (F10-1) Whether a string value reads as a command line: its first word (a path's file name,
+/// extension dropped, lowercased) is one of [`AGY_COMMAND_WORDS`] and more follows it, or it chains
+/// commands (`&&`, `||`, `;` followed by a command word, a redirection `>`).
+pub fn command_shaped(s: &str) -> bool {
+    let t = s.trim();
+    let first_word = |w: &str| -> bool {
+        let base = w
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(w)
+            .to_ascii_lowercase();
+        let base = base.split('.').next().unwrap_or("").to_string();
+        AGY_COMMAND_WORDS.contains(&base.as_str())
+    };
+    let mut words = t.split_whitespace();
+    if let Some(w) = words.next() {
+        if first_word(w) && words.next().is_some() {
+            return true;
+        }
+    }
+    t.contains("&&")
+        || t.contains("||")
+        || t.contains(" > ")
+        || t.contains(">>")
+        || t.split(';')
+            .skip(1)
+            .any(|part| part.split_whitespace().next().is_some_and(first_word))
+}
+
+/// (F10-1) Parameter-name fragments that mark a command or written content.
+pub const AGY_WRITE_PARAM_MARKERS: &[&str] = &[
+    "command",
+    "cmd",
+    "script",
+    "shell",
+    "content",
+    "replacement",
+    "overwrite",
+    "write",
+    "delete",
+    "patch",
 ];
 
-/// agy's known read-only tool names. Only `read_file` and `view_file` are CONFIRMED by the agy
-/// fixtures (`crates/c3/src/engines/agy.rs`, `crates/c3-cli/tests/compat_wave2b.rs` — where
-/// `run_command` is the one writing tool shown); agy's full tool vocabulary is otherwise not pinned
-/// in this repo, so the remaining entries are the read-only file tools of agy's Gemini-CLI lineage,
-/// listed conservatively. Anything not on this list is treated as writing.
+/// (F10-1) Parameter-name fragments of a search term, whose value is matched, never run.
+const AGY_SEARCH_PARAM_MARKERS: &[&str] = &[
+    "query", "pattern", "regex", "search", "glob", "include", "exclude",
+];
+
+/// (F10-1) First words of a command line that runs or writes something.
+pub const AGY_COMMAND_WORDS: &[&str] = &[
+    "rm",
+    "del",
+    "erase",
+    "rmdir",
+    "rd",
+    "mv",
+    "move",
+    "cp",
+    "copy",
+    "xcopy",
+    "robocopy",
+    "mkdir",
+    "md",
+    "touch",
+    "ren",
+    "rename",
+    "git",
+    "npm",
+    "npx",
+    "pnpm",
+    "yarn",
+    "cargo",
+    "make",
+    "python",
+    "python3",
+    "node",
+    "powershell",
+    "pwsh",
+    "cmd",
+    "bash",
+    "sh",
+    "zsh",
+    "sed",
+    "tee",
+    "chmod",
+    "chown",
+    "ln",
+    "mklink",
+    "curl",
+    "wget",
+    "remove-item",
+    "new-item",
+    "set-content",
+    "add-content",
+    "out-file",
+    "copy-item",
+    "move-item",
+    "rename-item",
+];
+
+/// agy's known read-only tool names. `read_file` and `view_file` are CONFIRMED by the agy fixtures
+/// (`crates/c3/src/engines/agy.rs`, `crates/c3-cli/tests/compat_wave2b.rs`). (F11-1) agy's writing
+/// tools in those fixtures are the Cascade vocabulary (`write_to_file` / `TargetFile`,
+/// `replace_file_content`, `run_command` / `CommandLine`), so its read-only tools of the same
+/// vocabulary are listed too - a pure read with them must not fail the run - and the read-only
+/// file tools of agy's Gemini-CLI lineage. Not all are fixture-confirmed. Anything not on this list
+/// is treated as writing.
 pub const AGY_READ_ONLY_TOOLS: &[&str] = &[
     // confirmed by the agy fixtures
     "read_file",
     "view_file",
+    // agy's Cascade-vocabulary readers (not fixture-confirmed in this repo)
+    "view_file_outline",
+    "view_code_item",
+    "view_content_chunk",
+    "list_dir",
+    "find_by_name",
+    "grep_search",
+    "codebase_search",
+    "search_web",
+    "read_url_content",
     // agy's Gemini-CLI read-only file tools (not fixture-confirmed in this repo)
     "read_many_files",
     "list_directory",
@@ -402,26 +522,37 @@ mod tests {
         assert!(agy_tool_is_writing(""));
     }
 
-    // (A1) the step classifier reads the tool's nature from its own log entry, not a name list.
+    // (A1, F11-1, F10-1) the step classifier: a verified finish call and a known reader (whose
+    // parameters show no command at any depth) are not writing; everything else is.
     #[test]
     fn agy_tool_step_classifier_reads_the_tool_log() {
         use serde_json::json;
-        // agy's `finish` is the reply hand-over: not writing, as the hand-over step AND by its
-        // parameters (the reply's fields name no path or command) - the live 2026-11-07 shape.
+        // agy's `finish` is the reply hand-over: not writing as a VERIFIED finish call - the live
+        // 2026-11-07 shape. Unverified (its index was never closed by a finish event), or a
+        // verified flag on a tool not named finish, exempts nothing.
         let finish = json!({"findings": [{"locations": [{"path": "a.rs", "line": 1}]}],
             "first_run_checklist": [], "prior_findings": [], "reply_markdown": "m",
             "schema_version": "1", "unproven": [], "verdict": "HOLD", "verdict_reason": "r"});
         assert!(!agy_tool_step_is_writing("finish", Some(&finish), true));
-        assert!(!agy_tool_step_is_writing("finish", Some(&finish), false));
-        // the hand-over step is not writing whatever its parameters say.
         assert!(!agy_tool_step_is_writing("finish", None, true));
-        // a NEW tool that is given no path, file, directory or command touches no file.
-        assert!(!agy_tool_step_is_writing(
-            "search_web",
-            Some(&json!({"query": "rust tokio"})),
-            false
+        assert!(agy_tool_step_is_writing("finish", Some(&finish), false));
+        assert!(agy_tool_step_is_writing(
+            "write_to_file",
+            Some(&json!({"TargetFile": "a.rs"})),
+            true
         ));
-        assert!(!agy_tool_step_is_writing("noop", Some(&json!({})), false));
+        // a tool not on the reader allow-list with object parameters is writing, whatever they
+        // are named (F10-1: `{"action": "rm -rf x"}`, `{"config": {"path": "a.rs"}}`, a fixed-target
+        // writer taking only text) - and so is one with an empty object.
+        for p in [
+            json!({"action": "rm -rf x"}),
+            json!({"config": {"path": "a.rs"}}),
+            json!({"text": "new content"}),
+            json!({"query": "rust tokio"}),
+            json!({}),
+        ] {
+            assert!(agy_tool_step_is_writing("do_thing", Some(&p), false), "{p}");
+        }
         // known readers stay read-only even though they name a path.
         assert!(!agy_tool_step_is_writing(
             "read_file",
@@ -453,10 +584,30 @@ mod tests {
         // unnamed one.
         assert!(agy_tool_step_is_writing("run_command", None, false));
         assert!(agy_tool_step_is_writing("", None, false));
-        // the parameter-name test folds case and separators.
-        assert!(agy_param_names_fs_target("dir_path"));
-        assert!(agy_param_names_fs_target("AbsolutePath"));
-        assert!(!agy_param_names_fs_target("verdict_reason"));
+        // (F10-1) a reader whose parameters carry a command at any depth, or a command-shaped
+        // value outside a search key, is writing; a search term that looks like one is not.
+        assert!(agy_tool_step_is_writing(
+            "read_file",
+            Some(&json!({"Path": "a.rs", "extra": {"CommandLine": "x"}})),
+            false
+        ));
+        assert!(agy_tool_step_is_writing(
+            "view_file",
+            Some(&json!({"AbsolutePath": "a.rs", "opts": ["del a.rs"]})),
+            false
+        ));
+        assert!(!agy_tool_step_is_writing(
+            "grep_search",
+            Some(&json!({"Query": "git diff && x", "SearchPath": "C:/r"})),
+            false
+        ));
+        assert!(command_shaped("rm -rf x"));
+        assert!(command_shaped("C:\\Windows\\cmd.exe /c del x"));
+        assert!(command_shaped("echo x > a.txt"));
+        assert!(command_shaped("ls; rm x"));
+        assert!(!command_shaped("C:/r/a.rs"));
+        assert!(!command_shaped("rm"));
+        assert!(!command_shaped("the reply text"));
     }
 
     #[test]

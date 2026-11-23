@@ -332,7 +332,28 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
             crate::consult::reviewed::ledger_diff_value(d),
         );
     }
+    // (F11-12) the kind of reply a FAILED run preserved, recorded explicitly (`c3 providers` counts
+    // its failed runs by it): `sidecar` (the raw reply kept as `.reply.json`), `partial` (a
+    // salvaged `.partial.md`) or `none`. A usable run's entry is unchanged.
+    if e.bridge_outcome.starts_with("failed") {
+        e.extra.insert(
+            "reply_kept".into(),
+            serde_json::Value::String(reply_kept_kind(&e.reply_json, &e.partial_reply).to_string()),
+        );
+    }
     e
+}
+
+/// (F11-12) The kind of reply a run preserved: `sidecar` when its raw reply was kept as the
+/// `.reply.json` sidecar, else `partial` when a salvaged `.partial.md` was kept, else `none`.
+pub(crate) fn reply_kept_kind(reply_json: &str, partial_reply: &str) -> &'static str {
+    if !reply_json.is_empty() {
+        "sidecar"
+    } else if !partial_reply.is_empty() {
+        "partial"
+    } else {
+        "none"
+    }
 }
 
 pub(crate) fn build_reviewer(id: &ReviewerIdentity, harness: &str) -> Reviewer {

@@ -33,6 +33,29 @@ pub struct MemberBrief {
     pub reason: String,
 }
 
+/// (F11-6) One prior finding exactly as a panel member is shown it at panel start.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListedFinding {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub severity: String,
+    /// The rendered locations the prompt shows (`Format-Locations`).
+    #[serde(default)]
+    pub locations: String,
+    /// The first location as a handoff blocker line names it (`` `path:line` ``; `""` for none).
+    #[serde(default)]
+    pub first_location: String,
+    #[serde(default)]
+    pub claim: String,
+    #[serde(default)]
+    pub trigger: String,
+    #[serde(default)]
+    pub verification: String,
+}
+
 /// The base64-of-JSON spec a panel run hands one member (`-PanelSpec`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemberSpec {
@@ -63,6 +86,14 @@ pub struct MemberSpec {
     /// The open findings at panel start — the SAME set for every member (blind within a wave).
     #[serde(default)]
     pub listed_ids: Vec<String>,
+    /// (F11-6, F10-4) The IMMUTABLE record of every listed finding as the member is shown it at
+    /// panel start (id, status, severity, the text): its prompt, its prior-blocker semantics and
+    /// the validation of its prior report use these, never the store as it stands when it
+    /// finishes: a sibling flipping a status mid-panel cannot change what the member is judged
+    /// against. Empty from a spec without records (then `listed_ids` narrows the live store, as
+    /// before).
+    #[serde(default)]
+    pub listed: Vec<ListedFinding>,
     /// This member's consult number.
     #[serde(default, deserialize_with = "de_i64")]
     pub n: i64,
@@ -197,6 +228,7 @@ mod tests {
             engine: "agy".into(),
             skipped: json!([{"provider": "mimo", "model": "mimo-1", "reason": "weighty"}]),
             listed_ids: vec!["f-001".into(), "f-002".into()],
+            listed: Vec::new(),
             n: 12,
             nn: 5,
             consult_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),

@@ -373,6 +373,17 @@ fn read_rollout_text(path: &Path, tail_bytes: u64) -> String {
     }
 }
 
+/// (F11-8) The whole rollout (at most 64 MiB), or why it could not be read - the smoke's evidence
+/// reader, which must tell an unreadable rollout from an empty one.
+fn read_rollout_checked(path: &Path) -> Result<String, String> {
+    let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    f.take(ROLLOUT_MAX_BYTES)
+        .read_to_end(&mut buf)
+        .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 /// `Read-RolloutHead`: the first line (its `session_meta`), at most 64 KiB of it. `""` when
 /// unreadable.
 pub fn read_rollout_head(path: &Path) -> String {
@@ -612,7 +623,11 @@ fn parent_re() -> &'static regex::Regex {
 
 /// `Get-CodexSubagentRollouts`: the rollouts of the local days from `since` to now, written since
 /// then (5 s slack), whose first line names the thread - or one of its sub-agents, recursively - as
-/// `parent_thread_id`.
+/// `parent_thread_id`. (F11-9) A child is attributed to the CURRENT turn by its own creation: the
+/// `timestamp` of its head (`session_meta`) must be at/after `since` (the turn's launch), so an
+/// OLD child rollout of a resumed thread that was merely modified within the mtime slack is not
+/// taken for a sub-agent of this turn. A head that carries no readable timestamp gives no turn
+/// boundary: such a child is still decided by the 5 s mtime slack alone (no other heuristic).
 pub fn subagent_rollouts(parent: &str, since: DateTime<Utc>, codex_home: &str) -> Vec<PathBuf> {
     if parent.is_empty() || codex_home.is_empty() {
         return Vec::new();
@@ -639,6 +654,13 @@ pub fn subagent_rollouts(parent: &str, since: DateTime<Utc>, codex_home: &str) -
         };
         let head = read_rollout_head(&p);
         if let Some(c) = parent_re().captures(&head) {
+            // (F11-9) created before this turn's launch: not a sub-agent of this turn
+            let created = serde_json::from_str::<Value>(&head)
+                .ok()
+                .and_then(|v| v.get("timestamp").and_then(when_offset));
+            if created.is_some_and(|t| t.with_timezone(&Utc) < since) {
+                continue;
+            }
             parent_of.push((p, c[1].to_lowercase(), id));
         }
     }
@@ -836,6 +858,20 @@ pub struct SubagentSurface {
     pub offered: Vec<String>,
     /// The multi-agent tools the thread called (deduplicated).
     pub called: Vec<String>,
+    /// (F11-8) The `id` of the rollout's first `session_meta` (`""` when it names none): the
+    /// rollout's identity, checked against the thread it was looked up for.
+    pub session_id: String,
+    /// (F11-8) How many `task_complete` records it holds after its last `task_started` (the current
+    /// turn's terminal record; all of them when it has no `task_started`).
+    pub terminals: usize,
+    /// (F11-8) How many `task_complete` records it holds in all (a resumed thread holds one per
+    /// completed turn).
+    pub completed: usize,
+    /// (F11-8) How many non-empty lines are not a JSON object (an incomplete or corrupt record:
+    /// what it would have said is unknown).
+    pub malformed: usize,
+    /// (F11-8) Why the rollout could not be read (`""` when it was read).
+    pub read_error: String,
 }
 
 impl SubagentSurface {
@@ -874,12 +910,13 @@ fn push_unique(out: &mut Vec<String>, s: &str) {
 }
 
 /// A multi-agent tool: any tool of the [`MULTI_AGENT_NAMESPACE`] namespace, or one named in
-/// [`MULTI_AGENT_TOOLS`] outside an MCP server's namespace (`mcp__*` - a server may name a tool
-/// `list_agents` of its own).
+/// [`MULTI_AGENT_TOOLS`] WHATEVER its namespace (F10-5: an `mcp__*` namespace included - a CLI
+/// could serve `spawn_agent` through an MCP gateway; a server's own `list_agents` then fails the
+/// smoke, which holds an update rather than letting a real surface through). A flat MCP name
+/// (`mcp__<server>__spawn_agent`) counts by its last segment.
 fn is_multi_agent_tool(namespace: &str, name: &str) -> bool {
-    !name.is_empty()
-        && !namespace.starts_with("mcp__")
-        && (namespace == MULTI_AGENT_NAMESPACE || MULTI_AGENT_TOOLS.contains(&name))
+    let base = name.rsplit("__").next().unwrap_or(name);
+    !name.is_empty() && (namespace == MULTI_AGENT_NAMESPACE || MULTI_AGENT_TOOLS.contains(&base))
 }
 
 /// Walk one `additional_tools` entry (`{type:namespace, name, tools:[...]}` nests; a tool is
@@ -919,30 +956,58 @@ pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
         return s;
     }
     s.found = true;
-    for line in read_rollout_text(path, 0).lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
+    let text = match read_rollout_checked(path) {
+        Ok(t) => t,
+        Err(e) => {
+            s.read_error = e;
+            return s;
+        }
+    };
+    for line in text.lines() {
+        if line.trim().is_empty() {
             continue;
+        }
+        let v = match serde_json::from_str::<Value>(line) {
+            Ok(v) if v.is_object() => v,
+            _ => {
+                s.malformed += 1;
+                continue;
+            }
         };
         let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
         let Some(p) = v.get("payload") else {
             continue;
         };
         if ty == "session_meta" || ty == "turn_context" {
+            if ty == "session_meta" && s.session_id.is_empty() {
+                if let Some(id) = p.get("id").and_then(|i| i.as_str()) {
+                    s.session_id = id.to_string();
+                }
+            }
             if let Some(mav) = p.get("multi_agent_version").and_then(|m| m.as_str()) {
                 push_unique(&mut s.versions, mav);
             }
             continue;
         }
+        if ty == "event_msg" {
+            match p.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+                "task_started" => s.terminals = 0,
+                "task_complete" => {
+                    s.terminals += 1;
+                    s.completed += 1;
+                }
+                _ => {}
+            }
+            continue;
+        }
         match p.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+            // (F11-8) a tool list counts as evidence only once its `tools` array is there
             "additional_tools" => {
-                s.tool_lists += 1;
-                for t in p
-                    .get("tools")
-                    .and_then(|t| t.as_array())
-                    .into_iter()
-                    .flatten()
-                {
-                    collect_multi_agent_tools(t, "", &mut s.offered);
+                if let Some(tools) = p.get("tools").and_then(|t| t.as_array()) {
+                    s.tool_lists += 1;
+                    for t in tools {
+                        collect_multi_agent_tools(t, "", &mut s.offered);
+                    }
                 }
             }
             "function_call" | "custom_tool_call" => {
@@ -3979,8 +4044,8 @@ mod tests {
 
     /// (C3 0.2.5) The sub-agent surface of a rollout: `multi_agent_version` from `session_meta` and
     /// `turn_context`, the multi-agent tools of the `additional_tools` lists (the whole
-    /// `collaboration` namespace; a listed name outside an `mcp__*` namespace), the calls; the
-    /// code-mode `wait` and `send_message_to_user_async` are not multi-agent tools.
+    /// `collaboration` namespace; a listed name in any namespace, F10-5), the calls; the code-mode
+    /// `wait` and `send_message_to_user_async` are not multi-agent tools.
     #[test]
     fn the_subagent_surface_of_a_rollout() {
         let home = scratch("surface");
@@ -3988,7 +4053,7 @@ mod tests {
         let id = v7(now, 25);
         let tools = |collab: &str| {
             format!(
-                "{{\"timestamp\":\"{}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[{{\"type\":\"namespace\",\"name\":\"functions\",\"tools\":[{{\"type\":\"custom\",\"name\":\"exec\"}},{{\"type\":\"function\",\"name\":\"wait\"}},{{\"type\":\"function\",\"name\":\"send_message_to_user_async\"}}]}},{{\"type\":\"namespace\",\"name\":\"mcp__srv\",\"tools\":[{{\"type\":\"function\",\"name\":\"list_agents\"}}]}}{collab}]}}}}",
+                "{{\"timestamp\":\"{}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[{{\"type\":\"namespace\",\"name\":\"functions\",\"tools\":[{{\"type\":\"custom\",\"name\":\"exec\"}},{{\"type\":\"function\",\"name\":\"wait\"}},{{\"type\":\"function\",\"name\":\"send_message_to_user_async\"}}]}},{{\"type\":\"namespace\",\"name\":\"mcp__srv\",\"tools\":[{{\"type\":\"function\",\"name\":\"read_page\"}}]}}{collab}]}}}}",
                 stamp(now)
             )
         };
@@ -4046,6 +4111,66 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// (F10-5, F11-8) A multi-agent tool counts by its name in any namespace (`mcp__*` included, a
+    /// flat `mcp__srv__spawn_agent` by its last segment); a tool list counts as evidence only with
+    /// a `tools` array; the rollout's identity (its `session_meta` id), the current turn's terminal
+    /// records and its unreadable lines are reported - on LF and CRLF files alike.
+    #[test]
+    fn the_surface_reports_identity_terminal_records_and_any_namespace() {
+        let home = scratch("surface-identity");
+        let now = Utc::now();
+        let id = v7(now, 26);
+        let at = stamp(now);
+        let meta = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"multi_agent_version\":\"disabled\"}}}}"
+        );
+        let mcp = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"additional_tools\",\"tools\":[{{\"type\":\"namespace\",\"name\":\"mcp__srv\",\"tools\":[{{\"type\":\"function\",\"name\":\"spawn_agent\"}}]}},{{\"type\":\"function\",\"name\":\"mcp__gw__wait_agent\"}}]}}}}"
+        );
+        let moved = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"additional_tools\",\"tool_list\":[]}}}}"
+        );
+        let started = event_line(now, "task_started");
+        let complete = event_line(now, "task_complete");
+        for sep in ["\n", "\r\n"] {
+            let p = write_rollout(&home, &id, &[meta.clone(), mcp.clone()], now);
+            let s = rollout_subagent_surface(&p);
+            assert_eq!(
+                s.offered,
+                vec!["spawn_agent".to_string(), "mcp__gw__wait_agent".to_string()],
+                "{s:?}"
+            );
+            assert_eq!(s.session_id, id);
+            // a moved / non-array tool list is not evidence; a split later record is unreadable
+            let text = [
+                meta.clone(),
+                started.clone(),
+                moved.clone(),
+                complete.clone(),
+                "{\"timestamp\":\"x\",\"type\":\"turn_con".to_string(),
+            ]
+            .join(sep);
+            std::fs::write(&p, format!("{text}{sep}")).unwrap();
+            let s = rollout_subagent_surface(&p);
+            assert_eq!(s.tool_lists, 0, "{s:?}");
+            assert_eq!(s.malformed, 1, "{s:?}");
+            assert_eq!(s.terminals, 1, "{s:?}");
+            assert_eq!(s.versions, vec!["disabled".to_string()]);
+            // a second turn started after the last terminal record: none for the current turn
+            let text = [
+                meta.clone(),
+                started.clone(),
+                complete.clone(),
+                started.clone(),
+            ]
+            .join(sep);
+            std::fs::write(&p, format!("{text}{sep}")).unwrap();
+            let s = rollout_subagent_surface(&p);
+            assert_eq!((s.terminals, s.malformed), (0, 0), "{s:?}");
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// (C3 0.2.4) A child rollout naming the run's thread as parent is a hit even without a
     /// `spawn_agent` call in the parent's own rollout.
     #[test]
@@ -4080,6 +4205,63 @@ mod tests {
         assert_eq!(
             subagent_in_run(&parent, now - Duration::minutes(1), &home_s),
             Some(SubagentSignal::ChildRollout { thread: child })
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// (F11-9) A child rollout is attributed to the current turn by its own creation (its head's
+    /// timestamp at/after the launch): an OLD child of a resumed thread, written to just now (inside
+    /// the mtime slack), is not a sub-agent of this turn; a child created after the launch is; a
+    /// head without a timestamp falls back to the mtime slack.
+    #[test]
+    fn a_child_rollout_is_bound_to_the_current_turn_by_its_creation() {
+        let home = scratch("child-turn");
+        let now = Utc::now();
+        let parent = v7(now, 40);
+        let old_child = v7(now, 41);
+        let new_child = v7(now, 42);
+        let bare_child = v7(now, 43);
+        write_rollout(&home, &parent, &[meta_line(now, &parent, "")], now);
+        write_rollout(
+            &home,
+            &old_child,
+            &[meta_line(now - Duration::minutes(10), &old_child, &parent)],
+            now,
+        );
+        let h = home.to_string_lossy().to_string();
+        let launch = now - Duration::seconds(1);
+        assert_eq!(
+            subagent_in_run(&parent, launch, &h),
+            None,
+            "an old child modified within the slack is not of this turn"
+        );
+        write_rollout(
+            &home,
+            &new_child,
+            &[meta_line(now, &new_child, &parent)],
+            now,
+        );
+        assert_eq!(
+            subagent_in_run(&parent, launch, &h),
+            Some(SubagentSignal::ChildRollout {
+                thread: new_child.clone()
+            })
+        );
+        // no timestamp in the head: the mtime slack alone decides (it was just written)
+        let _ = std::fs::remove_dir_all(&home);
+        let home = scratch("child-turn-bare");
+        let h = home.to_string_lossy().to_string();
+        write_rollout(&home, &parent, &[meta_line(now, &parent, "")], now);
+        let bare = meta_line(now, &bare_child, &parent).replacen(
+            &format!("\"timestamp\":\"{}\",", stamp(now)),
+            "",
+            1,
+        );
+        assert!(!bare.contains("\"timestamp\""), "{bare}");
+        write_rollout(&home, &bare_child, &[bare], now);
+        assert_eq!(
+            subagent_in_run(&parent, launch, &h),
+            Some(SubagentSignal::ChildRollout { thread: bare_child })
         );
         let _ = std::fs::remove_dir_all(&home);
     }

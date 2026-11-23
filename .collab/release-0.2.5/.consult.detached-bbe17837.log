@@ -1,0 +1,529 @@
+codex-consult: detached run bbe17837 (detach id bbe17837-0860-4c44-836b-717cc031fa3a) - pid 9616 on LAPTOP-9SGIHQ03, started 2026-11-23T01:06:42+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-bbe17837.status.json
+Panel 4c0d76f3: 3 of 3 roster entries run, at once (roster C:\Users\Dmytro\AppData\Local\Temp\claude\66aab2698810b170\e97cc6d0-6d1c-45b4-8904-07597e0d378e\scratchpad\rosters\roster-p5.json; panel id 4c0d76f3-585b-40cc-8db9-41512f3bfb83)
+  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)
+  #1 grok :: grok-4.7 [grok] - member, n=12, handoff 18
+  #2 meta :: muse-spark-1.3-contributor [muse] - member, n=13, handoff 19
+  #3 ZAI-claude :: glm-5.3 [claude] - member, n=14, handoff 20
+Routing: routed by the ratings - size 3 (-PanelAll); seed abe74041f223 (nonce 2026-11-23 from date); exploration 0.2 per slot
+  eligible: #1 grok :: grok-4.7 [grok] (lab xai by vendor; score 1.75 purpose of 5), #2 meta :: muse-spark-1.3-contributor [muse] (lab meta by vendor; score 1.708 purpose of 4), #3 ZAI-claude :: glm-5.3 [claude] (lab zhipu by vendor; score 1.417 purpose of 4)
+  picked  : 1. #1 grok :: grok-4.7 [grok] (lab-draw), 2. #2 meta :: muse-spark-1.3-contributor [muse] (lab-draw), 3. #3 ZAI-claude :: glm-5.3 [claude] (lab-draw)
+Concurrency: at once - endpoint groups: grok x1, meta x1, ZAI-claude x1; -PanelConcurrency 0 (no cap)
+Timeout: 2400 s per member (the default of purpose diff-review); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 2 of 3 finished: meta :: muse-spark-1.3-contributor [muse] - usable reply (660.6 s)
+  panel member 3 of 3 finished: ZAI-claude :: glm-5.3 [claude] - usable reply (1050 s)
+  panel member 1 of 3 finished: grok :: grok-4.7 [grok] - usable reply (1134.7 s)
+
+=== panel 4c0d76f3 member 1 of 3: grok :: grok-4.7 [grok] (roster #1) ===
+codex-consult: usable reply - grok :: grok-4.7 [grok], mode new, thread 01a205bd-666f-7f52-a602-de1596f2618a (source: events), wall 813.3 s
+warning    : the live collab directory changed during the run (1 file: .collab/release-0.2.5/handoffs/09-claude-diff-review-reviewed-revision.patch) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+verdict    : HOLD - The sha is pinned and a destination link in the checkout is refused, but a --rev review is recorded as the live HEAD, staging follows source links, --diff can publish untracked secrets and mark a clean run warned, and worktree setup can rewrite the live index.
+findings   : 0 blocker, 6 major, 1 minor, 0 note -> F18-1..F18-7 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 still-open, F10-4 not-checked, F10-5 not-checked, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 fixed, F11-4 still-open, F11-5 still-open, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 fixed, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 still-open, F14-1 not-checked, F14-2 not-checked, F14-3 not-checked, F14-4 not-checked, F14-5 not-checked, F15-1 not-checked, F15-2 not-checked, F15-3 not-checked, F15-5 not-checked, F15-6 not-checked, F16-1 not-checked, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 not-checked, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\18-grok-reply-grok.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\18-grok-reply-grok.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\18-grok-reply-grok.events.jsonl
+
+## Q1
+A branch or tag is resolved with `rev^{commit}` to a full sha before `git worktree add`, and a panel passes that sha once (`panel/run.rs:2248`). A leading `-`, whitespace, or `..` is refused; a blob or tree fails `^{commit}`. The worktree sha in `extra.worktree` matches the checkout. The handoff `Reviewed:` line, ledger `base_commit` / `reviewed_revision`, and each finding's `source.base_commit` are still the live HEAD (`orchestrate/mod.rs:3806`, `ledger.rs:48`, `render.rs:632`). Those findings are stored on the live task and later reviews of HEAD judge them. If the planned sha is empty, create re-resolves `HEAD`. Ambiguous names fail `rev-parse`. A shallow clone is refused only when the object is absent.
+
+## Q2
+Staging copies a stageable brief, `state.md`, and `handoffs/` except names ending in `.events.jsonl`. A symlink, junction, or linked ancestor at the destination is refused (`worktree.rs:154`, `worktree.rs:217`). A source symlink or junction is followed: `handoffs.is_dir()` and `fs::copy` read the target, so an outside secret becomes a normal file in the worktree. Hard-link bytes are copied; a hard-linked destination is not treated as a link. `..` and absolute paths are not staged. Tracked paths inside the worktree are overwritten on purpose. The prompt says handoffs were copied whenever the collab path is stageable, even when `handoffs/` is absent (`worktree.rs:641`).
+
+## Q3
+The working-tree form sets `GIT_INDEX_FILE` to a temp copy; the unit test shows the real index bytes unchanged on that path. A leading dash cannot be a revision token, and the range is one argv after `diff`, so it is not `--output`. A single revision intent-to-adds every non-ignored untracked file (`reviewed.rs:639`), so a secret that is not gitignored is written into the patch and named in the prompt. The patch is written after `collab_before` (`mod.rs:3810` then `mod.rs:3988`). Two members can race on one patch path; each ledger stores the hash it rendered.
+
+## Q4
+`ReviewTree` drops the worktree on return, including a failed stage. A hard kill skips `Drop`. The `c3-kimi-wt-<32 hex>` name and owner file let `c3 branches` / `c3 doctor --fix` see a dead pid. The owner write is best effort. Removal unlinks links first and aborts if that pass fails or the root is a link. `create` runs `git status --porcelain` on the live repo with no `--no-optional-locks` (`worktree.rs:91`), so the live index can be refreshed and locked. A link created after the last unlink pass and before `remove_dir_all` is not covered. Ctrl-c unwind was not read.
+
+## Q5
+A live-tree or sibling change only warns. Kimi, and agy with a writing tool, fail on a change inside their own worktree. Claude, grok, and muse only warn, so a write that stays in the worktree is deleted with it and the reply stays usable. A write through a symlink is not a worktree change; the live change is labeled not the reviewer's and the reply stays usable (`tree.rs:193`). C3's own patch makes `tree_check` `warned` on a clean isolated `--diff` run; a live-tree agy reply with no tools and no structured parse is failed for that file. Two runs get distinct uuid directories.
+
+## Q6
+Http with `--rev` gets no worktree. The operator warning says the pack is the live tree; the model prompt does not. The frozen-HEAD prompt lists the first 20 uncommitted paths, including names outside the review (F11-5). MCP passes `rev` and `diff` as flag values; the CLI rejects a leading dash and whitespace before git. `C3_CHILD` does not suppress `--rev` or `--diff`. The changelog's untouched-index sentence is about the temp index, which that test supports; it does not mention `git status` in `create`. "Event streams left out" is only `*.events.jsonl`.
+
+## Q7
+Happy-path `--rev`, frozen HEAD, patch sha256, a quiet index-byte compare, and a reviewer-left junction are tested. Not covered: moving ref vs checkout, source symlink, symlink write, index lock, finding provenance, `--diff` vs `tree_check`, an untracked secret, the http pack, ctrl-c, a shallow clone, a hard link, and two members racing one patch. Not read: most test bodies, the http pack builder, signal handling, and the prior-finding files outside this diff.
+
+## Requested checks
+RC1. In a scratch repo, `stat` the index, run a fake-engine `c3 consult --rev HEAD` that creates a worktree, `stat` again. Workspace-write, 2 min. Finding #2: mtime changes or `index.lock` appears.
+RC2. Same repo, review an old sha and print the ledger `worktree.sha`, `base_commit`, and `findings.json` `source.base_commit`. Read-only after the run, 2 min. Finding #1: finding commit equals live HEAD, not the old sha.
+RC3. Claude `diff-review` with `--diff HEAD` on a clean tree plus one untracked `secret.txt` not in gitignore. Workspace-write, 2 min. Finding #3 and #4: `tree_check.outcome` is `warned` and the patch contains `secret.txt`.
+RC4. Make `handoffs` a symlink to a directory outside the repo that holds `sentinel.txt`, run an isolated consult. Workspace-write, 2 min. Finding #5: the worktree copy contains the sentinel bytes.
+RC5. Commit a symlink `out` pointing at a file in the main checkout; fake the reviewer writing through `out`. Workspace-write, 2 min. Finding #6: the target changes and the ledger outcome stays usable.
+
+### Findings
+
+- **F18-1** [major] `crates/c3/src/consult/orchestrate/mod.rs:3806`, `crates/c3/src/consult/orchestrate/ledger.rs:48`, `crates/c3/src/consult/orchestrate/ledger.rs:251`, `crates/c3/src/consult/orchestrate/render.rs:632` - Under --rev the reviewer reads the pinned worktree sha, but the handoff Reviewed line, the ledger base_commit and reviewed_revision, and every new finding's source.base_commit are the live HEAD taken before the run. Those findings are stored on the live task and a later review of HEAD treats them as findings about HEAD. Trigger: c3 consult --rev <old-sha> on a dirty live checkout whose HEAD is a different commit, and the reply files a finding. Evidence: read-code: ctx.revision is revision_info of the live repo_root, not of the worktree.; read-code: build_finding copies ctx.revision.base_commit and tree_sha256 into source and the first history event.; read-code: The Reviewed line prints ctx.revision.reviewed_revision and base_commit.; read-code: Members receive the resolved sha as rev, so the worktree itself is pinned; only the recorded provenance stays on the live HEAD. Verify: RC2. Remedy: Stamp finding source, history, and the Reviewed line with the worktree sha when isolation is present, and keep the live fingerprint in a separate field.
+- **F18-2** [major] `crates/c3/src/engines/worktree.rs:91` - Creating a review worktree runs git status --porcelain on the live repository with no --no-optional-locks and no GIT_OPTIONAL_LOCKS=0. That refresh can lock and rewrite the live index while a consult is starting. Trigger: Any kimi run, claude diff-review or acceptance, or --rev consult, while the live index stat cache is stale or another git process wants the index. Evidence: read-code: create calls git_capture(repo, ["status", "--porcelain"]) on the live repo before worktree add. git_capture does not set GIT_OPTIONAL_LOCKS.; read-code: The later uncommitted-path status does pass --no-optional-locks; the create call does not. Verify: RC1. Remedy: Pass --no-optional-locks on that status, or drop it and use the already lock-avoiding uncommitted_paths result.
+- **F18-3** [major] `crates/c3/src/consult/orchestrate/mod.rs:3810`, `crates/c3/src/consult/orchestrate/mod.rs:3988`, `crates/c3/src/consult/reviewed.rs:675`, `crates/c3/src/consult/orchestrate/tree.rs:234` - The --diff patch is written into the live handoffs after collab_before is taken, and the patch path is not on the run's ignored handoff prefix. An isolated run that was otherwise clean is recorded tree_check warned. A live-tree agy reply with no tool call and no structured parse is failed for that write. Trigger: c3 consult --diff HEAD on a claude diff-review, or on agy with no --rev, when the reply has no tool call and does not parse as structured. Evidence: read-code: collab_before is snapshotted before prepare_review_inputs.; read-code: write_patch runs inside prepare_review_inputs, after that snapshot.; read-code: A collab path outside the reply prefix becomes a failure reason, or only a warning when the run is worktree-isolated.; read-code: agy warns on a change only when the reply is complete or the log names a tool; otherwise the change fails the run. Verify: RC3, and repeat on agy with a no-tool unstructured reply. Remedy: Take collab_before after the patch write, or add the patch path to the ignore prefixes.
+- **F18-4** [major] `crates/c3/src/consult/reviewed.rs:615`, `crates/c3/src/consult/reviewed.rs:639` - A single-revision --diff marks every non-ignored untracked file intent-to-add and puts its contents in the patch that the prompt tells the reviewer to read. A secret that is untracked but not gitignored leaves the machine with a remote reviewer. Trigger: c3 consult --diff HEAD while an untracked file such as secret.txt is not matched by exclude rules, .collab, or .eck. Evidence: read-code: WorkingTree runs ls-files --others --exclude-standard and git add --intent-to-add on that list, then git diff of that revision.; read-code: Excludes are only .collab, .eck, and the collab directory.; read-code: The prompt names that patch as the change under review. Verify: RC3. Remedy: Intent-to-add only paths the operator named, or require an explicit path list before untracked contents are written into the patch.
+- **F18-5** [major] `crates/c3/src/consult/reviewed.rs:299`, `crates/c3/src/engines/worktree.rs:161`, `crates/c3/src/engines/worktree.rs:169` - Staging follows a symlink or junction used as the brief or as handoffs/. is_dir and fs::copy read the target, and the bytes are written into the worktree as a normal file. A link in the checked-out revision at the destination is refused, but the source link is not. Trigger: The live handoffs directory, or the brief path, is a symlink or junction to a directory or file outside the repository. Evidence: read-code: Staging runs only if handoffs.is_dir(), which follows a directory symlink or junction, then stage_dir walks that target.; read-code: stage_file copies with fs::copy, which follows a symlink at the source.; read-code: Nested links inside the walked directory are skipped; the top-level follow has already happened. Verify: RC4. Remedy: Open the brief and handoffs with symlink_metadata, refuse a link, and copy with a non-following read.
+- **F18-6** [major] `crates/c3/src/consult/orchestrate/tree.rs:193`, `crates/c3/src/consult/reviewed.rs:361` - A reviewer that writes through a symlink checked out in the throwaway worktree changes the link target, which can be the live checkout. changes() only sees files in the worktree, and a live-tree change is recorded as not the reviewer's, so the reply stays usable. Trigger: The reviewed commit contains a symlink whose target is a file or directory in the live checkout, and the reviewer writes through that symlink. Evidence: read-code: changes() compares git content and the staged collab snapshot inside the worktree only.; read-code: When the run is isolated, a live working-tree change is pushed only onto main_warn with NOT_THE_WORKTREE.; read-code: Warnings do not clear a usable reply; only check.problem does. Verify: RC5. Remedy: Treat a live-tree change that touches a path reached by a worktree symlink as the reviewer's write, and fail the engines that must not write.
+- **F18-7** [minor] `crates/c3/src/engines/worktree.rs:641`, `crates/c3/src/consult/reviewed.rs:279` - The --rev prompt says the task handoffs were copied whenever the collab path is stageable, including when handoffs/ does not exist. Staging also skips only filenames ending in .events.jsonl, so a differently named event stream is copied in. Trigger: A --rev consult whose task directory has no handoffs directory, or a handoff file named events.jsonl rather than *.events.jsonl. Evidence: read-code: rev_prompt_line appends the copied-handoffs sentence from task_rel alone.; read-code: The directory is staged only when handoffs.is_dir().; read-code: skip_staging matches only a filename that ends with .events.jsonl. Verify: Run --rev in a task with no handoffs directory and read the prompt; add handoffs/events.jsonl and see it in the worktree. Remedy: Claim the copy only after staging succeeds, and skip every events stream the engines write.
+
+### Prior findings
+
+- F02-1 - not-checked - Not in this diff; repo_models was not re-read.
+- F02-2 - not-checked - Not in this diff; repo_models was not re-read.
+- F02-3 - not-checked - Not in this diff; repo_models was not re-read.
+- F02-4 - not-checked - Not in this diff; repo_models was not re-read.
+- F02-5 - not-checked - Not in this diff; auth and maintain launch were not re-read.
+- F02-6 - not-checked - Not in this diff; hook git calls were not re-read.
+- F02-7 - not-checked - Not in this diff; branch description parsing was not re-read.
+- F02-8 - not-checked - Not in this diff. A new live-index status is finding #2, not this site.
+- F02-9 - not-checked - Not in this diff; default-branch discovery was not re-read.
+- F02-10 - not-checked - Not in this diff; cherry content check was not re-read.
+- F02-11 - not-checked - Not in this diff; user worktree prefix filtering was not re-read.
+- F02-12 - not-checked - Not in this diff; catalog redirects were not re-read.
+- F02-13 - not-checked - Not in this diff; catalog body limits were not re-read.
+- F02-14 - not-checked - Not in this diff; catalog dates were not re-read.
+- F02-15 - not-checked - Not in this diff; endpoint model lists were not re-read.
+- F02-16 - not-checked - Not in this diff; smoke binding was not re-read.
+- F02-17 - not-checked - Not in this diff; roster writer was not re-read.
+- F02-18 - not-checked - Not in this diff; maintain --models was not re-read.
+- F02-19 - not-checked - Not in this diff; telemetry catalogs were not re-read.
+- F02-20 - not-checked - Not in this diff; Claude-shaped telemetry was not re-read.
+- F02-21 - not-checked - Removal now lives in worktree.rs and aborts when the unlink pass fails; the old kimi.rs site was not compared line by line.
+- F03-1 - not-checked - child_environment was not re-read. This diff does not gate --rev on C3_CHILD.
+- F03-2 - not-checked - The moved unlink walk treats Windows reparse points as links; the old junction case was not re-run.
+- F03-3 - not-checked - Not in this diff; branch config keys were not re-read.
+- F03-4 - not-checked - Not in this diff; model-line parsing was not re-read.
+- F03-5 - not-checked - Not in this diff; telemetry suffix case was not re-read.
+- F03-6 - not-checked - Not in this diff; branch listing cost was not re-read.
+- F04-1 - not-checked - Not in this diff. Finding #2 is a new status call in worktree create.
+- F04-2 - not-checked - Not in this diff; swap date gate was not re-read.
+- F04-3 - not-checked - Not in this diff; catalog created stamps were not re-read.
+- F04-4 - not-checked - Not in this diff; doctor --fix child guard was not re-read.
+- F04-5 - not-checked - Current remove_worktree_dir returns before --force when the unlink pass fails; the Windows hold-open case was not run.
+- F04-6 - not-checked - Not in this diff; auth and detached maintain env were not re-read.
+- F04-7 - not-checked - Not in this diff; default-branch fallback was not re-read.
+- F04-8 - not-checked - Not in this diff; telemetry shape and catalog caps were not re-read.
+- F04-9 - not-checked - Not in this diff; --clear description handling was not re-read.
+- F10-1 - not-checked - Not in this diff; agy classifier was not re-read.
+- F10-2 - not-checked - Not in this diff; agy ACTIVE/DONE merge was not re-read.
+- F10-3 - still-open - A brief that is committed at the rev is still admitted, and a later stage failure is a capability error. is_preflight_refusal does not match that text, so the panel does not re-seat.
+- F10-4 - not-checked - Not in this diff; findings snapshot races were not re-read.
+- F10-5 - not-checked - Not in this diff; smoke sub-agent checks were not re-read.
+- F10-7 - not-checked - Not in this diff; panel death records were not re-read.
+- F11-1 - not-checked - Not in this diff; agy write classification was not re-read.
+- F11-2 - not-checked - Bound-input drift during an agy run was not re-read beyond the new worktree warning path.
+- F11-3 - fixed - stage_file refuses a symlink or junction at the destination or an ancestor. Source links are a separate defect (finding #5).
+- F11-4 - still-open - A path with .. is now refused. A destination that is a directory, or a source that disappears after the preflight, still fails as capability and is not re-seated.
+- F11-5 - still-open - uncommitted_paths still feeds the first 20 live names into the frozen-HEAD prompt, now also for claude diff-review and acceptance.
+- F11-6 - not-checked - Not in this diff; panel acceptance vs shown blockers was not re-read.
+- F11-7 - not-checked - Not in this diff; smoke sub-agent pass was not re-read.
+- F11-8 - not-checked - Not in this diff; rollout parsing was not re-read.
+- F11-9 - not-checked - Not in this diff; spawn attribution was not re-read.
+- F11-10 - not-checked - Secondary prompts were not re-read for the role constraint. They do use engine_cwd.
+- F11-11 - not-checked - Not in this diff; death-record stream identity was not re-read.
+- F11-12 - not-checked - Not in this diff; providers reply_outcomes was not re-read.
+- F12-1 - not-checked - stale_verdict still calls pid_alive; process_start_iso failure behavior was not re-read.
+- F12-2 - not-checked - Not in this diff; resolve_repo_root env was not re-read.
+- F12-3 - not-checked - Not in this diff; OneDrive reparse classification was not re-read.
+- F12-4 - not-checked - Not in this diff; description write race was not re-read.
+- F13-1 - fixed - If the worktree path itself is a link, unlink_links_inside_with errors and remove_worktree_dir returns before git worktree remove or remove_dir_all.
+- F13-2 - not-checked - Not in this diff; .git walk for the hook was not re-read.
+- F13-3 - not-checked - Not in this diff; BranchRecord::parse was not re-read.
+- F13-4 - not-checked - Not in this diff; update and branches child mark were not re-read.
+- F13-5 - not-checked - Not in this diff; hook deadline was not re-read.
+- F13-6 - not-checked - Not in this diff; AGENTS.md numeric seating was not re-read.
+- F13-7 - not-checked - Not in this diff; git cherry failure was not re-read.
+- F13-8 - still-open - record_throwaway_owner still ignores write errors, and a missing owner still goes stale after 6 hours.
+- F14-1 - not-checked - Not in this diff; catalog deadlines were not re-read.
+- F14-2 - not-checked - Not in this diff; older-pair cap was not re-read.
+- F14-3 - not-checked - Not in this diff; smoke roster symlink was not re-read.
+- F14-4 - not-checked - Not in this diff; bound_roster types were not re-read.
+- F14-5 - not-checked - Not in this diff; future catalog dates were not re-read.
+- F15-1 - not-checked - Not in this diff; resolved peer checks were not re-read.
+- F15-2 - not-checked - Not in this diff; older-pair eviction was not re-read.
+- F15-3 - not-checked - Not in this diff; smoke roster position was not re-read.
+- F15-5 - not-checked - Not in this diff; pending recovery version was not re-read.
+- F15-6 - not-checked - Not in this diff; maintain off writes were not re-read.
+- F16-1 - not-checked - Not in this diff; catalog host trust was not re-read.
+- F16-2 - not-checked - Not in this diff; CI title forwarding was not re-read.
+- F16-3 - not-checked - Not in this diff; CI deadline coverage was not re-read.
+- F16-4 - not-checked - Not in this diff; default-branch CI line was not re-read.
+- F16-6 - not-checked - Not in this diff; router explain was not re-read.
+- F16-7 - not-checked - Not in this diff; lab identity was not re-read.
+- F16-8 - not-checked - Not in this diff; weighty seat guarantee was not re-read.
+- F16-9 - not-checked - Not in this diff; CI daily gate race was not re-read.
+- F16-10 - not-checked - Not in this diff; hook script truncation was not re-read.
+- F17-1 - not-checked - Not in this diff; CI displayTitle was not re-read.
+- F17-2 - not-checked - Not in this diff; router explain seats were not re-read.
+- F17-3 - not-checked - Not in this diff; weighty tier skip was not re-read.
+- F17-4 - not-checked - Not in this diff; MiniMax lab split was not re-read.
+- F17-5 - not-checked - Not in this diff; catalog host trust was not re-read.
+- F17-6 - not-checked - Not in this diff; delegation rule rewrite was not re-read.
+- F17-7 - not-checked - Not in this diff; CI default branch was not re-read.
+- F17-8 - not-checked - Not in this diff; github.com remote match was not re-read.
+- F17-9 - not-checked - Not in this diff; hook script bytes were not re-read.
+- F17-10 - not-checked - Not in this diff; CI latest-run wording was not re-read.
+
+## Verdict: HOLD
+
+The sha is pinned and a destination link in the checkout is refused, but a --rev review is recorded as the live HEAD, staging follows source links, --diff can publish untracked secrets and mark a clean run warned, and worktree setup can rewrite the live index.
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, fixed) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, fixed) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+
+### Unproven scenarios
+
+- Whether a warm index makes the new git status a no-op, or it always takes index.lock.
+- Ctrl-c and SIGKILL: Drop removal was read, the signal path was not.
+- Http pack bytes under --rev were not read; only the operator warning and the empty isolation line were.
+- A hard-linked destination appearing between checkout and fs::copy.
+- A symlink created after the last unlink pass and before remove_dir_all.
+- Shallow-clone and ambiguous-name behavior beyond the rev-parse arguments.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 4c0d76f3 member 2 of 3: meta :: muse-spark-1.3-contributor [muse] (roster #2) ===
+codex-consult: usable reply - meta :: muse-spark-1.3-contributor [muse], mode new, thread 01a205bd-5931-7092-9285-7a3ffaf9bb2c (source: events), wall 332.2 s
+warning    : muse: warning: rules file at \\?\C:\Users\Dmytro\AppData\Local\Temp\c3-kimi-wt-8091fcd67c534046b08742c0e9e8298a\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules
+warning    : muse: warning: project MCP servers from .mcp.json, if any, are not loaded because the workspace is untrusted; restart with --trust-workspace to load them
+warning    : the live collab directory changed during the run (1 file: .collab/release-0.2.5/handoffs/09-claude-diff-review-reviewed-revision.patch) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+verdict    : REJECT - The http --rev path warns but still sends the live tree off machine, alongside patch-content and ledger-binding defects.
+findings   : 1 blocker, 5 major, 0 minor, 0 note -> F19-1..F19-6 in findings.json
+prior      : F02-1 still-open, F02-2 still-open, F02-3 still-open, F02-4 still-open, F02-5 still-open, F02-6 still-open, F02-7 still-open, F02-8 still-open, F02-9 still-open, F02-10 still-open, F02-11 still-open, F02-12 still-open, F02-13 still-open, F02-14 still-open, F02-15 still-open, F02-16 still-open, F02-17 still-open, F02-18 still-open, F02-19 still-open, F02-20 still-open, F02-21 still-open, F03-1 still-open, F03-2 still-open, F03-3 still-open, F03-4 still-open, F03-5 still-open, F03-6 still-open, F04-1 still-open, F04-2 still-open, F04-3 still-open, F04-4 still-open, F04-5 still-open, F04-6 still-open, F04-7 still-open, F04-8 still-open, F04-9 still-open, F10-1 still-open, F10-2 still-open, F10-3 still-open, F10-4 still-open, F10-5 still-open, F10-7 still-open, F11-1 still-open, F11-2 still-open, F11-3 still-open, F11-4 still-open, F11-5 still-open, F11-6 still-open, F11-7 still-open, F11-8 still-open, F11-9 still-open, F11-10 still-open, F11-11 still-open, F11-12 still-open, F12-1 still-open, F12-2 still-open, F12-3 still-open, F12-4 still-open, F13-1 still-open, F13-2 still-open, F13-3 still-open, F13-4 still-open, F13-5 still-open, F13-6 still-open, F13-7 still-open, F13-8 still-open, F14-1 still-open, F14-2 still-open, F14-3 still-open, F14-4 still-open, F14-5 still-open, F15-1 still-open, F15-2 still-open, F15-3 still-open, F15-5 still-open, F15-6 still-open, F16-1 still-open, F16-2 still-open, F16-3 still-open, F16-4 still-open, F16-6 still-open, F16-7 still-open, F16-8 still-open, F16-9 still-open, F16-10 still-open, F17-1 still-open, F17-2 still-open, F17-3 still-open, F17-4 still-open, F17-5 still-open, F17-6 still-open, F17-7 still-open, F17-8 still-open, F17-9 still-open, F17-10 still-open
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\19-muse-reply-meta.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\19-muse-reply-meta.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\19-muse-reply-meta.events.jsonl
+
+Q1 Same revision: panel resolves once to a full sha and members check out that sha, and single runs pin the sha before worktree add, so a moving branch does not split runs. Blob/tree shas are refused by `^{commit}` plus the 40-hex check. Weak points: prefix-equality in resume_revision_warning can equate distinct shas sharing a 12-char prefix, and findings stay bound to live HEAD while the code read is an older sha (false attribution, finding #6). Shallow clones fail as capability failures, which is safe.
+
+Q2 Staging: copies only task handoffs (minus `.events.jsonl`), `state.md`, and a stageable brief. Source links are skipped, dest links and link-parents refuse, and `..`/absolute brief refs are not staged (unreachable ones are refused). No write through a checked-out link was found. Overwrite of a tracked path happens only inside the throwaway. Hard-link sources are copied by content, not linked.
+
+Q3 Diff/index: range sides reject leading `-` and whitespace, and the range is passed as one argv, so option injection was not found. Temp-index path uses a uuid copy with `GIT_INDEX_FILE`, leaving the real index alone. Gaps: WorkingTree `--diff` sweeps every untracked non-ignored file into the patch (finding #2); same patch path for different ranges races the ledger (finding #3). Binary/file counting via `diff --git` lines understates binaries.
+
+Q4 Cleanup: one worktree per run dropped after the commit covers success/failure/timeout paths, and removal stays link-safe. SIGKILL/detach-kill leaves Drop unrun for doctor, but the owner record is best-effort so a live tree can look stale (finding #4). A failed worktree create after a patch write leaves the patch behind.
+
+Q5 Classification/races: live-tree changes are now warnings for isolated reviewers and worktree writes decide the outcome; sibling worktrees use distinct uuid dirs. Remaining risk is claude/grok/muse writes staying usable by design, and the patch-path race above. No name collision beyond the patch path was found.
+
+Q6 Privacy/entry: http+--rev warns yet sends the live pack off machine (finding #1, blocker). Frozen-claude isolation lines now send up to 20 live uncommitted paths to the model endpoint. MCP forwards rev/diff to CLI flags with only syntax checks, and C3_CHILD=1 does not stop the patch write (finding #5). CHANGELOG overstates link safety by implying no `--force`, while the code runs `worktree remove --force` after the unlink pass.
+
+Q7 Untested: no real-CLI run of --rev/--diff/HEAD worktree is on record; Windows junction/dir-symlink removal, doctor-after-crash discovery, detached-kill cleanup, MCP boundary strings, and C3_CHILD behavior are covered only by fakes or not at all. Prior findings were not re-run; all are reported still-open.
+
+## Requested checks
+RC1 Run `c3 consult --rev <old> --engine http` in a scratch repo and confirm which tree the pack contains. Needs workspace-write. Settles finding #1.
+RC2 Run `c3 consult --diff HEAD` with an untracked non-ignored sentinel file and inspect the patch bytes. Needs workspace-write. Settles finding #2.
+RC3 Run two `--diff` ranges sharing one brief concurrently and compare each ledger `diff.sha256` with the file on disk. Needs workspace-write. Settles finding #3.
+RC4 Make `record_throwaway_owner` fail, start a kimi/--rev run, then run `c3 doctor --fix` while it lives. Needs workspace-write. Settles finding #4.
+RC5 With `C3_CHILD=1`, run `c3 consult --diff HEAD` and check whether a patch file is created. Needs workspace-write. Settles finding #5.
+
+### Findings
+
+- **F19-1** [blocker] `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision. Trigger: c3 consult --rev <old> --engine http (or panel/MCP with rev) in a tree whose live files differ from <old>, including uncommitted secrets. Evidence: read-code: plan_isolation returns Ok(None) for engine http, so no worktree is made; the caller only pushes a WARNING string and continues the run.; read-code: Patch wires rev/diff through for every engine but the --rev isolation is skipped for http with a printed WARNING, not a refusal; the http pack path still reads the live tree. Verify: Run --rev with the http engine and capture which tree the pack is built from; confirm no network send occurs after the warning. Remedy: Refuse --rev with the http engine before anything starts, or build the pack from the resolved sha worktree instead of warning and sending live content.
+- **F19-2** [major] `crates/c3/src/consult/reviewed.rs:590` - --diff with one revision (diff against the working tree) includes every untracked non-ignored file, so an unrelated secret file in the checkout is written into the handoff patch and handed to the reviewer, including a remote model. Trigger: c3 consult --diff HEAD in a checkout containing an untracked non-ignored secret file, reviewed by any engine that sends the patch off machine. Evidence: read-code: WorkingTree path lists untracked files with ls-files --others --exclude-standard, marks them intent-to-add in a temp index copy, then diffs the rev; ignored files are excluded but ordinary untracked files are all included.; read-code: No prompt, warning, or path filter narrows the untracked set to review-relevant files before the patch is named in the prompt and sent. Verify: Place an untracked secret-named file in a scratch repo, run --diff HEAD, and inspect whether the patch bytes contain it. Remedy: Limit WorkingTree --diff to tracked changes by default and require an explicit flag to include untracked files, with a warning naming the included untracked paths.
+- **F19-3** [major] `crates/c3/src/consult/reviewed.rs:502`, `crates/c3/src/consult/reviewed.rs:675` - Two concurrent runs sharing one brief stem but different --diff ranges write the same patch path, so the loser's ledger sha256/files/bytes can describe bytes the winner wrote. Trigger: Two c3 consult --diff runs (or two panel members with different diffs) on the same task/brief with different ranges at the same time. Evidence: read-code: plan_diff derives the patch name only from the brief stem (or nn/prefix), never from the range; write_patch treats identical bytes as fine but different bytes from a sibling race as fine too after re-checking same().; read-code: Ledger diff record is filled from the in-memory plan after the write, so a same-path overwrite by a sibling between write and commit binds the entry to the wrong file. Verify: Run two --diff specs with the same brief concurrently and compare each ledger diff.sha256 with the sha256 of the file at its patch path. Remedy: Include a short hash of the normalized range in the patch filename, or fail the write when the path already holds different bytes instead of accepting the race.
+- **F19-4** [major] `crates/c3/src/engines/worktree.rs:89` - The throwaway worktree owner record is still best-effort, so a live --rev/kimi/claude worktree whose owner write failed can be reaped by doctor --fix while the reviewer is running. Trigger: Owner write fails (read-only admin dir, concurrent cleanup) and doctor --fix runs more than 6 hours after the worktree directory mtime while the reviewer process is alive. Evidence: read-code: ThrowawayWorktree::create calls record_throwaway_owner and discards its result; an unrecorded live worktree is indistinguishable from a stale one to the 6-hour staleness rule. Verify: Make record_throwaway_owner fail in a fixture, start a kimi/--rev run, then run doctor --fix and check the live worktree survives. Remedy: Check the owner-write result and fail the run as a capability failure when it cannot be recorded, or make staleness require positive proof of death rather than a missing owner file. Supersedes: F13-8.
+- **F19-5** [major] `crates/c3/src/consult/reviewed.rs:672`, `crates/c3/src/mcp/mod.rs:317` - consult --rev/--diff performs repository writes (patch file, staged worktree metadata, worktree registration) even when C3_CHILD=1, and MCP rev/diff values reach git argument construction through only the CLI syntax check. Trigger: A C3-started child (C3_CHILD=1) runs c3 consult --diff, or an MCP caller supplies rev/diff with unusual but syntax-valid tokens. Evidence: read-code: Search shows no C3_CHILD guard on the consult patch/worktree setup path; prepare_review_inputs writes the patch into the live handoffs before the first turn unconditionally.; read-code: MCP maps rev/diff straight to --rev/--diff CLI flags; the only gate before git is rev_token_ok/parse_diff_spec syntax, with semantic resolve done later in orchestration. Verify: With C3_CHILD=1 run consult --diff in a scratch repo and check whether a patch file is created; pass boundary rev/diff strings via MCP and confirm they are refused before git. Remedy: Honor C3_CHILD=1 on the patch write (refuse or redirect outside the repo) and document the MCP rev/diff contract; add MCP-side length/charset validation mirroring the CLI.
+- **F19-6** [major] `.collab/release-0.2.5/handoffs/09-claude-diff-review-reviewed-revision.md:54` - Under --rev the review reads an older commit but findings bookkeeping stays bound to live HEAD, so a verdict/findings can be recorded against code that was never reviewed. Trigger: Review an older revision with open findings recorded against current HEAD; inspect which commit the resulting findings attach to. Evidence: read-code: Brief states findings stay bound to the live HEAD even under --rev; the isolation plan pins sha for the worktree while the ledger entry still carries the live base commit.; inferred: No re-binding of open/prior findings to the reviewed sha is described in reviewed.rs or the orchestration hunks; the resume warning only warns on thread reuse. Verify: Open a finding on HEAD, run --rev on an older sha, and read the committed entry's base/findings linkage. Remedy: Bind the findings snapshot to the reviewed sha under --rev (or label the entry unbound), and warn that prior HEAD findings were not re-checked at that revision.
+
+### Prior findings
+
+- F02-1 - still-open - Range holds no fix per brief; not re-run here.
+- F02-2 - still-open - Range holds no fix per brief; not re-run here.
+- F02-3 - still-open - Range holds no fix per brief; not re-run here.
+- F02-4 - still-open - Range holds no fix per brief; not re-run here.
+- F02-5 - still-open - Range holds no fix per brief; not re-run here.
+- F02-6 - still-open - Range holds no fix per brief; not re-run here.
+- F02-7 - still-open - Range holds no fix per brief; not re-run here.
+- F02-8 - still-open - Range holds no fix per brief; not re-run here.
+- F02-9 - still-open - Range holds no fix per brief; not re-run here.
+- F02-10 - still-open - Range holds no fix per brief; not re-run here.
+- F02-11 - still-open - Range holds no fix per brief; not re-run here.
+- F02-12 - still-open - Range holds no fix per brief; not re-run here.
+- F02-13 - still-open - Range holds no fix per brief; not re-run here.
+- F02-14 - still-open - Range holds no fix per brief; not re-run here.
+- F02-15 - still-open - Range holds no fix per brief; not re-run here.
+- F02-16 - still-open - Range holds no fix per brief; not re-run here.
+- F02-17 - still-open - Range holds no fix per brief; not re-run here.
+- F02-18 - still-open - Range holds no fix per brief; not re-run here.
+- F02-19 - still-open - Range holds no fix per brief; not re-run here.
+- F02-20 - still-open - Range holds no fix per brief; not re-run here.
+- F02-21 - still-open - Range holds no fix per brief; not re-run here.
+- F03-1 - still-open - Range holds no fix per brief; not re-run here.
+- F03-2 - still-open - Range holds no fix per brief; not re-run here.
+- F03-3 - still-open - Range holds no fix per brief; not re-run here.
+- F03-4 - still-open - Range holds no fix per brief; not re-run here.
+- F03-5 - still-open - Range holds no fix per brief; not re-run here.
+- F03-6 - still-open - Range holds no fix per brief; not re-run here.
+- F04-1 - still-open - Range holds no fix per brief; not re-run here.
+- F04-2 - still-open - Range holds no fix per brief; not re-run here.
+- F04-3 - still-open - Range holds no fix per brief; not re-run here.
+- F04-4 - still-open - Range holds no fix per brief; not re-run here.
+- F04-5 - still-open - Range holds no fix per brief; not re-run here.
+- F04-6 - still-open - Range holds no fix per brief; not re-run here.
+- F04-7 - still-open - Range holds no fix per brief; not re-run here.
+- F04-8 - still-open - Range holds no fix per brief; not re-run here.
+- F04-9 - still-open - Range holds no fix per brief; not re-run here.
+- F10-1 - still-open - Range holds no fix per brief; not re-run here.
+- F10-2 - still-open - Range holds no fix per brief; not re-run here.
+- F10-3 - still-open - Range holds no fix per brief; not re-run here.
+- F10-4 - still-open - Range holds no fix per brief; not re-run here.
+- F10-5 - still-open - Range holds no fix per brief; not re-run here.
+- F10-7 - still-open - Range holds no fix per brief; not re-run here.
+- F11-1 - still-open - Range holds no fix per brief; not re-run here.
+- F11-2 - still-open - Range holds no fix per brief; not re-run here.
+- F11-3 - still-open - Range holds no fix per brief; not re-run here.
+- F11-4 - still-open - Range holds no fix per brief; not re-run here.
+- F11-5 - still-open - Range holds no fix per brief; not re-run here.
+- F11-6 - still-open - Range holds no fix per brief; not re-run here.
+- F11-7 - still-open - Range holds no fix per brief; not re-run here.
+- F11-8 - still-open - Range holds no fix per brief; not re-run here.
+- F11-9 - still-open - Range holds no fix per brief; not re-run here.
+- F11-10 - still-open - Range holds no fix per brief; not re-run here.
+- F11-11 - still-open - Range holds no fix per brief; not re-run here.
+- F11-12 - still-open - Range holds no fix per brief; not re-run here.
+- F12-1 - still-open - Range holds no fix per brief; not re-run here.
+- F12-2 - still-open - Range holds no fix per brief; not re-run here.
+- F12-3 - still-open - Range holds no fix per brief; not re-run here.
+- F12-4 - still-open - Range holds no fix per brief; not re-run here.
+- F13-1 - still-open - Range holds no fix per brief; not re-run here.
+- F13-2 - still-open - Range holds no fix per brief; not re-run here.
+- F13-3 - still-open - Range holds no fix per brief; not re-run here.
+- F13-4 - still-open - Range holds no fix per brief; not re-run here.
+- F13-5 - still-open - Range holds no fix per brief; not re-run here.
+- F13-6 - still-open - Range holds no fix per brief; not re-run here.
+- F13-7 - still-open - Range holds no fix per brief; not re-run here.
+- F13-8 - still-open - Superseded by new owner-record finding; underlying race persists.
+- F14-1 - still-open - Range holds no fix per brief; not re-run here.
+- F14-2 - still-open - Range holds no fix per brief; not re-run here.
+- F14-3 - still-open - Range holds no fix per brief; not re-run here.
+- F14-4 - still-open - Range holds no fix per brief; not re-run here.
+- F14-5 - still-open - Range holds no fix per brief; not re-run here.
+- F15-1 - still-open - Range holds no fix per brief; not re-run here.
+- F15-2 - still-open - Range holds no fix per brief; not re-run here.
+- F15-3 - still-open - Range holds no fix per brief; not re-run here.
+- F15-5 - still-open - Range holds no fix per brief; not re-run here.
+- F15-6 - still-open - Range holds no fix per brief; not re-run here.
+- F16-1 - still-open - Range holds no fix per brief; not re-run here.
+- F16-2 - still-open - Range holds no fix per brief; not re-run here.
+- F16-3 - still-open - Range holds no fix per brief; not re-run here.
+- F16-4 - still-open - Range holds no fix per brief; not re-run here.
+- F16-6 - still-open - Range holds no fix per brief; not re-run here.
+- F16-7 - still-open - Range holds no fix per brief; not re-run here.
+- F16-8 - still-open - Range holds no fix per brief; not re-run here.
+- F16-9 - still-open - Range holds no fix per brief; not re-run here.
+- F16-10 - still-open - Range holds no fix per brief; not re-run here.
+- F17-1 - still-open - Range holds no fix per brief; not re-run here.
+- F17-2 - still-open - Range holds no fix per brief; not re-run here.
+- F17-3 - still-open - Range holds no fix per brief; not re-run here.
+- F17-4 - still-open - Range holds no fix per brief; not re-run here.
+- F17-5 - still-open - Range holds no fix per brief; not re-run here.
+- F17-6 - still-open - Range holds no fix per brief; not re-run here.
+- F17-7 - still-open - Range holds no fix per brief; not re-run here.
+- F17-8 - still-open - Range holds no fix per brief; not re-run here.
+- F17-9 - still-open - Range holds no fix per brief; not re-run here.
+- F17-10 - still-open - Range holds no fix per brief; not re-run here.
+
+## Verdict: REJECT
+
+The http --rev path warns but still sends the live tree off machine, alongside patch-content and ledger-binding defects.
+
+### Blockers
+
+- **F19-1** `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision. Verify: Run --rev with the http engine and capture which tree the pack is built from; confirm no network send occurs after the warning. Remedy: Refuse --rev with the http engine before anything starts, or build the pack from the resolved sha worktree instead of warning and sending live content.
+- **F02-1** (prior, still-open) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, still-open) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, still-open) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, still-open) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, still-open) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, still-open) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, still-open) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, still-open) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, still-open) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+
+### Unproven scenarios
+
+- Whether c3_core::store::write_text_atomic follows a pre-placed symlink at the patch path.
+- Whether a reviewer background process surviving the tree kill can win the removal TOCTOU between the final link sweep and git remove / remove_dir_all.
+- Exact git behavior for ambiguous short shas under --verify --quiet across git versions.
+- Windows drive-relative (C:foo) and UNC brief refs against stageable_rel and Path::join.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 4c0d76f3 member 3 of 3: ZAI-claude :: glm-5.3 [claude] (roster #3) ===
+codex-consult: usable reply - ZAI-claude :: glm-5.3 [claude], mode new, thread e7d99b97-ac0d-489d-877e-d2036c347a68 (source: events), wall 693.7 s
+warning    : the live collab directory changed during the run (1 file: .collab/release-0.2.5/handoffs/09-claude-diff-review-reviewed-revision.patch) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+verdict    : HOLD - The isolation core is sound and well-tested with fakes, but `--diff` on the http engine asks a reviewer to read a patch its pack cannot carry (a consultation record whose premise is false), and one claimed invariant (writes watched "gitignored or not") is not true; both are cheap fixes.
+findings   : 0 blocker, 1 major, 4 minor, 1 note -> F20-1..F20-6 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 fixed, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 fixed, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 still-open, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 still-open, F10-4 not-checked, F10-5 not-checked, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 fixed, F11-4 fixed, F11-5 still-open, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 still-open, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 still-open, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 still-open, F14-1 not-checked, F14-2 not-checked, F14-3 not-checked, F14-4 not-checked, F14-5 not-checked, F15-1 not-checked, F15-2 not-checked, F15-3 not-checked, F15-5 not-checked, F15-6 not-checked, F16-1 not-checked, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 not-checked, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\20-claudecode-reply-zai-claude.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\20-claudecode-reply-zai-claude.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\20-claudecode-reply-zai-claude.events.jsonl
+
+**Q1. Same revision.** Sound. `--rev` resolves once to a full sha via `rev-parse --verify <rev>^{commit}` (`crates/c3/src/engines/worktree.rs:46`), which refuses blobs/trees and leading dashes (`rev_token_ok`, `crates/c3/src/consult/reviewed.rs:89`); the worktree is added at the resolved sha (`worktree.rs:95`), so a branch moving between resolve and checkout cannot split a run. A panel resolves once and hands every member the full sha (`crates/c3/src/panel/run.rs:813`, `member.rs:244`), so members cannot diverge. Ambiguous names are resolved by git once; the recorded sha is what is checked out. Shallow clones work for any sha git knows; others are refused before anything starts. Findings do stay bound to live HEAD under `--rev` (ledger `base_commit` from the live tree; `worktree.sha` disambiguates) — as claimed; a reader of `base_commit` alone could mis-apply, but the record is truthful.
+
+**Q2. Staging.** Copies the task's `handoffs/` (minus `*.events.jsonl`), `state.md`, and the brief (`reviewed.rs:290-325`). Destination safety is real: `stageable_rel` refuses `..`/absolute (`worktree.rs:482`), `real_parent_inside` requires every component to be a real directory and canonicalizes inside the root (`worktree.rs:206`), a destination that is a link is refused (`worktree.rs:154`) — F11-3's overwrite-through-link is closed. It can overwrite the worktree's tracked copy of the brief (intended). Two read-side notes: a live `handoffs` that is itself a symlink is followed (`is_dir`, `reviewed.rs:299`) and content from outside the repo is staged in; and any untracked file in handoffs is staged by design. Event streams are excluded.
+
+**Q3. `--diff` and its index.** The temp-index path is clean: the real index is only read (`fs::copy`), `GIT_INDEX_FILE` points `ls-files`/`add --intent-to-add`/`diff` at the temp copy, and the unit test byte-compares the real index and confirms the new file stays untracked (`reviewed.rs:880-901`); a concurrent commit only changes a snapshot. Option injection is refused (leading `-`, whitespace; `parse_diff_spec`, `reviewed.rs:416`). Two gaps: the patch carries full contents of every untracked, not-ignored file (`reviewed.rs:639`) — a not-ignored secret lands in handoffs and the prompt (finding #6); and the patch path is shared by brief stem, so a later run or member with different bytes replaces the file an earlier ledger `diff.sha256` binds (finding #3).
+
+**Q4. Cleanup.** Removal is Drop-based on every in-process path including the setup failure (`worktree.rs:244`, `mod.rs:4085`); kill/crash leaves the `c3-kimi-wt-<32hex>` directory with its owner record for `c3 branches`/`doctor --fix` — which still rests on the fail-open liveness and best-effort owner write of F12-1/F13-8, now covering far more worktrees. The removal itself never follows a link and aborts destructiveness on any error (`worktree.rs:290-317`).
+
+**Q5. Classification and races.** Correctly re-scoped: live tree/collab/brief/artifact changes are warnings only (`tree.rs:191-276`), the worktree's own changes decide (`tree.rs:279`, snapshot taken after staging, `reviewed.rs:326`), and a live-tree change no longer skips the timeout continuation (`secondary.rs:399`). kimi fails on its own worktree write, claude/grok/muse warn, codex fails — consistent with prior semantics. Gap: writes to gitignored paths are invisible (`revision.rs:314`), so kimi's fail-on-write and the "gitignored or not" claim overstate (finding #4). Names are uuids — no collisions; Windows reparse points count as links in staging, checking and removal alike.
+
+**Q6. Privacy and entry points.** http+`--rev` warns; http+`--diff` does not, and the http pack holds only brief+artifacts (`http.rs:186`), so its prompt names a patch it cannot read — finding #1. The uncommitted-path list puts up to 20 live-tree filenames, unescaped, into prompts sent to remote models (finding #5, supersedes F11-5). MCP `rev`/`diff` are validated (syntax in `args.rs:645`, existence in `build_context`) before any git call. No new child-mark concerns. CHANGELOG sentences match the code except through finding #4's doc claim.
+
+**Q7. Untested.** Everything against a real reviewer CLI (per the brief); http+`--diff` end to end; the ignored-write escape; concurrent members sharing one patch name; autocrlf fidelity of patch bytes; `doctor --fix` on rev/frozen-head leftovers.
+
+## Requested checks
+- RC1 (finding #1): with a stub endpoint logging request bodies, run `c3 consult --engine http --purpose diff-review --diff HEAD --brief <md> --artifact <f>` in a scratch repo (workspace-write for the stub); observe whether the prompt names a patch absent from the pack. 10 min.
+- RC2 (finding #4): scratch repo with `ignored.txt` gitignored; fake-kimi consult writing only `ignored.txt` in its worktree; read `tree_check_outcome`. 10 min.
+- RC3 (finding #3): 2-member panel with `--diff HEAD`, touch a tracked file between member starts; compare each member's ledger `diff.sha256` with the on-disk patch. 15 min.
+- RC4 (finding #2): hold `.git/index.lock` in a scratch repo and run a kimi consult; also compare `.git/index` mtime before/after worktree creation. 10 min.
+
+### Findings
+
+- **F20-1** [major] `crates/c3/src/consult/orchestrate/mod.rs:2527`, `crates/c3/src/consult/http.rs:189`, `crates/c3/src/consult/reviewed.rs:712` - `--diff` on the http engine writes a patch and adds "read it first and review that change" to the prompt, but the http reviewer receives only a pack built from the brief and bound artifacts, so it is asked to review a change it cannot see; unlike `--rev`+http there is no warning. Trigger: `c3 consult --engine http --diff <range> --brief <md> --artifact <file>`. Evidence: read-code: build_pack's doc and body: the pack is built from the brief and -Artifact files only; a grep of http.rs finds no handling of `diff`.; read-code: diff_plan/diff_line are built for every engine; only `--rev` has an http-engine warning branch.; read-code: diff_prompt_line instructs the reviewer to read the patch file first. Verify: RC1: run http+--diff against a stub endpoint and inspect the prompt vs the pack. Remedy: Refuse or warn for http+--diff (mirroring the --rev warning), or include the patch bytes in the pack.
+- **F20-2** [minor] `crates/c3/src/engines/worktree.rs:91` - ThrowawayWorktree::create runs `git status --porcelain` in the live repository without `--no-optional-locks`, so every kimi run, claude diff-review/acceptance and `--rev` run can refresh (write) the live index and contend for index.lock — the discipline F04-1 established for the read-only commands is missing on this new hot path. Trigger: A consult while another git process holds or creates index.lock, or with a stale index stat cache. Evidence: read-code: create() calls git_capture(repo, ["status", "--porcelain"]) with no --no-optional-locks.; read-code: neighbouring calls (uncommitted_paths, revision_info) do pass --no-optional-locks. Verify: RC4: hold .git/index.lock and run a kimi consult; check .git/index mtime after creation. Remedy: Add `--no-optional-locks` to the status call (or derive main_dirty from uncommitted_paths).
+- **F20-3** [minor] `crates/c3/src/consult/reviewed.rs:486`, `crates/c3/src/consult/reviewed.rs:689` - The patch file name is derived from the brief's stem and is shared across runs and panel members; write_patch overwrites the file whenever its bytes differ, so a later run (or a sibling member rendering `--diff HEAD` at a different moment) silently replaces the bytes an earlier ledger `diff {sha256}` record binds. Trigger: Two consultations on one brief with different --diff values, or a panel with `--diff HEAD` while the working tree changes between members' renders. Evidence: read-code: patch_name reuses the brief stem whenever the brief sits in the task's handoffs.; read-code: write_patch overwrites plan.path unless the on-disk sha already matches.; read-code: every member of a panel receives the same --diff value, so members share the path. Verify: RC3: 2-member panel with --diff HEAD and a tree edit between member starts; compare ledger sha256 with the file. Remedy: Make the name unique per range/content (or refuse to clobber a file whose bytes differ from what a ledger record binds).
+- **F20-4** [minor] `crates/c3/src/consult/reviewed.rs:359`, `crates/c3/src/consult/revision.rs:314` - ReviewTree::changes() cannot see writes to gitignored paths (git status and the content map exclude ignored files), so a kimi reviewer that writes only inside an ignored path stays usable, while the code doc and the handoff invariant claim coverage "gitignored or not". Trigger: A kimi (or codex) reviewer writes inside a gitignored directory of its throwaway worktree. Evidence: read-code: the fingerprint uses `git status --porcelain=v1 -uall -z` without --ignored, so ignored paths never appear.; read-code: the note literally says "ignored files excluded".; read-code: the doc comment of changes() claims "tracked and untracked files of the checkout ... gitignored or not". Verify: RC2: fake-kimi consult writing only a gitignored file; read tree_check_outcome. Remedy: Include ignored files in the worktree-side compare (e.g. a directory walk) or correct the claim.
+- **F20-5** [minor] `crates/c3/src/engines/worktree.rs:593`, `crates/c3/src/consult/orchestrate/mod.rs:2697` - The isolation paragraph lists up to 20 uncommitted live-tree paths (plus a count of the rest) in every worktree-isolated reviewer's prompt — now claude diff-review/acceptance and every `--rev` engine, not only kimi — with filenames passed through unescaped (Markdown delimiters, line breaks), sending private or adversarial names to remote models. Trigger: Any isolated run on a repository with uncommitted files whose names are confidential or crafted for prompt injection. Evidence: read-code: uncommitted_paths/isolation_prompt_line list the whole tree's status paths, take(20), wrapped in backticks only.; read-code: the match on isolation applies isolation_prompt to every non-rev isolated run. Verify: Capture a fake claude diff-review prompt with a sensitive untracked filename outside the reviewed path. Remedy: Restrict the list to the -Range/-Artifact focus, escape names, or make the listing opt-in. Supersedes: F11-5.
+- **F20-6** [note] `crates/c3/src/consult/reviewed.rs:639` - A one-revision `--diff` includes the full contents of every untracked, not-ignored file, so a secret not covered by .gitignore is copied into the task's handoffs and handed to the reviewer model. Trigger: `--diff HEAD` (or any single revision) with an untracked secret file in the tree. Evidence: read-code: ls-files --others --exclude-standard feeds intent-to-add into the diff, so untracked non-ignored files' contents enter the patch. Verify: Create an untracked secrets.txt and run --diff HEAD; inspect the patch bytes. Remedy: Document the exposure or exclude dotfile/secret-looking names by default.
+
+### Prior findings
+
+- F02-1 - not-checked - repo_models.rs not read this session.
+- F02-2 - not-checked
+- F02-3 - not-checked
+- F02-4 - not-checked
+- F02-5 - not-checked
+- F02-6 - not-checked
+- F02-7 - not-checked
+- F02-8 - not-checked
+- F02-9 - not-checked
+- F02-10 - not-checked
+- F02-11 - fixed - Guard re-read: is_c3_throwaway_worktree requires the system-temp parent and the exact 32-hex name (branches.rs:752-766); the shared prefix is deliberate for leftovers.
+- F02-12 - not-checked
+- F02-13 - not-checked
+- F02-14 - not-checked
+- F02-15 - not-checked
+- F02-16 - not-checked
+- F02-17 - not-checked
+- F02-18 - not-checked
+- F02-19 - not-checked
+- F02-20 - not-checked
+- F02-21 - fixed - The hardened removal moved verbatim into worktree.rs:290-317 (abort on any unlink error, no forced removal).
+- F03-1 - not-checked
+- F03-2 - not-checked - Same hardened removal reused; not re-verified beyond reading worktree.rs.
+- F03-3 - not-checked
+- F03-4 - not-checked
+- F03-5 - not-checked
+- F03-6 - not-checked
+- F04-1 - still-open - The old sites keep --no-optional-locks, but this diff adds a NEW unlocked `git status --porcelain` on every consult (worktree.rs:91) — finding #2.
+- F04-2 - not-checked
+- F04-3 - not-checked
+- F04-4 - not-checked
+- F04-5 - not-checked - Removal abort-on-error reused; residual TOCTOU accepted earlier, unchanged.
+- F04-6 - not-checked
+- F04-7 - not-checked
+- F04-8 - not-checked
+- F04-9 - not-checked
+- F10-1 - not-checked
+- F10-2 - not-checked
+- F10-3 - still-open - Narrowed: the preflight passes when the brief is committed at the rev but unreadable live (isolated_brief_refusal returns None), and setup_review_tree then still tries to copy the live brief and capability-fails without the panel re-seating; also the delete-between-preflight-and-stage race remains.
+- F10-4 - not-checked
+- F10-5 - not-checked
+- F10-7 - not-checked
+- F11-1 - not-checked
+- F11-2 - not-checked
+- F11-3 - fixed - Kimi staging rewritten through ThrowawayWorktree::stage_file: dest-link refusal, real-parent walk, canonical containment (worktree.rs:148-240); BriefCopy removed.
+- F11-4 - fixed - Preflight refusal carries " is not usable:" (worktree.rs:545) so a panel re-seats; non-stageable (`..`, out-of-repo) refs are refused before launch.
+- F11-5 - still-open - Superseded by finding #5: same listing, now emitted for claude diff-review/acceptance and every --rev engine, not only kimi.
+- F11-6 - not-checked
+- F11-7 - not-checked
+- F11-8 - not-checked
+- F11-9 - not-checked
+- F11-10 - not-checked
+- F11-11 - not-checked
+- F11-12 - not-checked
+- F12-1 - still-open - Unchanged code, broader exposure: every --rev / claude diff-review / acceptance run now creates a worktree whose doctor --fix removal rests on the fail-open pid liveness.
+- F12-2 - not-checked
+- F12-3 - not-checked
+- F12-4 - not-checked
+- F13-1 - still-open - Removal path unchanged; now also reached by rev/frozen-head worktrees.
+- F13-2 - not-checked
+- F13-3 - not-checked
+- F13-4 - not-checked
+- F13-5 - not-checked
+- F13-6 - not-checked
+- F13-7 - not-checked
+- F13-8 - still-open - record_throwaway_owner is still best-effort (`let _ = write`, branches.rs:791-798); a killed long review without an owner record is stale after 6h — and such runs are now far more common.
+- F14-1 - not-checked
+- F14-2 - not-checked
+- F14-3 - not-checked
+- F14-4 - not-checked
+- F14-5 - not-checked
+- F15-1 - not-checked
+- F15-2 - not-checked
+- F15-3 - not-checked
+- F15-5 - not-checked
+- F15-6 - not-checked
+- F16-1 - not-checked
+- F16-2 - not-checked
+- F16-3 - not-checked
+- F16-4 - not-checked
+- F16-6 - not-checked
+- F16-7 - not-checked
+- F16-8 - not-checked
+- F16-9 - not-checked
+- F16-10 - not-checked
+- F17-1 - not-checked
+- F17-2 - not-checked
+- F17-3 - not-checked
+- F17-4 - not-checked
+- F17-5 - not-checked
+- F17-6 - not-checked
+- F17-7 - not-checked
+- F17-8 - not-checked
+- F17-9 - not-checked
+- F17-10 - not-checked
+
+## Verdict: HOLD
+
+The isolation core is sound and well-tested with fakes, but `--diff` on the http engine asks a reviewer to read a patch its pack cannot carry (a consultation record whose premise is false), and one claimed invariant (writes watched "gitignored or not") is not true; both are cheap fixes.
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, fixed) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, fixed) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, still-open) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+
+### Unproven scenarios
+
+- No run of --rev, --diff or the HEAD worktree against a real reviewer CLI exists (stated in the brief); all integration tests use fake engines.
+- http + --diff end to end (finding #1 is code-reading only).
+- Whether a kimi/codex write inside a gitignored path of the worktree really escapes the fail (finding #4, code-read only).
+- Concurrent panel members sharing one patch path with differing bytes (finding #3).
+- Patch byte fidelity under core.autocrlf / CRLF working trees.
+- doctor --fix and c3 branches on leftovers of the new rev/frozen-head worktrees (same name and owner machinery as kimi's, untested for the new reasons).
+- A live handoffs directory that is a symlink staging outside-repo content into the worktree (read-follow noted, not exercised).
+
+### First-run checklist (observable)
+
+_(none)_
+
+Panel 4c0d76f3: 3 of 3 entries ran (asked 3, started 3, usable 3; wall clock 1135.3 s; at once)
+  grok :: grok-4.7 [grok]                    HOLD     0 blocker, 6 major, 1 minor          prior: 2 fixed, 4 still-open, 89 not-checked  813.3 s  handoffs/18-grok-reply-grok.md
+  meta :: muse-spark-1.3-contributor [muse]  REJECT   1 blocker, 5 major, 0 minor          prior: 95 still-open                          332.2 s  handoffs/19-muse-reply-meta.md
+  ZAI-claude :: glm-5.3 [claude]             HOLD     0 blocker, 1 major, 4 minor, 1 note  prior: 4 fixed, 6 still-open, 85 not-checked  693.7 s  handoffs/20-claudecode-reply-zai-claude.md

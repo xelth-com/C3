@@ -821,7 +821,8 @@ fn the_uncommitted_brief_reaches_the_read_insist_worktree_too() {
 fn an_untracked_brief_is_staged_and_the_prompt_names_the_uncommitted_paths() {
     // (A1, xelixir panel 47cf7308) a NEW task's brief is untracked: kimi reviews a throwaway
     // worktree of HEAD, so the bridge stages the brief there (R7) AND tells the reviewer which live
-    // paths were uncommitted at launch - not only the handoff header.
+    // paths were uncommitted at launch - not only the handoff header. (F11-5) Only tracked paths
+    // are named; an untracked one is counted, its name never reaches the reviewer.
     let e = setup("untracked-named");
     let brief_rel = ".collab/t/handoffs/01-claude-framing.md";
     std::fs::write(e.repo.join(brief_rel), "# Brief\n\n1. Is app.txt fine?\n").unwrap();
@@ -856,9 +857,14 @@ fn an_untracked_brief_is_staged_and_the_prompt_names_the_uncommitted_paths() {
         ),
         "the prompt carries the isolation paragraph: {body}"
     );
+    // (F11-5) the modified TRACKED path is named; the untracked `.collab/` only counted.
     assert!(
-        body.contains("`app.txt`") && body.contains("`.collab/`"),
-        "the uncommitted paths are named (untracked directories collapsed): {body}"
+        body.contains("1 tracked path(s) had uncommitted changes") && body.contains(": `app.txt`."),
+        "the tracked change is named: {body}"
+    );
+    assert!(
+        body.contains("1 path(s) that are not in HEAD") && !body.contains("`.collab/`"),
+        "an untracked path is only counted: {body}"
     );
     assert!(
         body.contains(&format!(
@@ -910,6 +916,218 @@ fn an_untracked_brief_outside_the_repository_refuses_the_seat_before_launch() {
         e.turns()
     );
     assert!(e.ledger().is_empty(), "nothing reached the ledger");
+}
+
+// ------------------------------------------- (F11-3, F11-4) staging never reaches outside the worktree
+
+/// Commit a LINK entry (mode 120000, through the index - no privilege needed) at `rel` pointing at
+/// `target`, and leave a REGULAR file with `live` at `rel` in the live tree.
+fn commit_link_entry(repo: &Path, rel: &str, target: &Path, live: &str) {
+    use std::io::Write;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["hash-object", "-w", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("git on PATH");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(target.to_string_lossy().replace('\\', "/").as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let blob = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    git(
+        repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("120000,{blob},{rel}"),
+        ],
+    );
+    git(repo, &["commit", "-q", "-m", "a link at the brief's path"]);
+    std::fs::write(repo.join(rel), live).unwrap();
+}
+
+#[test]
+fn a_committed_link_at_the_brief_path_refuses_the_kimi_seat_and_the_sentinel_survives() {
+    // (F11-3, the reviewer's RC1) HEAD carries a LINK at the brief's path to a sentinel outside the
+    // repository, the live tree a regular brief there: the seat is refused before anything starts
+    // (preflight-class wording, so a panel re-seats it), no kimi turn starts, nothing reaches the
+    // ledger, and the sentinel keeps its bytes.
+    let e = setup("rc1-link");
+    let sentinel = e.work.join("sentinel.txt");
+    std::fs::write(&sentinel, "keep me\n").unwrap();
+    commit_link_entry(
+        &e.repo,
+        "brief.md",
+        &sentinel,
+        "# Brief\n\n1. Is app.txt fine?\n",
+    );
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            "brief.md",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{t}");
+    assert!(t.contains("the kimi seat is not usable:"), "{t}");
+    assert!(
+        t.contains("`brief.md` is a link in the checked-out revision"),
+        "{t}"
+    );
+    assert!(t.contains("nothing was started"), "{t}");
+    assert!(e.turns().is_empty(), "no kimi turn: {:?}", e.turns());
+    assert!(e.ledger().is_empty(), "nothing reached the ledger");
+    assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "keep me\n");
+}
+
+#[test]
+fn a_junction_on_the_briefs_way_in_the_checkout_refuses_the_seat_before_launch() {
+    // (F11-3, F11-4) the checkout of the reviewer's worktree carries a JUNCTION where the brief's
+    // directory is (planted by a post-checkout hook - what a checked-out link leaves on disk): the
+    // staging refuses it - a typed pre-start refusal with preflight-class wording, no kimi turn,
+    // the reservation withdrawn, nothing written through the junction.
+    let e = setup("hook-junction");
+    let outside = e.work.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("brief.md"), "outside brief\n").unwrap();
+    std::fs::create_dir_all(e.repo.join("docs")).unwrap();
+    std::fs::write(e.repo.join("docs").join("brief.md"), "# Brief\n\n1. Ok?\n").unwrap();
+    let hooks = e.work.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    std::fs::write(
+        hooks.join("post-checkout"),
+        format!(
+            "#!/bin/sh\ncmd //c \"mklink /J docs {}\" >/dev/null 2>&1\nexit 0\n",
+            outside.display()
+        ),
+    )
+    .unwrap();
+    git(
+        &e.repo,
+        &["config", "core.hooksPath", &hooks.to_string_lossy()],
+    );
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            "docs/brief.md",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{t}");
+    assert!(
+        t.contains("the kimi seat is not usable: the brief `docs/brief.md` cannot be staged into the reviewer's throwaway worktree of HEAD"),
+        "{t}"
+    );
+    assert!(t.contains("is a link in the worktree"), "{t}");
+    assert!(e.turns().is_empty(), "no kimi turn: {:?}", e.turns());
+    assert!(e.ledger().is_empty(), "nothing reached the ledger");
+    assert!(
+        !e.repo
+            .join(".collab")
+            .join("t")
+            .join(".consult.pending.json")
+            .exists(),
+        "the reservation was withdrawn"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.join("brief.md")).unwrap(),
+        "outside brief\n"
+    );
+}
+
+#[test]
+fn an_in_repo_brief_path_with_dot_dot_is_normalised_and_staged() {
+    // (F11-4) `docs/sub/../brief.md` names an in-repo file: it is normalised, staged, and the
+    // prompt names `docs/brief.md` - not refused as leaving the repository.
+    let e = setup("dotdot");
+    std::fs::create_dir_all(e.repo.join("docs").join("sub")).unwrap();
+    std::fs::write(e.repo.join("docs").join("brief.md"), "# Brief\n\n1. Ok?\n").unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            "docs/sub/../brief.md",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(turns[0]["op_brief"], "docs/brief.md", "{:?}", turns[0]);
+    assert_eq!(turns[0]["op_brief_exists"], true, "{:?}", turns[0]);
+}
+
+#[test]
+fn a_committed_brief_the_live_tree_cannot_read_is_materialised_from_head() {
+    // (F11-4) the brief is committed at HEAD but the live file cannot be read (held open without
+    // sharing): the seat is not refused and the reviewer finds the committed brief in its worktree.
+    use std::os::windows::fs::OpenOptionsExt;
+    let e = setup("locked-brief");
+    std::fs::write(e.repo.join("brief.md"), "# Committed brief\n").unwrap();
+    git(&e.repo, &["add", "-A"]);
+    git(&e.repo, &["commit", "-q", "-m", "brief"]);
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(e.repo.join("brief.md"))
+        .unwrap();
+    assert!(
+        std::fs::read(e.repo.join("brief.md")).is_err(),
+        "the lock holds"
+    );
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            "brief.md",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    drop(lock);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(turns[0]["op_brief_exists"], true, "{:?}", turns[0]);
+    assert_eq!(
+        turns[0]["op_brief_body"]
+            .as_str()
+            .unwrap_or("")
+            .replace("\r\n", "\n"),
+        "# Committed brief\n"
+    );
 }
 
 // ------------------------------------------------------------------ the resume path
