@@ -887,21 +887,71 @@ fn records_under_eck_collab_move_with_the_folder_and_the_old_path_still_finds_th
     let _ = std::fs::remove_dir_all(&repo);
 }
 
-// `--collab-dir .c3/collab` on a repository that still has `.eck/` moves the folder first and finds
-// the records there.
+// (0.2.5, S2 F36-4) `--collab-dir .c3/collab` on a repository that still has `.eck/`: a command that
+// only reads finds the records at `.eck/collab` and moves nothing - every one of them.
 #[test]
-fn a_c3_collab_path_on_an_unmoved_repository_moves_the_folder_and_finds_the_records() {
+fn read_only_commands_with_a_c3_collab_path_never_move_an_unmoved_repository() {
     let repo = scratch_repo("collab-c3");
     seed_legacy_folder(&repo);
     seed_findings(&repo, ".eck/collab");
+    let outside = repo.with_extension("out");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(repo.join("brief.md"), "# Brief\n\nlook at src\n").unwrap();
+    let pack_out = outside.join("p.md").to_string_lossy().to_string();
+    let explain_out = outside.join("e.md").to_string_lossy().to_string();
     let (code, out, err) = list_findings(&repo, ".c3/collab", &[]);
     assert_eq!(code, 0, "{out}\n{err}");
-    assert!(out.contains("total 1"), "{out}");
-    assert!(err.contains("c3: moved .eck/ to .c3/"), "{err}");
-    assert!(!exists_any(&repo.join(".eck")));
-    assert!(repo.join(".c3/collab/t/findings.json").is_file());
-    assert!(repo.join(".c3/legacy/anchor").is_file());
+    assert!(out.contains("total 1"), "the records are found: {out}");
+    assert!(!err.contains("moved"), "{err}");
+    let c = ".c3/collab";
+    let runs: Vec<Vec<&str>> = vec![
+        vec!["findings", "--task", "t", "--collab-dir", c, "--stats"],
+        vec!["consult", "--status", "--task", "t", "--collab-dir", c],
+        vec![
+            "consult",
+            "--dry-run",
+            "--task",
+            "t",
+            "--collab-dir",
+            c,
+            "--brief",
+            "brief.md",
+        ],
+        vec!["work", "--status", "--task", "t", "--collab-dir", c],
+        vec![
+            "pack",
+            "--out",
+            &pack_out,
+            "--brief",
+            "brief.md",
+            "--collab-dir",
+            c,
+        ],
+        vec!["explain", "--out", &explain_out, "--collab-dir", c],
+        vec!["explain", "--collab-dir", c],
+        vec!["index", "stats"],
+        vec!["providers", "--no-network", "--collab-dir", c],
+        vec!["doctor"],
+    ];
+    // an empty codex home: nothing of the machine's own setup is read or probed
+    let home = outside.join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let home_s = home.to_string_lossy().to_string();
+    for args in runs {
+        let (_code, out, err) = run_c3_env(&repo, &args, &[("CODEX_HOME", home_s.as_str())]);
+        assert!(
+            repo.join(".eck/collab/t/findings.json").is_file(),
+            "{args:?} moved the folder: {out}\n{err}"
+        );
+        assert!(
+            !exists_any(&repo.join(".c3")),
+            "{args:?} made .c3/: {out}\n{err}"
+        );
+        assert!(!err.contains("moved .eck/"), "{args:?}: {err}");
+    }
+    assert!(repo.join(".eck/anchor").is_file(), "nothing relocated");
     let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_dir_all(&outside);
 }
 
 // With `C3_STATE_MIGRATE=off` nothing moves and a collab path is used exactly as given.
@@ -925,8 +975,9 @@ fn with_the_switch_off_a_collab_path_is_used_as_given() {
 }
 
 // A rename that fails (the test hook stands in for a file a running consultation holds open) leaves
-// `.eck/` whole: the command works on the legacy path and says so; `c3 finish` goes on with the
-// legacy folder; `c3 doctor --fix` reports "not moved".
+// `.eck/` in place: the old tool's leftovers were relocated inside it (the rename is the last step),
+// `c3 finish` goes on with the legacy folder and says so, a read-only command reads the records
+// there, `c3 doctor --fix` reports "not moved".
 #[test]
 fn a_failed_rename_leaves_eck_whole_and_the_command_works_on_the_legacy_path() {
     let repo = scratch_repo("collab-renamefail");
@@ -936,20 +987,6 @@ fn a_failed_rename_leaves_eck_whole_and_the_command_works_on_the_legacy_path() {
         ("CODEX_CONSULT_TEST_MODE", "1"),
         ("CODEX_CONSULT_TEST_STATE_RENAME_FAIL", "1"),
     ];
-    let (code, out, err) = list_findings(&repo, ".c3/collab", fail);
-    assert_eq!(code, 0, "{out}\n{err}");
-    assert!(
-        out.contains("total 1"),
-        "the legacy records are read: {out}"
-    );
-    assert!(
-        err.contains("c3: the project folder could not be moved now (the rename of .eck/ to .c3/ failed: simulated by CODEX_CONSULT_TEST_STATE_RENAME_FAIL; nothing else was tried); using .eck/collab for this run"),
-        "{err}"
-    );
-    assert!(repo.join(".eck/collab/t/findings.json").is_file());
-    assert!(repo.join(".eck/anchor").is_file(), "nothing half-moved");
-    assert!(!exists_any(&repo.join(".c3")));
-
     std::fs::write(repo.join("src.rs"), "fn a() {}\n").unwrap();
     let (code, out, err) = run_c3_env(
         &repo,
@@ -957,12 +994,27 @@ fn a_failed_rename_leaves_eck_whole_and_the_command_works_on_the_legacy_path() {
         fail,
     );
     assert_eq!(code, 0, "finish goes on: {out}\n{err}");
-    assert!(out.contains("could not be moved now"), "{out}");
+    assert!(
+        out.contains("the project folder could not be moved now (the rename of .eck/ to .c3/ failed: simulated by CODEX_CONSULT_TEST_STATE_RENAME_FAIL; nothing else was tried); using .eck/ for this run"),
+        "{out}"
+    );
     assert_eq!(
         std::fs::read_to_string(repo.join(".eck/last-report.md")).unwrap(),
         "# Agent Report\n\nSTILL-OK\n"
     );
     assert!(!exists_any(&repo.join(".c3")), "no fresh .c3/ beside .eck/");
+    // the leftovers went first, inside the old folder; the folder itself was not renamed
+    assert!(repo.join(".eck/legacy/anchor").is_file());
+    assert!(!exists_any(&repo.join(".eck/anchor")));
+    assert!(repo.join(".eck/collab/t/findings.json").is_file());
+
+    let (code, out, err) = list_findings(&repo, ".c3/collab", fail);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        out.contains("total 1"),
+        "the legacy records are read: {out}"
+    );
+    assert!(!exists_any(&repo.join(".c3")));
 
     let (code, out, _e) = run_c3_env(&repo, &["doctor", "--fix"], fail);
     assert_eq!(code, 1, "{out}");
@@ -970,6 +1022,470 @@ fn a_failed_rename_leaves_eck_whole_and_the_command_works_on_the_legacy_path() {
         out.contains("[!] not moved: the rename of .eck/ to .c3/ failed"),
         "{out}"
     );
+    assert!(repo.join(".eck/legacy/anchor").is_file());
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// ------------------------------------------------------------------------------ S2 (F36-1 .. F36-7)
+
+/// [`run_c3_env`] as a started child (stdout and stderr captured).
+fn spawn_c3(repo: &Path, args: &[&str], envs: &[(&str, &str)]) -> std::process::Child {
+    let mut cmd = Command::new(c3_bin());
+    cmd.current_dir(repo)
+        .args(args)
+        .env_remove("C3_CHILD")
+        .env_remove("C3_STATE_MIGRATE")
+        .env("C3_CONFIG", "none")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.spawn().expect("spawn c3")
+}
+
+/// Wait (at most 60 s) until `p` exists.
+fn wait_for(p: &Path) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !p.exists() {
+        if std::time::Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    true
+}
+
+/// Every file under `dir`, repo-relative POSIX paths, sorted.
+fn files_under(dir: &Path) -> Vec<String> {
+    fn walk(base: &Path, d: &Path, out: &mut Vec<String>) {
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(base, &p, out);
+            } else {
+                out.push(
+                    p.strip_prefix(base)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+    }
+    let mut v = Vec::new();
+    walk(dir, dir, &mut v);
+    v.sort();
+    v
+}
+
+// (F36-1) Two writing commands at once on a repository with only `.eck/`: the first (`c3 fail`) is
+// held inside the move (test hook) while the second (`c3 manifest`) waits for the lock; afterwards
+// there is one `.c3/`, no `.eck/`, and both commands' records - the journal entry and report of the
+// one, the manifest edit of the other - are in `.c3/`. (Two journal writers would race the journal's
+// read-modify-write itself, which is not the move's.)
+#[test]
+fn two_writers_at_once_leave_one_folder_with_both_records() {
+    let repo = scratch_repo("two-writers");
+    seed_legacy_folder(&repo);
+    let release = repo.with_extension("release");
+    let release_s = release.to_string_lossy().to_string();
+    let mut held = release.clone().into_os_string();
+    held.push(".held");
+    let held = PathBuf::from(held);
+    let wait = ("CODEX_CONSULT_TEST_STATE_LOCK_WAIT_MS", "60000");
+    let first = spawn_c3(
+        &repo,
+        &["fail", "--status", "FIRST-WRITER"],
+        &[
+            ("CODEX_CONSULT_TEST_MODE", "1"),
+            ("CODEX_CONSULT_TEST_STATE_MOVE_HOLD", release_s.as_str()),
+            wait,
+        ],
+    );
+    assert!(wait_for(&held), "the first writer never entered the move");
+    let second = spawn_c3(
+        &repo,
+        &[
+            "manifest",
+            "--file",
+            "ROADMAP.md",
+            "--action",
+            "replace_file",
+            "--content",
+            "# ROADMAP\n\nSECOND-WRITER\n",
+        ],
+        &[("CODEX_CONSULT_TEST_MODE", "1"), wait],
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(
+        repo.join(".eck").is_dir(),
+        "the second writer did not move it"
+    );
+    std::fs::write(&release, "go").unwrap();
+    let first = first.wait_with_output().unwrap();
+    let second = second.wait_with_output().unwrap();
+    for (o, who) in [(&first, "first"), (&second, "second")] {
+        assert!(
+            o.status.success(),
+            "{who}: {}\n{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+    assert!(!exists_any(&repo.join(".eck")), "no second folder");
+    let journal = std::fs::read_to_string(repo.join(".c3/JOURNAL.md")).unwrap();
+    assert!(journal.contains("FIRST-WRITER"), "{journal}");
+    assert!(std::fs::read_to_string(repo.join(".c3/last-report.md"))
+        .unwrap()
+        .contains("FIRST-WRITER"));
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".c3/ROADMAP.md")).unwrap(),
+        "# ROADMAP\n\nSECOND-WRITER\n"
+    );
+    assert!(repo.join(".c3/legacy/anchor").is_file());
+    let second_out = String::from_utf8_lossy(&second.stdout);
+    assert!(!second_out.contains("could not be moved"), "{second_out}");
+    let _ = std::fs::remove_file(&release);
+    let _ = std::fs::remove_file(&held);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (F36-2) A process killed between the leftover steps and the rename (test hook), then another
+// writing command: the result equals an uninterrupted move, and `.c3/anchor` is never the old tool's.
+#[test]
+fn a_kill_before_the_rename_then_another_writer_equals_an_uninterrupted_move() {
+    let killed = scratch_repo("killed-move");
+    let clean = scratch_repo("clean-move");
+    seed_legacy_folder(&killed);
+    seed_legacy_folder(&clean);
+    let (code, out, err) = run_c3_env(
+        &killed,
+        &["fail", "--status", "SAME"],
+        &[
+            ("CODEX_CONSULT_TEST_MODE", "1"),
+            ("CODEX_CONSULT_TEST_STATE_MOVE_KILL", "1"),
+        ],
+    );
+    assert_eq!(code, 86, "killed before the rename: {out}\n{err}");
+    // the leftovers were relocated inside the old folder; it was not renamed
+    assert!(killed.join(".eck/legacy/anchor").is_file());
+    assert!(!exists_any(&killed.join(".eck/anchor")));
+    assert!(!exists_any(&killed.join(".c3")));
+    let (code, out, err) = run_c3(&killed, &["fail", "--status", "SAME"]);
+    assert_eq!(code, 0, "the next writer takes over: {out}\n{err}");
+    let (code, out, err) = run_c3(&clean, &["fail", "--status", "SAME"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    for repo in [&killed, &clean] {
+        assert!(!exists_any(&repo.join(".eck")));
+        assert!(
+            !exists_any(&repo.join(".c3/anchor")),
+            "the old anchor on top"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join(".c3/legacy/anchor")).unwrap(),
+            "deadbeef-of-the-old-tool\n"
+        );
+    }
+    assert_eq!(
+        files_under(&killed.join(".c3")),
+        files_under(&clean.join(".c3"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(killed.join(".c3/last-report.md")).unwrap(),
+        std::fs::read_to_string(clean.join(".c3/last-report.md")).unwrap()
+    );
+    let _ = std::fs::remove_dir_all(&killed);
+    let _ = std::fs::remove_dir_all(&clean);
+}
+
+// (F36-2) A `.c3/` an S1 build left half done - the old tool's leftovers at its top - is finished by
+// the next writing command; its `anchor` goes to `legacy/` too.
+#[test]
+fn a_half_done_folder_of_the_s1_layout_is_finished_by_the_next_writer() {
+    let repo = scratch_repo("half-done");
+    seed_legacy_folder(&repo);
+    std::fs::rename(repo.join(".eck"), repo.join(".c3")).unwrap();
+    let (code, out, err) = run_c3(
+        &repo,
+        &[
+            "manifest",
+            "--file",
+            "ROADMAP.md",
+            "--action",
+            "replace_file",
+            "--content",
+            "# ROADMAP\n\nnew\n",
+        ],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("finished the move"), "{out}");
+    let c3 = repo.join(".c3");
+    for leftover in ["anchor", "update_seq", "telemetry_queue.json"] {
+        assert!(c3.join("legacy").join(leftover).is_file(), "{leftover}");
+        assert!(!exists_any(&c3.join(leftover)), "{leftover} left on top");
+    }
+    assert_eq!(
+        std::fs::read_to_string(c3.join("last-report.md")).unwrap(),
+        "# Agent Report\n\nOLD-REPORT\n"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// A directory link at `link` to `target`: a junction on Windows, a symlink elsewhere.
+fn dir_link(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    {
+        // (cmd reads a `/` inside a path as a switch)
+        let win = |p: &Path| p.to_string_lossy().replace('/', "\\");
+        let ok = Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(win(link))
+            .arg(win(target))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert!(ok, "mklink /J failed");
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+/// Remove a link made by [`dir_link`] (never its target).
+fn drop_link(link: &Path) {
+    #[cfg(windows)]
+    let _ = std::fs::remove_dir(link);
+    #[cfg(not(windows))]
+    let _ = std::fs::remove_file(link);
+}
+
+// (F36-3) Links inside `.eck/` are never followed: a linked `lastsnapshot` keeps its outside report
+// (the move goes on); a linked `legacy` stops the move (nothing written outside); a linked collab
+// directory stops the move (its runs cannot be checked) and its cache is never taken.
+#[test]
+fn links_inside_eck_are_never_read_moved_or_written_through() {
+    // a linked lastsnapshot
+    let repo = scratch_repo("link-snap");
+    seed_legacy_folder(&repo);
+    let outside = repo.with_extension("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("AnswerToSA.md"), "OUTSIDE-REPORT\n").unwrap();
+    std::fs::remove_dir_all(repo.join(".eck/lastsnapshot")).unwrap();
+    dir_link(&repo.join(".eck/lastsnapshot"), &outside);
+    let (code, out, err) = run_c3(&repo, &["fail", "--status", "NEW"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("moved .eck/ to .c3/"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(outside.join("AnswerToSA.md")).unwrap(),
+        "OUTSIDE-REPORT\n"
+    );
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 1);
+    let report = std::fs::read_to_string(repo.join(".c3/last-report.md")).unwrap();
+    assert!(
+        report.contains("NEW") && !report.contains("OUTSIDE"),
+        "{report}"
+    );
+    drop_link(&repo.join(".c3/lastsnapshot"));
+    let _ = std::fs::remove_dir_all(&repo);
+
+    // a linked legacy
+    let repo = scratch_repo("link-legacy");
+    seed_legacy_folder(&repo);
+    std::fs::remove_file(outside.join("AnswerToSA.md")).unwrap();
+    dir_link(&repo.join(".eck/legacy"), &outside);
+    let (code, out, err) = run_c3(&repo, &["fail", "--status", "NEW"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("could not be moved now"), "{out}");
+    assert_eq!(
+        std::fs::read_dir(&outside).unwrap().count(),
+        0,
+        "nothing written outside"
+    );
     assert!(repo.join(".eck/anchor").is_file());
+    assert!(!exists_any(&repo.join(".c3")));
+    drop_link(&repo.join(".eck/legacy"));
+    let _ = std::fs::remove_dir_all(&repo);
+
+    // a linked collab directory with a cache inside
+    let repo = scratch_repo("link-collab");
+    seed_legacy_folder(&repo);
+    std::fs::create_dir_all(outside.join(".c3")).unwrap();
+    std::fs::write(outside.join(".c3/anchor"), "cafe\n").unwrap();
+    dir_link(&repo.join(".eck/collab"), &outside);
+    let (code, out, err) = run_c3(
+        &repo,
+        &["fail", "--status", "NEW", "--collab-dir", ".eck/collab"],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("the runs behind it are not checked"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(outside.join(".c3/anchor")).unwrap(),
+        "cafe\n"
+    );
+    assert!(repo.join(".eck/anchor").is_file());
+    assert!(!exists_any(&repo.join(".c3")));
+    drop_link(&repo.join(".eck/collab"));
+    let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
+// (F36-5) Every spelling of the legacy collab directory finds the same records before and after the
+// move, and after it no spelling - not even a command that writes there - creates a new `.eck/`.
+#[test]
+fn every_collab_spelling_finds_the_same_records_and_never_creates_eck() {
+    let repo = scratch_repo("spellings");
+    seed_legacy_folder(&repo);
+    seed_findings(&repo, ".eck/collab");
+    let abs = repo
+        .join(".eck")
+        .join("collab")
+        .to_string_lossy()
+        .to_string();
+    let spellings = [
+        ".eck/collab",
+        "./.eck/collab",
+        "sub/../.eck/collab",
+        ".c3/../.eck/collab",
+        abs.as_str(),
+    ];
+    for s in spellings {
+        let (code, out, err) = list_findings(&repo, s, &[]);
+        assert_eq!(code, 0, "{s}: {out}\n{err}");
+        assert!(out.contains("total 1"), "{s}: {out}");
+    }
+    assert!(repo.join(".eck").is_dir());
+    let (code, out, err) = run_c3(&repo, &["fail", "--status", "MOVE"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(!exists_any(&repo.join(".eck")));
+    for s in spellings {
+        let (code, out, err) = list_findings(&repo, s, &[]);
+        assert_eq!(code, 0, "{s}: {out}\n{err}");
+        assert!(out.contains("total 1"), "{s}: {out}");
+        assert!(!exists_any(&repo.join(".eck")), "{s} created a new .eck/");
+    }
+    // a command that writes into the collab directory, through the `..` spelling
+    let (_code, out, err) = run_c3(
+        &repo,
+        &[
+            "findings",
+            "--task",
+            "t",
+            "--collab-dir",
+            "sub/../.eck/collab",
+            "--id",
+            "F01-1",
+            "--status",
+            "rejected",
+            "--note",
+            "spelled with ..",
+        ],
+    );
+    assert!(!exists_any(&repo.join(".eck")), "a new .eck/: {out}\n{err}");
+    assert!(repo.join(".c3/collab/t/findings.json").is_file());
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (F36-6) The live-run guard fails closed: a run directory that cannot be listed and a run owner whose
+// start time cannot be read (test hooks) both stop the move; with the record readable and its owner
+// provably someone else, the move goes on.
+#[test]
+fn an_unreadable_run_directory_or_start_time_stops_the_move() {
+    let repo = scratch_repo("failclosed");
+    seed_legacy_folder(&repo);
+    let run_dir = repo.join(".eck/collab/t/work/01-zai-glm");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let (code, out, err) = run_c3_env(
+        &repo,
+        &["fail", "--status", "S1"],
+        &[
+            ("CODEX_CONSULT_TEST_MODE", "1"),
+            ("CODEX_CONSULT_TEST_STATE_UNREADABLE", "t"),
+        ],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("cannot be listed"), "{out}");
+    assert!(repo.join(".eck/anchor").is_file());
+    assert!(!exists_any(&repo.join(".c3")));
+
+    // a running work record whose owner (this test process) has another recorded start time: with
+    // the start time unreadable its identity cannot be told - a run may be live
+    let me = std::process::id();
+    std::fs::write(
+        run_dir.join("run.json"),
+        format!(
+            r#"{{"id":"01-zai-glm","task":"t","seq":1,"provider":"zai","model":"glm","engine":"claude","argv":[],"child_env_scrubbed":[],"status":"running","started":"2026-11-23T10:00:00+00:00","pid":{me},"pid_start":"2000-01-01T00:00:00.0000000Z"}}"#
+        ),
+    )
+    .unwrap();
+    let me_s = me.to_string();
+    let (code, out, err) = run_c3_env(
+        &repo,
+        &["fail", "--status", "S2"],
+        &[
+            ("CODEX_CONSULT_TEST_MODE", "1"),
+            ("CODEX_CONSULT_TEST_START_UNREADABLE", me_s.as_str()),
+        ],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("a run is live under .eck/collab/t"), "{out}");
+    assert!(repo.join(".eck/anchor").is_file());
+    assert!(!exists_any(&repo.join(".c3")));
+
+    // readable: the pid's start time is not the recorded one - the owner is gone, the move goes on
+    let (code, out, err) = run_c3(&repo, &["fail", "--status", "S3"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("moved .eck/ to .c3/"), "{out}");
+    let journal = std::fs::read_to_string(repo.join(".c3/JOURNAL.md")).unwrap();
+    for s in ["S1", "S2", "S3"] {
+        assert!(journal.contains(s), "{s}: {journal}");
+    }
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (F36-7) The README's sentence about the switch, fixed by its behaviour: with `C3_STATE_MIGRATE=off`
+// C3 does not move `.eck/`, creates and uses `.c3/` for its own files, and a collab directory placed
+// under `.eck/` is used as given.
+#[test]
+fn the_switch_off_keeps_eck_and_c3_holds_c3s_own_files() {
+    let readme =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md"))
+            .unwrap();
+    let flat = readme.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("then C3 does not move `.eck/` and creates and uses `.c3/` for its own files; a collab directory you place under `.eck/` is still used as given."),
+        "the README sentence changed - change this test with it"
+    );
+    let repo = scratch_repo("switch-off");
+    seed_legacy_folder(&repo);
+    seed_findings(&repo, ".eck/collab");
+    let before = files_under(&repo.join(".eck"));
+    let off = &[("C3_STATE_MIGRATE", "off")];
+    let (code, out, err) = run_c3_env(
+        &repo,
+        &[
+            "fail",
+            "--status",
+            "OWN-FILES",
+            "--collab-dir",
+            ".eck/collab",
+        ],
+        off,
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert_eq!(files_under(&repo.join(".eck")), before, ".eck/ as it was");
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".eck/anchor")).unwrap(),
+        "deadbeef-of-the-old-tool\n"
+    );
+    assert!(std::fs::read_to_string(repo.join(".c3/last-report.md"))
+        .unwrap()
+        .contains("OWN-FILES"));
+    assert!(!exists_any(&repo.join(".eck/last-report.md")));
+    assert!(std::fs::read_to_string(repo.join(".c3/JOURNAL.md"))
+        .unwrap()
+        .contains("OWN-FILES"));
+    let (code, out, err) = list_findings(&repo, ".eck/collab", off);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("total 1"), "used as given: {out}");
     let _ = std::fs::remove_dir_all(&repo);
 }

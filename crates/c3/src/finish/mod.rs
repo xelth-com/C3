@@ -177,20 +177,24 @@ fn now_stamp() -> String {
 }
 
 /// Write the report to `<state dir>/last-report.md` (`.c3/`, or the legacy folder for a run whose
-/// move had to wait).
-fn write_answer(dir: &Path, body: &str) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    std::fs::write(dir.join(state_dir::LAST_REPORT), body)
-        .map_err(|e| format!("write {}: {e}", state_dir::LAST_REPORT))
+/// move had to wait). (0.2.5, S2 F36-1/F36-3) Through [`state_dir::write_in`]: the folder as it is
+/// now (never a stale legacy path, never a new `.eck/`), never through a link.
+fn write_answer(repo: &Path, dir: &Path, body: &str) -> Result<(), String> {
+    state_dir::write_in(repo, dir, state_dir::LAST_REPORT, |_| {
+        Ok(body.as_bytes().to_vec())
+    })
+    .map(|_| ())
 }
 
-/// Prepend a journal entry to `<state dir>/JOURNAL.md` (create it when missing).
-fn write_journal(dir: &Path, title: &str, body: &str) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    let path = dir.join("JOURNAL.md");
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let updated = journal::insert_journal_entry(&existing, &now_stamp(), title, body);
-    std::fs::write(&path, updated).map_err(|e| format!("write JOURNAL.md: {e}"))
+/// Prepend a journal entry to `<state dir>/JOURNAL.md` (create it when missing), read and written
+/// at the folder's place now ([`state_dir::write_in`]).
+fn write_journal(repo: &Path, dir: &Path, title: &str, body: &str) -> Result<(), String> {
+    let stamp = now_stamp();
+    state_dir::write_in(repo, dir, "JOURNAL.md", |path| {
+        let existing = std::fs::read_to_string(path).unwrap_or_default();
+        Ok(journal::insert_journal_entry(&existing, &stamp, title, body).into_bytes())
+    })
+    .map(|_| ())
 }
 
 /// The hand-off snapshot shared by finish (delta/full) and fail (`--fail`). Returns the
@@ -277,8 +281,8 @@ pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
     // 1-2. Report + journal (before any git write, so they are part of the commit). Skipped checks
     //      are said in the journal entry.
     let state = ensured.dir.clone();
-    let collab = state_dir::moved_with_folder(repo, &opts.collab_root);
-    write_answer(&state, &journal::answer_finish(&opts.status)).map_err(FinishError::Other)?;
+    write_answer(repo, &state, &journal::answer_finish(&opts.status))
+        .map_err(FinishError::Other)?;
     let title = journal::first_line(&opts.message, "Agent Report").to_string();
     let journal_body = match check_outcome.line() {
         Some(l) if check_outcome.skip_requested => {
@@ -286,7 +290,10 @@ pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
         }
         _ => opts.status.clone(),
     };
-    write_journal(&state, &title, &journal_body).map_err(FinishError::Other)?;
+    write_journal(repo, &state, &title, &journal_body).map_err(FinishError::Other)?;
+    // (S2, F36-1) the folder as it is now - a move made meanwhile is followed, never undone
+    let state = state_dir::moved_with_folder(repo, &state);
+    let collab = state_dir::moved_with_folder(repo, &opts.collab_root);
 
     // 3. Stage everything (honours .gitignore).
     git::add_all(repo).map_err(FinishError::Other)?;
@@ -341,9 +348,11 @@ pub fn run_fail(opts: &FailOpts) -> Result<FailResult, FinishError> {
     let repo = &opts.repo_root;
     let ensured = state_dir::ensure(repo, Some(&opts.collab_root)).map_err(FinishError::Other)?;
     let state = ensured.dir.clone();
+    write_answer(repo, &state, &journal::answer_fail(&opts.status)).map_err(FinishError::Other)?;
+    write_journal(repo, &state, "BLOCKED/FAILED", &opts.status).map_err(FinishError::Other)?;
+    // (S2, F36-1) the folder as it is now - a move made meanwhile is followed, never undone
+    let state = state_dir::moved_with_folder(repo, &state);
     let collab = state_dir::moved_with_folder(repo, &opts.collab_root);
-    write_answer(&state, &journal::answer_fail(&opts.status)).map_err(FinishError::Other)?;
-    write_journal(&state, "BLOCKED/FAILED", &opts.status).map_err(FinishError::Other)?;
 
     let (snapshot_path, snapshot_note, pruned) = if opts.snapshot {
         hand_off_snapshot(repo, &collab, &state, opts.keep, &opts.status, true)
@@ -377,17 +386,15 @@ pub fn run_manifest(
         ));
     }
     let ensured = state_dir::ensure(repo_root, collab_root)?;
-    let path = ensured.dir.join(name);
-    let current = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => manifest::initial_content(name),
-        Err(e) => return Err(format!("read {}: {e}", path.display())),
-    };
-    let updated = manifest::apply(&current, action, content, section, target)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
-    std::fs::write(&path, updated).map_err(|e| format!("write {}: {e}", path.display()))?;
+    // (S2, F36-1/F36-3) read and written at the folder's place now, never through a link
+    let path = state_dir::write_in(repo_root, &ensured.dir, name, |path| {
+        let current = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => manifest::initial_content(name),
+            Err(e) => return Err(format!("read {}: {e}", path.display())),
+        };
+        manifest::apply(&current, action, content, section, target).map(String::into_bytes)
+    })?;
     Ok((path, ensured.notes()))
 }
 

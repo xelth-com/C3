@@ -487,7 +487,14 @@ pub fn start_detached_run(
 ) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
-    let collab_root = providers::resolve_collab_root(&repo_root, &o.collab_dir);
+    // (0.2.5, S2 F36-4/F36-6) a real start may move C3's project folder for a `.c3/...` collab path;
+    // under the legacy folder `.eck/` the task directory and the `starting` record are created
+    // under the folder's move lock, so the run cannot begin between a mover's check and its rename
+    let collab_root = providers::resolve_collab_root_moving(&repo_root, &o.collab_dir);
+    let start = match crate::state_dir::begin_run(&repo_root, &collab_root) {
+        Ok(s) => s,
+        Err(e) => return refuse(&e),
+    };
     let collab_abs = collab_root.to_string_lossy().to_string();
     let task_dir = collab_root.join(&o.task);
 
@@ -584,6 +591,8 @@ pub fn start_detached_run(
             paths.status.display()
         ));
     }
+    // the `starting` record is live: the move lock goes
+    drop(start);
 
     // Spawn the background: current_exe() consult --task <t> --collab-dir <abs> --detach-id <id>,
     // stdin null, stdout+stderr to the log, detached so the caller's handles close on exit.
@@ -1626,6 +1635,18 @@ pub fn has_live_detached_run(task_dir: &Path) -> bool {
         matches!(
             judge(run, now).state.as_str(),
             "running" | "elsewhere" | "starting"
+        )
+    })
+}
+
+/// (0.2.5, S2 F36-6) [`has_live_detached_run`] failing closed, for the move of the project folder:
+/// a status record that cannot be read counts as a run that may be live.
+pub fn detached_run_may_be_live(task_dir: &Path) -> bool {
+    let now = Utc::now();
+    read_detached_runs(task_dir).iter().any(|run| {
+        matches!(
+            judge(run, now).state.as_str(),
+            "running" | "elsewhere" | "starting" | "unreadable"
         )
     })
 }

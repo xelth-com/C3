@@ -1357,7 +1357,13 @@ fn build_context(
     let o_telemetry = o.telemetry; // captured before `o` moves into the Context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
-    let collab_root = providers::resolve_collab_root(&repo_root, &o.collab_dir);
+    // (0.2.5, S2 F36-4) only a real consultation's start may move C3's project folder for a
+    // `.c3/...` collab path - never a dry run, a panel member or a detached background
+    let collab_root = if !o.dry_run && member.is_none() && o.detach_id.is_empty() {
+        providers::resolve_collab_root_moving(&repo_root, &o.collab_dir)
+    } else {
+        providers::resolve_collab_root(&repo_root, &o.collab_dir)
+    };
     let task = TaskSlug::new(o.task.clone()).map_err(|e| (e.to_string(), 1))?;
 
     // (wave 26b, D16) the new prompt's estimated token size ((ask + brief file) / 4 chars a
@@ -3753,6 +3759,18 @@ fn read_open_findings(store: &FilesStore, task: &TaskSlug) -> (Vec<OpenFinding>,
 // ------------------------------------------------------------------------------- live run
 
 fn run_live(mut ctx: Context) -> i32 {
+    // (0.2.5, S2 F36-6) Under the legacy folder `.eck/` a single run creates its records (the
+    // handoffs directory, the task lock, the recovery record) under the folder's move lock, so it
+    // cannot begin between a mover's live-run check and its rename; a panel member runs under the
+    // records its panel run made.
+    let start = if ctx.panel_member.is_some() {
+        None
+    } else {
+        match crate::state_dir::begin_run(&ctx.repo_root, &ctx.collab_root) {
+            Ok(s) => Some(s),
+            Err(e) => return refuse(&e),
+        }
+    };
     // Ensure the handoffs dir exists.
     if let Err(e) = std::fs::create_dir_all(&ctx.handoffs_dir) {
         return refuse(&format!("could not create the handoffs directory: {e}"));
@@ -3918,6 +3936,8 @@ fn run_live(mut ctx: Context) -> i32 {
         task_lock = None;
     }
     let _task_lock = task_lock;
+    // the run's records exist (a live task lock and recovery record): the move lock goes
+    drop(start);
     // (F11-11) every turn transition names its stream in this run's own record
     ctx.pending_ref = Some(pending.clone());
 

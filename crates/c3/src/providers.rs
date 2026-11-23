@@ -2519,7 +2519,23 @@ pub fn dunce_simplify(p: PathBuf) -> PathBuf {
     }
 }
 
+/// The collab directory of `--collab-dir` (a relative path resolves against the repository root).
+/// (0.2.5, S2 F36-4) It NEVER moves C3's project folder: a collab path inside it follows a move
+/// already made, and a `.c3/...` spelling on a repository that has not moved reads the legacy path
+/// ([`crate::state_dir::collab_dir`]). The default for every command; only a real consultation or
+/// work start uses [`resolve_collab_root_moving`].
 pub fn resolve_collab_root(repo_root: &Path, collab_dir: &str) -> PathBuf {
+    resolve_collab_root_with(repo_root, collab_dir, false)
+}
+
+/// (0.2.5, S2 F36-4) [`resolve_collab_root`] for a caller that starts a real consultation or work
+/// run: a `.c3/...` collab path on a repository that still has `.eck/` makes the one-time move first
+/// ([`crate::state_dir::collab_dir_moving`]).
+pub fn resolve_collab_root_moving(repo_root: &Path, collab_dir: &str) -> PathBuf {
+    resolve_collab_root_with(repo_root, collab_dir, true)
+}
+
+fn resolve_collab_root_with(repo_root: &Path, collab_dir: &str, may_move: bool) -> PathBuf {
     let dir = if collab_dir.is_empty() {
         ".collab"
     } else {
@@ -2532,7 +2548,11 @@ pub fn resolve_collab_root(repo_root: &Path, collab_dir: &str) -> PathBuf {
         repo_root.join(p)
     };
     // (0.2.5, S1) a collab path inside C3's project folder follows its move from `.eck/` to `.c3/`
-    let joined = crate::state_dir::collab_dir(repo_root, joined);
+    let joined = if may_move {
+        crate::state_dir::collab_dir_moving(repo_root, joined)
+    } else {
+        crate::state_dir::collab_dir(repo_root, joined)
+    };
     // GetFullPath-like normalisation
     std::fs::canonicalize(&joined)
         .map(dunce_simplify)

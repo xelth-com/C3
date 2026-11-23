@@ -702,13 +702,14 @@ pub fn plan_diff(
 
 /// The exclude pathspecs of a patch: `.collab`, C3's folder `.c3` and its legacy name `.eck` (both
 /// compared the way the file system compares names - case-insensitively on Windows and macOS, so
-/// with git's `icase` magic there), and the collab directory (when it lies in the repository under
-/// another name).
+/// with git's `icase` magic there - and, 0.2.5 S2 F36-8, at any depth, as packs and snapshots drop
+/// them: `**/.c3/**` with git's `glob` magic), and the collab directory (when it lies in the
+/// repository under another name).
 pub fn diff_excludes(repo_root: &Path, collab_root: &Path) -> Vec<String> {
     let magic = if cfg!(any(windows, target_os = "macos")) {
-        "exclude,icase"
+        "exclude,glob,icase"
     } else {
-        "exclude"
+        "exclude,glob"
     };
     let mut paths = vec![".collab".to_string()];
     if let Some(r) = c3_core::paths::repo_relative(repo_root, collab_root) {
@@ -721,7 +722,7 @@ pub fn diff_excludes(repo_root: &Path, collab_root: &Path) -> Vec<String> {
         crate::state_dir::STATE_DIR,
         crate::state_dir::LEGACY_STATE_DIR,
     ] {
-        v.push(format!(":({magic}){state}"));
+        v.push(format!(":({magic})**/{state}/**"));
     }
     v
 }

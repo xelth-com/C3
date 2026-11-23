@@ -688,24 +688,41 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
   (`C3_CHILD`): there a missing folder is a refusal. `c3 doctor` without `--fix` only reports
   "no `.c3/` folder - `c3 init` creates it".
 - **An older `.eck/` folder moves once.** When `.c3` does not exist and `.eck/` is a real directory,
-  the first writing command (or `c3 doctor --fix`) renames it to `.c3/` - one rename; if it fails,
-  nothing else is tried, the command says why and uses `.eck/` for that run (`c3 doctor --fix`
-  reports "not moved"). The old tool's files C3 never reads (`anchor`,
-  `update_seq`, `telemetry_queue.json`) go to `.c3/legacy/`, `lastsnapshot/AnswerToSA.md` becomes
-  `last-report.md`, and `.c3/` is added to `.gitignore` (the `.eck/` line stays). A `.eck` that is a
-  symlink or junction is never moved through; when both folders exist nothing is merged, C3 uses
+  the first writing command (or `c3 doctor --fix`) moves it to `.c3/`. One mover at a time: the
+  move is made under a lock file in the repository's git directory, and a command that finds the
+  lock held waits a few seconds and then looks again - if the folder has moved meanwhile it uses
+  `.c3/`. Inside `.eck/` the old tool's files C3 never reads (`anchor`, `update_seq`,
+  `telemetry_queue.json`) first go to `legacy/` and `lastsnapshot/AnswerToSA.md` becomes
+  `last-report.md`; the rename of the folder is the last step, so an interrupted move never leaves
+  the old tool's `anchor` at the top of `.c3/` (a `.c3/` an earlier build left that way is put right
+  by the next writing command). `.c3/` is added to `.gitignore` (the `.eck/` line stays). When the
+  move cannot be made now (a run may be live under `.eck/`, the lock is held, a leftover cannot be
+  relocated, the rename fails), the command says why and uses `.eck/` for that run
+  (`c3 doctor --fix` reports "not moved"); a legacy folder that is gone is never created again. A
+  `.eck` that is a symlink or junction is never moved through; when both folders exist nothing is
+  merged, C3 uses
   `.c3/` and `c3 doctor` says so. A cache an earlier C3 kept under `<collab>/.c3/` moves into
   `.c3/` entry by entry (an existing entry wins). Until the move, the read-only commands
   (`c3 doctor`, the manifest digest of `c3 explain`) read `.eck/`. Switch (default ON):
   `C3_STATE_MIGRATE=off`, or `"state_migrate": false` in `<codex home>/c3/config.json` - then C3
-  never touches `.eck/` and creates a fresh `.c3/`.
+  does not move `.eck/` and creates and uses `.c3/` for its own files; a collab directory you place
+  under `.eck/` is still used as given.
+- **`.c3` must be a real directory.** C3 never writes, reads or moves through a link: a `.c3` that
+  is a symlink, junction or other reparse point is refused by every writing command (nothing is
+  written, nothing is created beside it) and reported by `c3 doctor`; a `legacy/`, `lastsnapshot/`
+  or collab directory reached through a link stops that step of the move and is reported, never
+  followed.
 - **A collab directory inside the folder follows the move.** With `--collab-dir .eck/collab` (or the
   MCP `collab_dir`) on a repository whose folder already moved, the records are read and written at
-  `.c3/collab` (one line on stderr says so; a collab path never creates a new `.eck/`); with
-  `.c3/collab` on a repository that still has `.eck/`, the command moves the folder first. The move
-  is never attempted while a detached consultation or work run is live under `.eck/`; when it cannot
-  be made now (a live run, a failed rename) the command uses the legacy folder for that run and says
-  so - one rename or nothing, never a half-moved folder. The SessionStart hook never moves.
+  `.c3/collab` (one line on stderr says so; a collab path never creates a new `.eck/`). A path is
+  normalised before it is looked at: `sub/../.eck/collab`, `./.eck/collab` and the absolute form are
+  `.eck/collab`. With `.c3/collab` on a repository that still has `.eck/`, a real consultation or
+  work start moves the folder first; every other command (`c3 pack`, `c3 explain`, `c3 index`,
+  `c3 providers`, `c3 findings`, `c3 consult --status` / `--dry-run`, `c3 work --status`, `c3 doctor`
+  without `--fix`, ...) reads the records at `.eck/collab` and moves nothing. The move is never made
+  while a run may be live under `.eck/` - a directory or record that cannot be read counts as a live
+  run - and a consultation or work run that starts under `.eck/` creates its records under the same
+  lock, so it cannot slip in between the check and the rename. The SessionStart hook never moves.
 - **No snapshot by default.** `c3 finish` / `c3 fail` write the report, the journal entry and (finish)
   the commit. `--snapshot` (MCP: `"snapshot": true`) adds the hand-off snapshot for a web reviewer
   that has no bridge; `c3 snapshot --state` writes one on its own.
@@ -726,7 +743,8 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
   a secret: a single dictionary-shaped word (`auth = "endpoint"`) never does, and under the bare
   keyword `auth` only a key-shaped value (16+ characters, no space, two kinds of character) does.
 - **Kept out of what leaves the machine.** Reviewer packs, snapshots, `c3 fetch` and `--diff`
-  patches leave out `.c3/` and `.eck/` (compared case-insensitively on Windows and macOS). The
+  patches leave out a `.c3/` or `.eck/` directory at any depth (compared case-insensitively on
+  Windows and macOS). The
   project's "never put in AI context" list is `.c3ignore` (gitignore syntax, per directory); a
   directory without one still has its `.eckignore` read.
 - **Old rule text.** `c3 doctor` reports a C3-written rules file that still has an old template

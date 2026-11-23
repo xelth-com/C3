@@ -58,7 +58,8 @@ pub struct C3Config {
     pub model_pages: Vec<ModelPageConfig>,
     /// (0.2.5, S1) The one-time move of a repository's `.eck/` to `.c3/` by a writing command
     /// ([`crate::state_dir::migrate_legacy`]); default ON, `"state_migrate": false` off (C3 then
-    /// never touches `.eck/` and creates a fresh `.c3/`).
+    /// does not move `.eck/`, creates and uses `.c3/` for its own files, and uses a collab
+    /// directory placed under `.eck/` as given).
     pub state_migrate: bool,
 }
 

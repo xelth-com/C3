@@ -161,8 +161,15 @@ pub struct Prepared {
 
 /// The repo root, the collab root and the task directory of `o` (a relative `--collab-dir`
 /// resolves against the repo root, as `c3 consult` resolves it). The task slug is checked
-/// here: it names a directory under the collab root, so it may not escape it.
+/// here: it names a directory under the collab root, so it may not escape it. (0.2.5, S2 F36-4)
+/// It never moves C3's project folder; only a work START passes `may_move` to
+/// [`prepare_paths_with`] (a `.c3/...` collab path on a repository that still has `.eck/` makes the
+/// one-time move first).
 pub fn prepare_paths(o: &Options) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    prepare_paths_with(o, false)
+}
+
+fn prepare_paths_with(o: &Options, may_move: bool) -> Result<(PathBuf, PathBuf, PathBuf), String> {
     let task = o.task.trim();
     if task.is_empty() {
         return Err("--task is required (a slug of the collab dir: letters, digits, dot, dash, underscore).".into());
@@ -187,7 +194,11 @@ pub fn prepare_paths(o: &Options) -> Result<(PathBuf, PathBuf, PathBuf), String>
         repo_root.join(given)
     };
     // (0.2.5, S1) a collab path inside C3's project folder follows its move from `.eck/` to `.c3/`
-    let collab_root = crate::state_dir::collab_dir(&repo_root, collab_root);
+    let collab_root = if may_move {
+        crate::state_dir::collab_dir_moving(&repo_root, collab_root)
+    } else {
+        crate::state_dir::collab_dir(&repo_root, collab_root)
+    };
     let task_dir = collab_root.join(task);
     Ok((repo_root, collab_root, task_dir))
 }
@@ -262,8 +273,9 @@ fn select_worker(roster: &Roster, label: &str) -> Result<RosterEntry, String> {
 
 /// Every guard a run needs, in one place (the foreground and the detached background
 /// both come through here; the live-run exclusion is NOT here — the run's own `running`
-/// record is live by then, so [`run`] checks it before it allocates one).
-fn prepare(o: &mut Options) -> Result<Prepared, String> {
+/// record is live by then, so [`run`] checks it before it allocates one). (0.2.5, S2 F36-4) Only
+/// the start (`may_move`) may move C3's project folder for a `.c3/...` collab path.
+fn prepare(o: &mut Options, may_move: bool) -> Result<Prepared, String> {
     if !o.effort.trim().is_empty() && !EFFORTS.contains(&o.effort.trim()) {
         return Err(format!(
             "--effort must be one of {} (got '{}')",
@@ -277,7 +289,7 @@ fn prepare(o: &mut Options) -> Result<Prepared, String> {
     if o.provider.trim().is_empty() {
         return Err("--provider is required (a roster label with role \"worker\").".into());
     }
-    let (repo_root, collab_root, task_dir) = prepare_paths(o)?;
+    let (repo_root, collab_root, task_dir) = prepare_paths_with(o, may_move)?;
     let work_root = task_dir.join("work");
 
     // The brief: repo-relative or absolute, resolved to absolute so the detached
@@ -673,7 +685,7 @@ fn refuse_record(rec_dir: &Path, why: &str) -> i32 {
 /// the endpoint's child environment, and makes the record final.
 pub fn run_prepared(o: &Options, rec_dir: &Path, _id: &str, _seq: i64, detached: bool) -> i32 {
     let mut o = o.clone();
-    let pre = match prepare(&mut o) {
+    let pre = match prepare(&mut o, false) {
         Ok(p) => p,
         Err(why) => return refuse_record(rec_dir, &why),
     };
@@ -1220,7 +1232,7 @@ pub fn run(mut o: Options) -> i32 {
     if o.resume || o.kick {
         return resume_or_kick(&o);
     }
-    let pre = match prepare(&mut o) {
+    let pre = match prepare(&mut o, true) {
         Ok(p) => p,
         Err(why) => return refuse(&why),
     };
@@ -1229,6 +1241,12 @@ pub fn run(mut o: Options) -> i32 {
     // foreground run writes its OWN pid + start time BEFORE the child is spawned (the owner that
     // keeps the record `running` past the start grace); a detached run leaves the pid to its
     // background (claimed within its first second).
+    // (0.2.5, S2 F36-6) Under the legacy folder `.eck/` the records are created under the folder's
+    // move lock, so the run cannot begin between a mover's live-run check and its rename.
+    let start = match crate::state_dir::begin_run(&pre.repo_root, &pre.collab_root) {
+        Ok(s) => s,
+        Err(e) => return refuse(&e),
+    };
     let lock = match record::admission_lock(&pre.work_root) {
         Ok(l) => l,
         Err(e) => return refuse(&e),
@@ -1287,6 +1305,7 @@ pub fn run(mut o: Options) -> i32 {
         ));
     }
     drop(lock);
+    drop(start);
     if o.detach {
         return detach::start_detached(&o, &pre, &id, &rec_dir);
     }

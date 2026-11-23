@@ -155,7 +155,8 @@ fn resolve_writer(collab_dir: &str, conn: Option<String>) -> Result<Ctx, String>
     let state_dir = if local {
         let ensured = crate::state_dir::ensure(&repo_root, Some(&collab_root))?;
         crate::state_dir::print_notes("c3 index", &ensured.notes(), true);
-        ensured.dir
+        // (S2, F36-1/F36-3) the folder as it is now, never through a link
+        crate::state_dir::prepare_dir(&repo_root, &ensured.dir)?
     } else {
         crate::state_dir::path(&repo_root)
     };

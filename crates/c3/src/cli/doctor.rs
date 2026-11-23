@@ -161,11 +161,14 @@ pub fn run(args: DoctorArgs) -> i32 {
     };
 
     let report = doctor::scan(&repo_root);
+    // (0.2.5, S2 F36-3) a `.c3` that is a link (or not a directory): every writing command refuses
+    let state_link = crate::state_dir::link_problem(&repo_root);
     // a repair that could not be made is a finding of its own (an AGENTS.md one has no scan line)
     let clean = report.is_clean()
         && repair.problems.is_empty()
         && rule_repair.problem.is_none()
         && state_problem.is_none()
+        && state_link.is_none()
         && sentence_repair.problems.is_empty();
     let state_read = if report.state_read.is_empty() {
         crate::state_dir::STATE_DIR.to_string()
@@ -184,6 +187,7 @@ pub fn run(args: DoctorArgs) -> i32 {
                     Layout::Both => "both",
                 },
                 "read": report.state_read,
+                "link_problem": state_link,
             },
             "state_moves": state_moves,
             "state_move_problem": state_problem,
@@ -332,6 +336,9 @@ pub fn run(args: DoctorArgs) -> i32 {
                 crate::state_dir::LEGACY_STATE_DIR
             ),
             Layout::Current => {}
+        }
+        if let Some(why) = &state_link {
+            println!("[!] {why}");
         }
         if report.stub_files.is_empty() {
             println!("[ok] no [STUB] markers left in {state_read}/*.md");

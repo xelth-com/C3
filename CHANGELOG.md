@@ -228,8 +228,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `last-report.md`, and a `<collab>/.c3/` cache into `.c3/` entry by entry (an existing entry wins).
   A `.eck` that is a symlink or junction is never moved; when both folders exist nothing is merged
   and `c3 doctor` says so; until the move, `c3 doctor` and the manifest digest of `c3 explain` read
-  `.eck/`. `C3_STATE_MIGRATE=off` (or `"state_migrate": false` in the C3 config) keeps C3's hands
-  off `.eck/` for a repository where the old tool is still used - C3 then creates a fresh `.c3/`.
+  `.eck/`. `C3_STATE_MIGRATE=off` (or `"state_migrate": false` in the C3 config) keeps `.eck/`
+  where it is for a repository where the old tool is still used - C3 then does not move it, creates
+  and uses `.c3/` for its own files, and still uses a collab directory the caller places under
+  `.eck/` as given.
   `c3 finish` / `c3 fail` (and `c3_finish_task` / `c3_fail_task`) now write the report, the journal
   entry and (finish) the commit, and no snapshot: `--snapshot` (MCP `"snapshot": true`) asks for the
   hand-off snapshot, `--keep` applies to it, `--no-snapshot` is still accepted and does nothing;
@@ -244,7 +246,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   directory kept inside the folder (`--collab-dir .eck/collab`, as some skills pass it) follows the
   move: once `.c3/` exists, a `.eck/...` path that no longer exists is read as the same path under
   `.c3/` (said in one line, and no new `.eck/` is ever created for it), and a `.c3/...` path on a
-  repository that still has `.eck/` moves the folder first; the move is never attempted while a
+  repository that still has `.eck/` makes a real consultation or work start move the folder first
+  (any other command reads the legacy path and moves nothing); the move is never attempted while a
   detached consultation or work run is live under `.eck/`, and when it cannot be made now (a live
   run, a failed rename) the command goes on with the legacy folder for that run and says so - one
   rename or nothing.
@@ -508,6 +511,39 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   alike (a linked worktree's `.git/worktrees/<name>` has `HEAD` and `commondir`). Tests:
   `a_repository_is_recognised_the_way_git_recognises_one` and `init_doctor.rs`'s
   `the_hook_repairs_nothing_behind_a_git_directory_git_would_not_take`.
+- **The one-time move of `.eck/` to `.c3/` can no longer lose, split or leak a project's records
+  (F36-1 .. F36-8).** A review of the S1 move found that what surrounds its one rename could split
+  a project's journal and reports between two folders, write through a link, or be set off by a
+  command that only reads. Now: (F36-1) the move is made under an exclusive lock file in the
+  repository's git directory (pid and start time inside, taken over when its owner is gone); a
+  command that cannot take it within a few seconds, and any rename error, reads the state again -
+  `.c3/` there and `.eck/` gone means the move happened and `.c3/` is used - and every writer takes
+  its folder from the state as it is now, so no path under `.eck/` is ever created again after the
+  move. (F36-2) The old tool's `anchor`, `update_seq` and `telemetry_queue.json` go to `legacy/`
+  and `lastsnapshot/AnswerToSA.md` to `last-report.md` inside `.eck/` first, each step safe to
+  repeat, and the rename is the last step; a leftover that cannot be relocated stops the move, and
+  a `.c3/` an S1 build left half done (`update_seq` or `telemetry_queue.json` at its top) is put
+  right by the next writing command, its `anchor` included. (F36-3) `.c3` must be a real
+  directory: one that is a symlink, junction or other reparse point is refused by every writing
+  command and reported by `c3 doctor`; a linked `legacy/` or `lastsnapshot/` stops that step, a
+  directory behind a link is never walked, the cache is never moved out of a collab directory
+  reached through a link, and no file is written through a link (each component is checked with
+  `symlink_metadata` and the reparse-point test right before the operation). (F36-4) A command
+  that only reads never moves the folder: `resolve_collab_root` / `state_dir::collab_dir` are the
+  non-moving default and only a real consultation or work start uses the moving resolver.
+  (F36-5) A collab path is normalised (`.`/`..` resolved lexically, an absolute path made
+  relative, the file system's case rule) before it is classified. (F36-6) The live-run check fails
+  closed (a directory or record that cannot be read, an owner whose start time cannot be read, a
+  held task lock all count as live), is repeated under the lock right before the rename, and a
+  consultation or work run that starts under `.eck/` creates its records under the same lock.
+  (F36-7) The README and this file say what the switch does. (F36-8) A `--diff` patch leaves out a
+  `.c3/` or `.eck/` directory at any depth (`:(exclude,glob)**/.c3/**`), as packs and snapshots do.
+  Tests: `state_dir` units for the lock, the re-read, run start against move, the relocation, the
+  half-done finish, links, normalisation, the read-only resolver, the fail-closed guard and the
+  nested patch exclusion; `finish.rs` two writers at once, a kill before the rename, the half-done
+  folder, links inside `.eck/`, every read-only command with `--collab-dir .c3/collab`, every
+  collab spelling, unreadable run directory and start time, the switch; `init_doctor.rs` a `.c3`
+  link refused by the writers and reported by `c3 doctor`.
 - **The `c3 maintain` tests no longer read the machine's process table.** A pass skips an engine
   whose CLI is running ("grok skipped: in use"), and the integration tests drove that probe against
   the real machine: on 2026-11-23 six to nine of them failed whenever another session's real

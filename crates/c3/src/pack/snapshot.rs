@@ -366,7 +366,7 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     let generated = chrono::Local::now().to_rfc3339();
     // A `--base` delta is an ad-hoc query: it does not bump C3's persistent sequence.
     let seq = if is_delta && opts.base.is_none() {
-        Some(bump_seq(&opts.state_dir))
+        Some(bump_seq(&opts.repo_root, &opts.state_dir))
     } else {
         None
     };
@@ -452,24 +452,29 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
             None => default_path(&opts.state_dir, &project, &rev.short_sha, seq, size_kb),
         }
     };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
+    // (0.2.5, S2 F36-1/F36-3) a directory in C3's folder is made ready at the folder's place now
+    // (never a stale legacy path, never through a link); any other is created as it is
+    let path = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => {
+            crate::state_dir::prepare_dir(&opts.repo_root, parent)?.join(name)
+        }
+        _ => path,
+    };
     std::fs::write(&path, full.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
 
     // Hand-off output: copy into the hand-off folder and prune old snapshots.
     let mut pruned = 0usize;
     if opts.state {
-        copy_to_lastsnapshot(&opts.state_dir, &path)?;
+        copy_to_lastsnapshot(&opts.repo_root, &opts.state_dir, &path)?;
         pruned = prune_snapshots(&opts.state_dir, opts.keep);
     }
 
     // A full snapshot updates C3's anchor and resets the sequence.
     if !is_delta {
         if let Some(head) = &head_full {
-            write_anchor(&opts.state_dir, head)?;
+            write_anchor(&opts.repo_root, &opts.state_dir, head)?;
         }
-        reset_seq(&opts.state_dir);
+        reset_seq(&opts.repo_root, &opts.state_dir);
     }
 
     Ok(SnapshotResult {
@@ -488,9 +493,8 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
 /// Copy the new snapshot into `<state_dir>/lastsnapshot/`, removing the previous snapshot(s)
 /// there first (every `*.md` except a report the old tool left there, which a move could not
 /// bring to `last-report.md`).
-fn copy_to_lastsnapshot(state_dir: &Path, snapshot: &Path) -> Result<(), String> {
-    let dir = state_dir.join("lastsnapshot");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+fn copy_to_lastsnapshot(repo_root: &Path, state_dir: &Path, snapshot: &Path) -> Result<(), String> {
+    let dir = crate::state_dir::prepare_dir(repo_root, &state_dir.join("lastsnapshot"))?;
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let name = e.file_name();
@@ -657,30 +661,31 @@ pub fn read_anchor(state_dir: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn write_anchor(state_dir: &Path, head: &str) -> Result<(), String> {
-    let dir = state_dir;
-    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    std::fs::write(dir.join("anchor"), head.trim().as_bytes())
-        .map_err(|e| format!("write anchor: {e}"))
+// (0.2.5, S2 F36-1/F36-3) the anchor and the sequence are written through
+// [`crate::state_dir::write_in`]: at the folder's place now, never through a link, never into a
+// legacy folder created again.
+fn write_anchor(repo_root: &Path, state_dir: &Path, head: &str) -> Result<(), String> {
+    crate::state_dir::write_in(repo_root, state_dir, "anchor", |_| {
+        Ok(head.trim().as_bytes().to_vec())
+    })
+    .map(|_| ())
 }
 
-fn reset_seq(state_dir: &Path) {
-    let dir = state_dir;
-    let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(dir.join("snapshot_seq"), b"0");
+fn reset_seq(repo_root: &Path, state_dir: &Path) {
+    let _ = crate::state_dir::write_in(repo_root, state_dir, "snapshot_seq", |_| Ok(b"0".to_vec()));
 }
 
-fn bump_seq(state_dir: &Path) -> u32 {
-    let dir = state_dir;
-    let _ = std::fs::create_dir_all(dir);
-    let path = dir.join("snapshot_seq");
-    let cur: u32 = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let next = cur + 1;
-    let _ = std::fs::write(&path, next.to_string());
-    next
+fn bump_seq(repo_root: &Path, state_dir: &Path) -> u32 {
+    let next = std::cell::Cell::new(1u32);
+    let _ = crate::state_dir::write_in(repo_root, state_dir, "snapshot_seq", |path| {
+        let cur: u32 = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        next.set(cur + 1);
+        Ok(next.get().to_string().into_bytes())
+    });
+    next.get()
 }
 
 /// The default output path: `<state_dir>/snapshots/<project>_<ts>[_<rev7>][_upN]_<size>kb.md`.

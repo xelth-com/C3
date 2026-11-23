@@ -99,8 +99,15 @@ pub fn run(args: ExplainArgs) -> i32 {
         match crate::state_dir::ensure(&state_repo, Some(&state_collab)) {
             Ok(e) => {
                 crate::state_dir::print_notes("c3 explain", &e.notes(), true);
-                if let Some(name) = out.file_name() {
-                    out = e.dir.join("explains").join(name);
+                if let Some(name) = out.file_name().map(|n| n.to_os_string()) {
+                    // (S2, F36-1/F36-3) `explains/` at the folder's place now, never through a link
+                    match crate::state_dir::prepare_dir(&state_repo, &e.dir.join("explains")) {
+                        Ok(d) => out = d.join(name),
+                        Err(why) => {
+                            eprintln!("c3 explain: {why}");
+                            return 1;
+                        }
+                    }
                 }
             }
             Err(e) => {

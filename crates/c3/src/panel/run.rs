@@ -251,7 +251,13 @@ pub(crate) fn member_inputs(
 fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
-    let collab_root = providers::resolve_collab_root(&repo_root, &o.collab_dir);
+    // (0.2.5, S2 F36-4) only a real panel's start may move C3's project folder for a `.c3/...`
+    // collab path, never a dry run
+    let collab_root = if o.dry_run {
+        providers::resolve_collab_root(&repo_root, &o.collab_dir)
+    } else {
+        providers::resolve_collab_root_moving(&repo_root, &o.collab_dir)
+    };
     let task = TaskSlug::new(o.task.clone()).map_err(|e| (e.to_string(), 1))?;
 
     let launcher = providers::resolve_codex_launcher(&o.codex_exe).map_err(|m| (m, 1))?;
@@ -914,6 +920,21 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     let parent_pid = crate::liveness::proc::bridge_identity().0;
     let panel_tmp = std::env::temp_dir().join(format!("codex-consult-panel-{}", b.panel_id));
 
+    // (0.2.5, S2 F36-6) Under the legacy folder `.eck/` a real panel creates its records (the
+    // handoffs directory, the task lock, the members' reserved records) under the folder's move
+    // lock, so it cannot begin between a mover's live-run check and its rename.
+    let start = if dry {
+        None
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        match crate::state_dir::begin_run(&providers::resolve_repo_root(&cwd), &b.collab_root) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("{TOOL}: {e}");
+                return 1;
+            }
+        }
+    };
     // A real run creates the handoffs dir and takes the task lock (held to the end).
     let _task_lock = if dry {
         None
@@ -1140,6 +1161,8 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
             }
         }
     }
+    // the panel's records exist (a live task lock and reserved records): the move lock goes
+    drop(start);
 
     // -------------------------------------------------------------------- launch + poll
     let _ = std::fs::create_dir_all(&panel_tmp);

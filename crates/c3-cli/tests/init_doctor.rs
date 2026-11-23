@@ -790,6 +790,71 @@ fn doctor_fix_moves_an_eck_folder_and_reports_both_folders() {
     let _ = std::fs::remove_dir_all(&repo);
 }
 
+// (0.2.5, S2 F36-3) A `.c3` that is a link (a junction on Windows, a symlink elsewhere) is refused by
+// every writing command - nothing is written into its target, nothing is created beside it, an
+// `.eck/` next to it is not moved - and `c3 doctor` reports it.
+#[test]
+fn a_c3_link_is_refused_by_writers_and_reported_by_doctor() {
+    let repo = scratch_repo("c3-link");
+    let outside = scratch_dir("c3-link-target");
+    std::fs::create_dir_all(repo.join(".eck")).unwrap();
+    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nOLD\n").unwrap();
+    std::fs::write(repo.join(".eck/anchor"), "old-tool-anchor\n").unwrap();
+    #[cfg(windows)]
+    {
+        let ok = Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(repo.join(".c3"))
+            .arg(&outside)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert!(ok, "mklink /J failed");
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(&outside, repo.join(".c3")).unwrap();
+    let cfg = &[("C3_CONFIG", "none")];
+    for args in [
+        vec!["init"],
+        vec!["fail", "--status", "x"],
+        vec![
+            "manifest",
+            "--file",
+            "ROADMAP.md",
+            "--action",
+            "replace_file",
+            "--content",
+            "x",
+        ],
+        vec!["snapshot"],
+    ] {
+        let (code, out, err) = run_c3_env(&repo, &args, cfg);
+        assert_ne!(code, 0, "{args:?} went on: {out}\n{err}");
+        assert!(
+            err.contains("never writes through a link"),
+            "{args:?}: {out}\n{err}"
+        );
+        assert_eq!(
+            std::fs::read_dir(&outside).unwrap().count(),
+            0,
+            "{args:?} wrote into the link's target"
+        );
+    }
+    assert!(repo.join(".eck/anchor").is_file(), ".eck/ not moved");
+    let (code, out, _e) = run_c3_env(&repo, &["doctor"], cfg);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("[!] .c3 is a link") && out.contains("never writes through a link"),
+        "{out}"
+    );
+    #[cfg(windows)]
+    let _ = std::fs::remove_dir(repo.join(".c3"));
+    #[cfg(not(windows))]
+    let _ = std::fs::remove_file(repo.join(".c3"));
+    let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
 #[test]
 fn doctor_passes_on_a_clean_fixture() {
     let repo = scratch_repo("doctor-clean");

@@ -698,3 +698,20 @@ swap -> xelth.com/C3 page after the tag.
   worktree directory cannot be renamed while a reviewer runs.
   Wave D1 launched from 272920d (worktree `agent-a2ae6fdd082032180`, 22 items). Running: D2, S2,
   D1 - all through the compiler turn.
+- 2026-11-23 11:29: CI for 272920d (D4) GREEN on all three jobs (run 45152085896) - the handle
+  containment is verified on Linux and Windows.
+- 2026-11-23 11:29, wave D2 reported (15 items, all done) and committed as 0eea5f1, pushed, CI run
+  45156540894 watched. Applied on top of D4 (conflict only in CHANGELOG.md, both sides kept);
+  on main: fmt clean, `cargo clippy --workspace --all-targets -- -D warnings` clean through the
+  compiler turn (a 10-minute wait for a 5-minute run); the tests of the combination are left to
+  CI. The old installed gate refused the commit once more: CHANGELOG.md and README.md now hold
+  the example line that assigns the plain word `endpoint` to `auth` - allowed after checking that it is the only hit in each.
+  NOT run anywhere yet: the Linux-only paths (process groups in the deadline stop, `/proc`
+  liveness) - CI's ubuntu job is their first run.
+  Accepted: `--close` refuses a branch whose patches are on main but that is not merged by
+  ancestry (`git branch -d` would refuse it); every registered child leads its own process group
+  on Unix; the daily claim is per UTC day; a `config.json` that does not parse refuses the finish.
+  Findings F31-1..5, F30-3, F30-5, F30-6, F32-4 set to `implemented`. D2's `target` deleted.
+  To do after the install: write `.c3/config.json` with `{"finish_checks": ["cargo fmt --all
+  -- --check"]}` for this repository.
+  Running: S2, D1.

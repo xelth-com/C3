@@ -86,9 +86,8 @@ pub fn run_scout(opts: &ScoutOpts) -> Result<PathBuf, String> {
 
     let name = safe_name(&opts.target);
     let ts = timestamp();
-    let out = opts
-        .state_dir
-        .join("scouts")
+    // (0.2.5, S2 F36-1/F36-3) `scouts/` at the folder's place now, never through a link
+    let out = crate::state_dir::prepare_dir(&opts.repo_root, &opts.state_dir.join("scouts"))?
         .join(format!("scout_tree_{name}_{ts}.md"));
 
     // A disposable collab root and state folder so the external snapshot's anchor/sequence state is never
@@ -204,13 +203,9 @@ pub fn run_fetch(opts: &FetchOpts) -> Result<FetchResult, String> {
     }
 
     let ts = timestamp();
-    let out = opts
-        .state_dir
-        .join("scouts")
+    // (0.2.5, S2 F36-1/F36-3) `scouts/` at the folder's place now, never through a link
+    let out = crate::state_dir::prepare_dir(&opts.repo_root, &opts.state_dir.join("scouts"))?
         .join(format!("scout_data_{ts}.md"));
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
     let header = format!(
         "# Fetch — {} file(s) from this repository\n\n\
 Globs: {}\n\n\
