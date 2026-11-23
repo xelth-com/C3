@@ -112,11 +112,9 @@ pub struct StatsArgs {
 /// Resolved context common to every action.
 struct Ctx {
     // Read only on the feature-on paths (open/lock/discover/generation); the feature-off
-    // build parses `conn` and reports `none`, so these two are dead there.
+    // build parses `conn` and reports `none`, so it is dead there.
     #[cfg_attr(not(feature = "index-surreal"), allow(dead_code))]
     repo_root: PathBuf,
-    #[cfg_attr(not(feature = "index-surreal"), allow(dead_code))]
-    collab_root: PathBuf,
     conn: String,
     /// C3's project folder: where the embedded store lives by default and the writer's lock is.
     #[cfg_attr(not(feature = "index-surreal"), allow(dead_code))]
@@ -131,16 +129,14 @@ fn default_conn(state_dir: &Path) -> String {
 
 /// The context of a READER (query, stats): the folder is only read - `.c3/`, or the legacy one
 /// until a writing command moved it.
-fn resolve(collab_dir: &str, conn: Option<String>) -> Ctx {
+fn resolve(conn: Option<String>) -> Ctx {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
-    let collab_root = providers::resolve_collab_root(&repo_root, collab_dir);
     let state_dir = crate::state_dir::read_path(&repo_root)
         .unwrap_or_else(|| crate::state_dir::path(&repo_root));
     let conn = conn.unwrap_or_else(|| default_conn(&state_dir));
     Ctx {
         repo_root,
-        collab_root,
         conn,
         state_dir,
     }
@@ -165,7 +161,6 @@ fn resolve_writer(collab_dir: &str, conn: Option<String>) -> Result<Ctx, String>
     };
     let conn = conn.unwrap_or_else(|| default_conn(&state_dir));
     Ok(Ctx {
-        collab_root: crate::state_dir::moved_with_folder(&repo_root, &collab_root),
         repo_root,
         conn,
         state_dir,
@@ -314,7 +309,7 @@ fn build_backend(ctx: &Ctx, backend: index::Backend, rebuild: bool) -> i32 {
 }
 
 fn query(args: QueryArgs) -> i32 {
-    let ctx = resolve(&args.collab_dir, args.conn);
+    let ctx = resolve(args.conn);
     let mut queries: Vec<String> = args.text.clone();
     if let Some(path) = &args.queries_file {
         match std::fs::read_to_string(path) {
@@ -553,7 +548,7 @@ fn print_hits(hits: &[index::Hit], json: bool) {
 }
 
 fn stats(args: StatsArgs) -> i32 {
-    let ctx = resolve(&args.collab_dir, args.conn);
+    let ctx = resolve(args.conn);
     let backend = match index::parse_conn(&ctx.conn) {
         Ok(b) => b,
         Err(e) => {

@@ -1,0 +1,264 @@
+codex-consult: detached run fcb610cd (detach id fcb610cd-4ea6-46fe-ab6b-06260584d441) - pid 19816 on LAPTOP-9SGIHQ03, started 2026-11-23T07:20:25+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-fcb610cd.status.json
+Panel 1687b542: 2 of 2 roster entries run, at once (roster C:\Users\Dmytro\AppData\Local\Temp\claude\66aab2698810b170\e97cc6d0-6d1c-45b4-8904-07597e0d378e\scratchpad\rosters\roster-v4.json; panel id 1687b542-f88c-41c1-8edc-d43bb0bbbf58)
+  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)
+  #1 grok :: grok-4.7 [grok] - member, n=25, handoff 36
+  #2 ZAI-claude :: glm-5.3 [claude] - member, n=24, handoff 35
+Routing: routed by the ratings - size 2 (-PanelAll); seed 61a700a83118 (nonce 2026-11-23 from date); exploration 0.2 per slot
+  eligible: #1 grok :: grok-4.7 [grok] (lab xai by vendor; score 1.841 purpose of 9), #2 ZAI-claude :: glm-5.3 [claude] (lab zhipu by vendor; score 1.562 purpose of 6)
+  picked  : 1. #2 ZAI-claude :: glm-5.3 [claude] (lab-draw), 2. #1 grok :: grok-4.7 [grok] (lab-draw)
+Concurrency: at once - endpoint groups: ZAI-claude x1, grok x1; -PanelConcurrency 0 (no cap)
+Timeout: 2400 s per member (the default of purpose diff-review); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 1 of 2 finished: ZAI-claude :: glm-5.3 [claude] - failed: claude exit 1 - API Error: 529 [1305][The service may be temporarily overloaded, please try again late... (878.1 s)
+  panel member 2 of 2 finished: grok :: grok-4.7 [grok] - usable reply (1148.3 s)
+
+=== panel 1687b542 member 1 of 2: ZAI-claude :: glm-5.3 [claude] (roster #2) ===
+codex-consult: failed: claude exit 1 - API Error: 529 [1305][The service may be temporarily overloaded, please try again later][202611231434184fae233fb3384a1b]. This is a server-side issue, usually temporary — try again in a moment. If it persists, check your inference gateway (api.z.ai). (wall 0 s)
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\35-claudecode-reply-zai-claude.md
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\35-claudecode-reply-zai-claude.events.jsonl
+warning    : the brief changed during the run (the reviewer read the copy staged at launch) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+
+=== panel 1687b542 member 2 of 2: grok :: grok-4.7 [grok] (roster #1) ===
+codex-consult: usable reply - grok :: grok-4.7 [grok], mode new, thread 01a20712-4b37-7471-b810-bd4c52e5370e (source: events), wall 943.7 s
+warning    : the brief changed during the run (the reviewer read the copy staged at launch) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+verdict    : HOLD - The folder rename is one call, but a lost race, an unfinished leftover move, and link-following writes can split the project records or write outside the repository.
+findings   : 0 blocker, 6 major, 2 minor, 0 note -> F36-1..F36-8 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 not-checked, F10-4 not-checked, F10-5 not-checked, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F14-1 not-checked, F14-2 not-checked, F14-3 not-checked, F14-4 not-checked, F14-5 not-checked, F15-1 not-checked, F15-2 not-checked, F15-3 not-checked, F15-5 not-checked, F15-6 not-checked, F16-1 not-checked, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 not-checked, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 not-checked, F18-2 not-checked, F18-3 not-checked, F18-4 not-checked, F18-5 not-checked, F18-6 not-checked, F18-7 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F19-4 not-checked, F19-5 not-checked, F19-6 not-checked, F20-1 not-checked, F20-2 not-checked, F20-3 not-checked, F20-4 not-checked, F20-5 not-checked, F20-6 not-checked, F24-2 not-checked, F24-4 not-checked, F27-1 not-checked, F27-2 not-checked, F27-3 not-checked, F28-1 not-checked, F28-2 not-checked, F28-3 not-checked, F29-1 not-checked, F29-3 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F30-4 not-checked, F30-5 not-checked, F30-6 not-checked, F31-1 not-checked, F31-2 not-checked, F31-3 not-checked, F31-4 not-checked, F31-5 not-checked, F31-6 not-checked, F32-1 not-checked, F32-2 not-checked, F32-3 not-checked, F32-4 not-checked, F32-5 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\36-grok-reply-grok.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\36-grok-reply-grok.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\36-grok-reply-grok.events.jsonl
+
+## Q1. Half-done or repeated move
+
+The folder rename is one `std::fs::rename` (`crates/c3/src/state_dir.rs:386`). A failure that leaves `.eck/` in place is retried by the next writer. A crash after a successful rename is stuck: `migrate_legacy` returns immediately once `.c3` exists (`state_dir.rs:358`), so the moves of `anchor`, `update_seq`, `telemetry_queue.json` (`:404`) and `lastsnapshot/AnswerToSA.md` (`:447`) never run again. Cache entries under `<collab>/.c3/` move one rename each (`:767`); a later `ensure` retries a name that is still absent in `.c3/`. `index/` is a single name, so its contents move together.
+
+Two writers can both pass `live_run_under` (`:377`). The loser treats every rename error as deferred (`:388`) and sets the run directory to `.eck/` (`:223`). `write_answer` then `create_dir_all`s that path (`crates/c3/src/finish/mod.rs:141`) and creates a new `.eck/` after the winner has removed it. Doctor reports both folders and merges nothing (`crates/c3/src/cli/doctor.rs:326`).
+
+The live check fails open. An unreadable directory ends the walk (`state_dir.rs:486`), a `run_dirs` error is ignored (`:546`), and `pid_alive` is false when the start time cannot be read (`crates/c3/src/liveness/proc.rs:153`). The check and the rename are separate, so a run that becomes live in between moves with the folder.
+
+## Q2. Lost or split records
+
+The new `.eck/` keeps the loser's `last-report.md` and `JOURNAL.md`; the moved tree is in `.c3/`. A later `--collab-dir .eck/collab` stays on the path that exists (`state_dir.rs:643`). An old-tool `anchor` left at `.c3/anchor` blocks C3's cache anchor (`:761`). `read_anchor` uses that file as the snapshot baseline (`crates/c3/src/pack/snapshot.rs:653`), so a delta can name the wrong range. An old binary still writing `.eck/` and a new one writing `.c3/` is the same split.
+
+## Q3. Links and path safety
+
+A symlink or junction named `.eck` is not renamed (`state_dir.rs:367`). A cross-volume failure is not copied. Three later steps follow links. `ensure` accepts `.c3` when `is_dir` is true (`:240`), which follows a symlink to a directory, then writes stubs (`:256`). `write_answer` overwrites `last-report.md` there (`finish/mod.rs:142`). The report step renames `lastsnapshot/AnswerToSA.md` (`state_dir.rs:447`) through an intermediate symlink and can take that file from outside the folder. `migrate_collab_cache` (`:711`) renames cache entries out of a `<collab>/.c3` reached through the `.eck` link. An existing destination name is kept (`:426`, `:761`).
+
+## Q4. Who may create or move
+
+The hook calls `forbid_moves` first (`crates/c3/src/hook/mod.rs:42`). With `C3_CHILD`, `ensure` refuses a missing `.c3/` (`state_dir.rs:207`) and `c3 doctor --fix` skips the move (`cli/doctor.rs:123`). Plain `c3 doctor` does not create or move. `c3 pack`, `c3 explain` (with `--out`, and before confirmation), and `c3 index` query call `resolve_collab_root` (`crates/c3/src/providers.rs:2535`, `cli/pack.rs:56`, `cli/explain.rs:44`, `cli/index.rs:137`). A `.c3/...` collab path on a real `.eck/` makes `collab_dir` rename the folder (`state_dir.rs:670`). MCP uses the same commands. `C3_STATE_MIGRATE=off` and `"state_migrate": false` skip that rename (`:364`, `:635`). The given `.eck/...` path is then returned unchanged, and `c3 consult --detach` creates the task directory there (`crates/c3/src/consult/detach.rs:508`).
+
+## Q5. Collab path mapping
+
+`split_state_path` classifies a path whose first component is `.c3` or `.eck` (`state_dir.rs:568`). `collab_dir` runs before `canonicalize` (`providers.rs:2535`, then `:2537`), so `sub/../.eck/collab` is not rewritten. After the move, `c3 consult --detach` creates that path (`detach.rs:508`) and brings `.eck/` back. Linux treats `.ECK` as a different name; Windows and macOS fold case (`state_dir.rs:91`). A collab directory outside both folders is unchanged. When both spellings exist, the one that exists is used (`:643`).
+
+## Q6. Snapshot default
+
+`run_finish` snapshots only when asked (`finish/mod.rs:250`). MCP adds `--snapshot` only for `"snapshot": true` (`crates/c3/src/mcp/mod.rs:692`). `--no-snapshot` is accepted. The coordinate, fetch, and scout skills and the finish help text use `.c3/` and the opt-in snapshot. Packs, snapshots, and `c3 fetch` drop a `.c3` or `.eck` directory at any depth (`crates/c3/src/pack/discover.rs:171`). A `--diff` patch excludes those names only at the repo root (`crates/c3/src/consult/reviewed.rs:721`), so a nested folder of either name can be included. `.c3ignore` is the file read when that directory has one (`state_dir.rs:789`).
+
+## Q7. Claims
+
+The rename matches "one rename". README and CHANGELOG also describe leftovers, the report, and the cache as part of that step (`README.md:690`, `CHANGELOG.md:180`). A crash skips leftovers forever, and a lost race creates a second `.eck/`, against "no new `.eck/` is ever created" (`CHANGELOG.md:201`). "Never touches `.eck/`" with the switch off (`README.md:700`) is false for a collab path inside it. The case rule matches `names_equal`. Doctor's legacy line names fewer writers than the commands that call `ensure` (`cli/doctor.rs:314`).
+
+## Q8. Untested
+
+Finish tests cover a clean move, a simulated rename failure while `.eck/` remains, a link `.eck` left in place, the switch, and `.eck/collab` after a finished move. Missing: two movers, a kill between rename and leftovers, a symlink `.c3`, a `lastsnapshot` symlink, a `..` collab path, a read-only command with `--collab-dir .c3/collab`, and a live pid whose start time cannot be read.
+
+## Requested checks
+
+RC1. Disposable git repo with a real `.eck/` (`anchor`, `ROADMAP.md`). Start two `c3 finish` runs together, default `.collab`, no `--snapshot`. Workspace-write, 2 minutes. Finding #1: both `.c3/` and `.eck/` exist, with different `last-report.md` bytes.
+
+RC2. Rename `.eck` to `.c3` by hand, leave `deadbeef` in `.c3/anchor`, put `abc` in `.collab/.c3/anchor`, run `c3 snapshot`. Workspace-write, 2 minutes. Finding #2: `.c3/anchor` is still `deadbeef` and `.c3/legacy/anchor` is absent.
+
+RC3. Point `.eck/lastsnapshot` at an outside directory containing `AnswerToSA.md`, no `.c3`, run `c3 init`. Workspace-write, 2 minutes. Finding #3: the outside file is gone and `.c3/last-report.md` has its bytes. Repeat with `.c3` itself a symlink to an outside directory and look for stub files there.
+
+RC4. Repo still on `.eck/collab`. Run `c3 pack --out <outside>/p.md --brief <brief> --collab-dir .c3/collab`. Workspace-write, 2 minutes. Finding #4: `.eck` was renamed.
+
+RC5. After a finished move, run `c3 consult --detach --collab-dir sub/../.eck/collab --task t` with a reviewer that exits at once. Workspace-write, 2 minutes. Finding #5: `.eck/collab/t` is created while `.c3/collab` already has the records.
+
+### Findings
+
+- **F36-1** [major] `crates/c3/src/state_dir.rs:388`, `crates/c3/src/state_dir.rs:223`, `crates/c3/src/finish/mod.rs:141`, `crates/c3/src/cli/doctor.rs:326` - Two writers can both pass the pre-rename checks. The loser treats every rename error as 'use .eck for this run' and does not re-check whether .c3 now exists and .eck is gone. write_answer then create_dir_all's that path, so a new .eck appears beside the moved .c3. Doctor reports both folders and merges nothing, leaving the loser's report and journal stranded. Trigger: Two c3 finish (or snapshot/manifest) processes start together on a repository whose only project folder is a real .eck/, using the default .collab directory so the move happens inside ensure. Evidence: read-code: migrate_legacy checks that .c3 is absent, then rename; any Err becomes deferred and ensure sets dir to legacy_path and returns.; read-code: write_answer calls create_dir_all on Ensured.dir before writing last-report.md.; read-code: Layout::Both prints a warning that both folders exist and tells the operator to merge by hand. Verify: RC1. Remedy: After a failed rename, stat again. If .c3 is a real directory, use it. If .eck is absent, return an error. Never create_dir_all the legacy path unless it is still the original directory.
+- **F36-2** [major] `crates/c3/src/state_dir.rs:358`, `crates/c3/src/state_dir.rs:404`, `crates/c3/src/state_dir.rs:447`, `crates/c3/src/pack/snapshot.rs:653` - The post-rename relocation of the old tool's anchor, update_seq, telemetry_queue.json and lastsnapshot/AnswerToSA.md runs only inside the same migrate_legacy call as the successful rename. The next run sees .c3 and returns, so those files stay at the top of .c3. The cache move then refuses to replace an existing .c3/anchor, and read_anchor treats the old tool's file as C3's snapshot baseline. Trigger: The process is killed after .eck has been renamed to .c3 and before the leftover renames finish, or a leftover rename fails because the file is busy. A later c3 snapshot or c3 finish --snapshot runs. Evidence: read-code: If symlink_metadata(.c3) succeeds, migrate_legacy returns an empty Migration before the leftover loop.; read-code: Leftover and report renames happen only after the folder rename in that same function.; read-code: An existing destination name is left in place. read_anchor returns any non-empty .c3/anchor text. Verify: RC2. Remedy: Make the leftover relocation idempotent: whenever .c3 is a real directory, move those four names into legacy/ or last-report.md if the destination is absent, before migrate_collab_cache.
+- **F36-3** [major] `crates/c3/src/state_dir.rs:240`, `crates/c3/src/state_dir.rs:256`, `crates/c3/src/state_dir.rs:447`, `crates/c3/src/state_dir.rs:711`, `crates/c3/src/finish/mod.rs:142` - Link refusal covers the .eck directory entry that would be renamed, and misses three writes. ensure treats a symlink .c3 as the project folder because is_dir follows it, then writes stubs through it. The report step renames lastsnapshot/AnswerToSA.md through an intermediate symlink and can move a file that lives outside the folder. migrate_collab_cache renames cache entries out of a collab directory reached by walking a symlink .eck, so the link target loses those files. Trigger: .c3 is a symlink to a directory, or .eck/lastsnapshot is a symlink to an outside directory containing AnswerToSA.md before the first move, or .eck is a symlink to a tree that contains collab/.c3 and the command's collab root is .eck/collab. Evidence: read-code: symlink_metadata Ok followed by dir.is_dir() accepts a symlink-to-directory; stubs are then std::fs::write'd under that path.; read-code: The report path is .c3/lastsnapshot/AnswerToSA.md. symlink_metadata on the file follows the intermediate directory link, and rename moves that file when is_file is true.; read-code: The .eck link itself is not renamed. migrate_collab_cache still renames children of collab_root/.c3, and that path follows an intermediate .eck symlink. Verify: RC3. Remedy: Require a real directory (symlink_metadata, is_dir, and not is_link) for both .c3 and every parent used in a rename. Refuse the report move when any component of lastsnapshot is a link. Skip cache migration when any ancestor of the source is a link.
+- **F36-4** [major] `crates/c3/src/providers.rs:2535`, `crates/c3/src/state_dir.rs:670`, `crates/c3/src/cli/pack.rs:56`, `crates/c3/src/cli/explain.rs:44`, `crates/c3/src/cli/index.rs:137` - Resolving a collab path inside .c3 while a real .eck still exists calls migrate_legacy from collab_dir. c3 pack, c3 explain (including when --out is set, and before the write confirmation), and c3 index query all resolve the collab root on their read path, so a command that should only read can rename the project folder. Trigger: The repository has a real .eck/ and no .c3, and the operator runs c3 pack, c3 explain --out, or c3 index query with --collab-dir .c3/collab. Evidence: read-code: For a .c3 path, when .c3 is absent and .eck is a directory, collab_dir calls migrate_legacy unless the hook flag or C3_CHILD is set.; read-code: resolve_collab_root runs before the pack is built and before the y/N confirmation; --out still takes that path.; read-code: The index reader and pack both call resolve_collab_root, which calls collab_dir, before any read-only work. Verify: RC4. Remedy: Move the folder only from ensure and from c3 doctor --fix. collab_dir on a read path should return the legacy path, or the mapped path, without calling migrate_legacy.
+- **F36-5** [major] `crates/c3/src/state_dir.rs:568`, `crates/c3/src/providers.rs:2537`, `crates/c3/src/consult/detach.rs:508` - Collab spelling is decided on the path string before canonicalize. A relative path whose first component is not .c3 or .eck, because a .. segment comes first, is returned unchanged. After the folder has moved, a writer that create_dir_all's that path creates a new .eck/ and stores the new consultation there while the moved records stay under .c3/. Trigger: After .eck has been renamed to .c3, run c3 consult --detach --collab-dir sub/../.eck/collab --task t (or .c3/../.eck/collab). Evidence: read-code: split_state_path uses repo_relative text and the first non-dot component. sub/../.eck/collab classifies as outside the state folder.; read-code: collab_dir runs first. canonicalize is only applied afterward, and a missing path is returned unchanged.; read-code: Detached consult joins the resolved collab root with the task and create_dir_all's it before starting the run. Verify: RC5. Remedy: Canonicalize, reject .., and require the result to stay under the repo before split_state_path. If the canonical path is under .c3 or .eck, map it. If the legacy path is missing, do not create it.
+- **F36-6** [major] `crates/c3/src/state_dir.rs:486`, `crates/c3/src/state_dir.rs:546`, `crates/c3/src/state_dir.rs:377`, `crates/c3/src/liveness/proc.rs:153` - The guard that should stop a move while a detached consultation or work run is live under .eck fails open and is not held until the rename. An unreadable directory, a run_dirs error, or a pid whose start time cannot be read counts as not live. A run that starts after the check and before rename is moved with the folder. Trigger: A detached consult or work run is live under .eck/collab/<task>, its status directory cannot be listed or its owner start time cannot be read, or it is started in the gap after live_run_under returns and before rename. Evidence: read-code: walk uses read_dir(d).ok()?; a listing error returns None, which live_run_under treats as nothing live.; read-code: run_dirs Err is skipped by if let Ok, so those runs are invisible. task_is_live then returns false.; read-code: process_start_iso None makes pid_alive false. The live check returns before rename with no lock held across the two calls. Verify: On Linux, start a detached run under .eck/collab/t whose pid start time is unreadable to this user, then run c3 finish and see whether .eck was renamed. Separately, start the run in the window after the check. Remedy: Treat an unreadable directory or run record as live. Hold an exclusive lock on the folder from the check through the rename, and have detached consult and work take the same lock before creating their task directory.
+- **F36-7** [minor] `crates/c3/src/state_dir.rs:635`, `README.md:700`, `crates/c3/src/consult/detach.rs:508` - With C3_STATE_MIGRATE=off or state_migrate false, the rename is skipped, and a collab path under .eck is returned unchanged. A detached consult then creates its task directory under .eck, so the switch does not keep every write off that folder. Trigger: C3_STATE_MIGRATE=off, the repository still has .eck/collab, and the operator runs c3 consult --detach --collab-dir .eck/collab. Evidence: read-code: migration_enabled false returns before rename and collab_dir returns the given path.; read-code: The README says the switch means C3 never touches .eck/ and creates a fresh .c3/.; read-code: create_dir_all on the resolved task directory writes under the given .eck/collab path. Verify: With C3_STATE_MIGRATE=off, run a detached consult with --collab-dir .eck/collab and compare .eck/collab before and after. Remedy: Document that the switch stops the rename only, or refuse a collab path inside .eck while the switch is off and require an explicit directory outside it.
+- **F36-8** [minor] `crates/c3/src/consult/reviewed.rs:721`, `crates/c3/src/pack/discover.rs:171` - Reviewer packs, snapshots, and c3 fetch drop a directory named .c3 or .eck at any depth. A --diff patch excludes those names only as root pathspecs, so a nested .c3/ or .eck/ directory is still written into the patch that is handed to the reviewer. Trigger: c3 consult --diff HEAD while a tracked or untracked nested directory such as pkg/.eck/ contains a file the ignore rules do not exclude. Evidence: read-code: diff_excludes adds root pathspecs for STATE_DIR and LEGACY_STATE_DIR only.; read-code: is_hard_ignored_dir calls is_state_component on every directory name the walk sees. Verify: Add a tracked file pkg/.eck/secret.txt, run c3 consult --diff on a range that contains it, and inspect the patch bytes. Remedy: Exclude any path component equal to .c3 or .eck under the same names_equal rule the pack walk uses, including nested paths.
+
+### Prior findings
+
+- F02-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-7 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-8 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-9 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-10 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-11 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-12 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-13 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-14 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-15 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-16 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-17 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-18 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-19 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-20 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F02-21 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F03-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F03-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F03-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F03-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F03-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F03-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-7 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-8 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F04-9 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F10-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F10-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F10-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F10-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F10-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F10-7 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-7 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-8 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-9 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-10 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-11 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F11-12 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F12-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F12-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F12-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F12-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F13-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F13-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F13-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F13-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F13-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F13-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F13-7 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F13-8 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F14-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F14-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F14-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F14-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F14-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F15-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F15-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F15-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F15-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F15-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-7 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-8 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-9 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F16-10 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-7 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-8 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-9 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F17-10 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F18-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F18-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F18-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F18-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F18-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F18-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F18-7 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F19-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F19-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F19-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F19-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F19-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F19-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F20-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F20-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F20-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F20-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F20-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F20-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F24-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F24-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F27-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F27-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F27-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F28-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F28-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F28-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F29-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F29-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F30-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F30-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F30-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F30-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F30-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F30-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F31-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F31-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F31-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F31-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F31-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F31-6 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F32-1 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F32-2 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F32-3 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F32-4 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+- F32-5 - not-checked - This review covered only the .c3 folder move; the cited code was not re-read.
+
+## Verdict: HOLD
+
+The folder rename is one call, but a lost race, an unfinished leftover move, and link-following writes can split the project records or write outside the repository.
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, not-checked) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+- **F32-1** (prior, not-checked) `crates/c3/src/engines/worktree.rs:248` - Stage creation and publication use pathnames after validation, so a replaced directory component can send staged bytes outside the worktree and leave a temporary file there.
+
+### Unproven scenarios
+
+- The concurrent rename race, the crash between rename and leftover relocation, and the symlink write-throughs were read from the code and not executed.
+- Windows junction behavior of the report rename and of migrate_collab_cache was not executed.
+- CI for revision 70ed824 was not inspected.
+- Older open findings outside the .c3 folder move were not re-checked.
+
+### First-run checklist (observable)
+
+_(none)_
+
+Panel 1687b542: 2 of 2 entries ran (asked 2, started 2, usable 1; wall clock 1148.9 s; at once)
+  grok :: grok-4.7 [grok]         HOLD     0 blocker, 6 major, 2 minor  prior: 141 not-checked  943.7 s  handoffs/36-grok-reply-grok.md
+  ZAI-claude :: glm-5.3 [claude]  failed: claude exit 1 - API Error: 529 [1305][The service may be temporarily overloaded, please tr...  0 s  handoffs/35-claudecode-reply-zai-claude.md

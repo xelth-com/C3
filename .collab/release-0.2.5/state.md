@@ -598,3 +598,14 @@ swap -> xelth.com/C3 page after the tag.
   mcp_integration 2, maintain 44 (no real grok needed any more), telemetry_parity 12. The other
   c3-cli binaries: the S1 worker ran branches, ci_check, update, claude_engine, kimi_engine, work
   on its tree; CI runs all.
+- 2026-11-23 10:05 CET: S1 + D3 committed as 70ed824 (no snapshot), pushed, CI run 45122961752
+  watched. Their worktrees removed. Findings F27-1, F29-1, F32-2 set to `implemented`. The
+  installed binary stays `c3 0.2.4 (ba43ff6)` until the release: it writes `.eck/`, so this
+  repository's own folder is NOT moved yet - installing the new binary would also start moving the
+  folders of every other project, which belongs to the release, not to the middle of it.
+  Launched from 70ed824: wave D4 (worktree `agent-a04c52be497ae4fe2`, `cap-std`, the handle
+  containment) and wave D2 (worktree `agent-a85da25d0039ad2b5`, 15 tooling items). D1 waits for
+  D4 (shared files). Two review briefs for 70ed824 are being written (handoffs 33 S1, 34 D3), to
+  run with `scratchpad/bin/c3-review3.exe` (a build WITHOUT S1 - it cannot move a folder):
+  33 with Grok + GLM-5.3, 34 with kimi-claude + Muse contributor, `--rev 70ed824 --diff
+  d37a397..70ed824`.
