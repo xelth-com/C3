@@ -469,3 +469,104 @@ swap -> xelth.com/C3 page after the tag.
   still alive with the same identity is terminated after it (the pattern `kill_tree_checked`
   already uses). Local: fmt, clippy clean, ci_check / bounded / hook unit tests 20 passed. Linux
   was green in that run.
+- 2026-11-23 06:22 CET: the tree-kill fix committed as fdf193a, pushed; CI runs 45110403225
+  (b9f665a) and 45111334886 (fdf193a) watched.
+- 2026-11-23 ~06:40 CET, verification V1 `33fa9671` done: 2 of 3 usable. n=15 Grok HOLD 3 minor /
+  1 note, prior 32 fixed, 2 still-open (F13-6, F18-5); n=16 Muse ACCEPT 1 minor / 2 note, prior 30
+  fixed; both rated yes. n=17 Sol FAILED: transport, `os error 11001` (host unknown) at the start,
+  0 s - a network failure, not rated; to be repeated alone after V3 (the part's blockers were
+  Sol's). New findings F24-1..4, F25-1..3, none major. Decisions: F24-1, F25-1 wontfix (the same
+  decided boundary); F24-3 wontfix (R2's decision: a stray `.git` stops the repair); F25-2 wontfix
+  (documented: without catalog dates the version rule decides - F13-6's undated half); F25-3
+  wontfix (R1's decision: the 5 s slack stays where the rollout gives no turn boundary).
+  ACCEPTED, to fix in a last small wave R6: F24-2 (a death record prefers a pending record's
+  stream over the newer noted one) and F24-4 (agy `merge_parameters` does not merge into a nested
+  object that already has keys). F18-5 `still-open` per Grok (`stage_file` reads with
+  `std::fs::read`) - R5 added the link refusal before the read; V2 covers it.
+  V2 launched: detach id `ccc5cfa8` (brief 22, `--rev fdf193a --diff 99e2da7..5d92ca7`,
+  kimi-claude + Grok + Muse contributor).
+- 2026-11-23 ~06:45 CET, operator (`/goal`): 'bring it to the end, finish off all tech debts, merge
+  to main, push and deploy, bring the content of xelth.com/C3 up to date' - a session goal with a
+  stop hook. Standing authorisation for: closing every open tech-debt item, commits to main,
+  pushes, the release (version, acceptance, tag), the install and the xelth.com/C3 page.
+- 2026-11-23 06:45 CET: CI GREEN for b9f665a (run 45110403225) and fdf193a (run 45111334886), all
+  three jobs each. The R4 unit test passed on b9f665a WITHOUT the tree-kill fix, so that failure
+  was intermittent; the fix stays (the old code did not check the kill).
+- 2026-11-23 ~07:00 CET, the plan to close ALL tech debt (20 open entries of TECH_DEBT.md + about
+  ten recorded tonight). Three waves, briefs in the scratchpad `briefs/`:
+  - D1 bridge (`D1-debt-bridge.md`): single-run findings snapshot; bound-input rule for every
+    engine outside a worktree; F24-2 death-record stream; F24-4 agy nested merge; collab paths out
+    of the uncommitted-paths paragraph; a panel test for `--rev`; a panel test for the re-seat
+    after a staging refusal; an e2e http run under `--rev` if honest; decide the guard's fork gap
+    and the smoke children's test variables; the timing test becomes a linearity test.
+  - D2 tooling (`D2-debt-tooling.md`), AFTER S1: secret gate (a plain word is no secret) + MCP
+    `allow_secret`; pre-finish checks (`finish_checks`); `c3 branches --record-unknown` and
+    `--close`; `c3 hook` caps its own lines; the hook test without the 2 s deadline; doctor checks
+    git >= 2.30; the knowledge-base decision ('quote it in the brief') in the skills; the memory
+    reaper paragraph in the coordinate skill.
+  - D3 maintain / telemetry / CI (`D3-debt-maintain-ci.md`), LAUNCHED from fdf193a (worktree
+    `agent-ac53dd0b4c5c5ac8d`): maintain tests' in-use probe by a test hook; a swap across a major
+    held when the list price more than doubles; a roster id matched through the lab table; a
+    published Claude id (dots -> dashes) known to telemetry; the CI test step per crate; decisions
+    (b), (e), (g) of the catalog entry.
+  Closed by observation after the install (the coordinator, live): a real `c3 maintain` pass (the
+  first real runs of 0.2.4 / the catalog check), a live kimi-engine consultation (housekeeping
+  files, resume across directories), the pinned plugin harnesses for the effort relaxation.
+  Cannot be closed now, stays an observation: agy's reader names (gemini is out until 2026-11-28).
+  Decisions without code: the branch record is local to one clone (by design); the hook's 3 s CI
+  budget (a check that does not fit stays silent); the catalog's third-party date.
+- 2026-11-23 ~07:25 CET, verification V2 `ccc5cfa8` done, 3 of 3 usable, all rated yes: n=18 Grok
+  HOLD 2 major / 1 minor / 1 note (prior 29 fixed, 2 still-open), n=19 kimi-claude REJECT 2 minor /
+  1 note (prior 25 fixed, 6 still-open), n=20 Muse ACCEPT 1 major / 2 minor (prior 31 fixed).
+  Findings F27-1..4, F28-1..3, F29-1..3. Majors: F27-1 (+ F15-1 still-open) the address predicate
+  lets CGNAT, 0.0.0.0/8, benchmark and fec0::/10 through; F29-1 a proxy from the environment would
+  bypass the peer check; F27-2 the post-checkout link sweep descends without the P4 re-check.
+  Still-open parts: F14-1 (connect shares the pre-lookup budget), F15-3 (an endpoint / plan edit
+  that keeps provider and model is still smoked). Routed: F27-1, F29-1, F14-1, F15-3 -> sent to the
+  running D3 worker as items 7-10; F27-2, F27-3, F28-1, F28-2, F28-3, F29-3 and the untracked-files
+  visibility (F18-4 / F19-2 / F20-6: print and record the untracked files a one-revision patch
+  carries, `--diff-tracked-only`) -> D1 brief items 12-18. wontfix: F29-2 (the decided boundary),
+  F27-4 (the lookup thread cannot be interrupted). F19-5's first half stays rejected.
+  V3 launched: detach id `e9bf7f2d` (brief 23, `--rev fdf193a --diff 5d92ca7..748ba3a`, Grok +
+  GLM-5.3). Then Sol alone on V1's range.
+- 2026-11-23 ~07:20 CET: addition sent to the S1 worker (point 11): in other projects the collab
+  directory is INSIDE the state folder (`--collab-dir .eck/collab` in the operator's global
+  skills) - after the move both spellings must resolve, a consult may trigger the move, a failed
+  rename (a live run holds files) falls back to the legacy path for that run. After S1 lands the
+  coordinator updates the global `astra` / `workers` skills to `.c3/collab`.
+- 2026-11-23 ~07:50 CET, verification V3 `e9bf7f2d` done, 2 of 2 usable, both rated yes: n=21
+  GLM-5.3 ACCEPT 2 minor / 4 note (prior 18 fixed), n=22 Grok HOLD 2 major / 4 minor (prior 13
+  fixed, 4 still-open). Findings F30-1..6, F31-1..6. Majors: F31-1 a deadline stop does not reap a
+  grandchild whose parent shim already exited (and `within` does not join its worker); F31-2 with
+  `origin/HEAD` unset the CI check still asks about a local main / master. Routed: F31-1, F31-2,
+  F31-3 / F30-3 (same-repo double gh: exclusive gate), F31-4 / F30-5 (github host names), F31-5 /
+  F30-6 (temp leftovers) -> D2 brief items 9-12; F31-6 / F30-1 (`router explain` starts probes),
+  F30-2 (tier warning when pins fill the panel), F30-4 (replay mixing precise and rounded) -> D1
+  brief items 19-21. F17-6 stays as documented.
+  Sol alone on V1's range launched: detach id `f204c8dd` (`--rev fdf193a --diff 4f43074..99e2da7`).
+- 2026-11-23 ~08:35 CET, Sol alone on V1's range, `f204c8dd`, usable, rated yes (n=23): HOLD,
+  1 blocker / 3 major / 1 note, prior 16 fixed, 19 still-open. 5h window 25 %, WEEK 38 % - no more
+  Sol runs before the acceptance. Findings F32-1..5:
+  - F32-1 BLOCKER: staging creates and publishes by path name after the validation - a directory
+    component that changes identity sends the bytes outside the worktree. This is the class I had
+    recorded as a decided boundary (F13-9, F15-4, F16-5, F24-1, F29-2). The boundary is WITHDRAWN
+    for everything inside a worktree or the repository: wave D4 (`briefs/D4-containment-by-
+    handles.md`) moves staging (both sides), the link sweep, the removal walk, the repository
+    repair and the patch write to directory handles (`cap-std`), with race tests through a test
+    hook. F15-4 (the roster rename in the codex home) stays a boundary.
+  - F32-2 major (supersedes F11-8): the smoke proves the switch per rollout, not per turn -> D3
+    item 11 (sent).
+  - F32-3 major: an agy reader whose file name holds `&&` is classified as a command -> D1 item 22.
+  - F32-4 major (supersedes F13-5): the runner unregisters a child at pipe EOF, before it exits ->
+    D2 item 13 (with F31-1, item 9).
+  - F32-5 note: the member-spec file fix must stay - implemented (b9f665a).
+  Still-open per Sol, routed: F10-3 / F11-4 (a committed brief deleted live is refused at the
+  entry) -> D1 item 23; F10-7 / F11-11 / F24-2 -> D1 item 3; F24-4 -> D1 item 4; F11-12 -> D1 item
+  24; F12-1 (Linux procfs) -> D2 item 14; F13-2 (HEAD alone) -> D2 item 15; F27-2 -> D4. Kept as
+  decided / documented: F10-1 / F11-1's 'an unlogged write stays usable' (attribution by the tool
+  log is the evidence there is; a live-tree agy cannot be tested - gemini is out until 2026-11-28),
+  F11-9 (the 5 s slack without a turn boundary), F12-3 (a cloud placeholder is not repaired),
+  F12-4 (git's own config write), F13-6 (no dates - the version rule).
+  D1 brief: items 12 and 14 moved into D4; 22 items. D2 brief: 15 items. Order after S1 lands:
+  D4 and D2 in parallel, then D1 (it shares `consult/reviewed.rs` and `engines/worktree.rs` with
+  D4). D3 is running.

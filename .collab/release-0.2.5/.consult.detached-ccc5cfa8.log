@@ -1,0 +1,623 @@
+codex-consult: detached run ccc5cfa8 (detach id ccc5cfa8-ebff-459a-ab07-0d9f4c801235) - pid 13468 on LAPTOP-9SGIHQ03, started 2026-11-23T05:37:34+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-ccc5cfa8.status.json
+Panel 4200a3e3: 3 of 3 roster entries run, at once (roster C:\Users\Dmytro\AppData\Local\Temp\claude\66aab2698810b170\e97cc6d0-6d1c-45b4-8904-07597e0d378e\scratchpad\rosters\roster-v2.json; panel id 4200a3e3-5e67-49e7-ac77-9e12119b698e)
+  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)
+  #1 kimi-claude :: k3.1-pro [claude] - member, n=19, handoff 28
+  #2 grok :: grok-4.7 [grok] - member, n=18, handoff 27
+  #3 meta :: muse-spark-1.3-contributor [muse] - member, n=20, handoff 29
+Routing: routed by the ratings - size 3 (-PanelAll); seed bd83fe85cc6b (nonce 2026-11-23 from date); exploration 0.2 per slot
+  eligible: #1 kimi-claude :: k3.1-pro [claude] (lab moonshot by vendor; score 1.125 neutral), #2 grok :: grok-4.7 [grok] (lab xai by vendor; score 1.806 purpose of 7), #3 meta :: muse-spark-1.3-contributor [muse] (lab meta by vendor; score 1.781 purpose of 6)
+  picked  : 1. #2 grok :: grok-4.7 [grok] (lab-draw), 2. #1 kimi-claude :: k3.1-pro [claude] (lab-draw), 3. #3 meta :: muse-spark-1.3-contributor [muse] (lab-draw)
+Concurrency: at once - endpoint groups: grok x1, kimi-claude x1, meta x1; -PanelConcurrency 0 (no cap)
+Timeout: 2400 s per member (the default of purpose diff-review); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 3 of 3 finished: meta :: muse-spark-1.3-contributor [muse] - usable reply (341 s)
+  panel member 2 of 3 finished: kimi-claude :: k3.1-pro [claude] - usable reply (911.9 s)
+  panel member 1 of 3 finished: grok :: grok-4.7 [grok] - usable reply (1051.2 s)
+
+=== panel 4200a3e3 member 1 of 3: grok :: grok-4.7 [grok] (roster #2) ===
+codex-consult: usable reply - grok :: grok-4.7 [grok], mode new, thread 01a206b4-1cc9-7c40-8067-b4c093e5f546 (source: events), wall 815.9 s
+verdict    : HOLD - Most of the maintain and --rev/--diff fixes hold, but an endpoint-only roster edit is still smoked, the new public-address gate still allows non-global targets, and the new link walk can leave the worktree.
+findings   : 0 blocker, 2 major, 1 minor, 1 note -> F27-1..F27-4 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 not-checked, F10-4 not-checked, F10-5 not-checked, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F14-1 fixed, F14-2 fixed, F14-3 fixed, F14-4 fixed, F14-5 fixed, F15-1 fixed, F15-2 fixed, F15-3 still-open, F15-5 fixed, F15-6 fixed, F16-1 fixed, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 fixed, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 fixed, F18-2 fixed, F18-3 fixed, F18-4 fixed, F18-5 fixed, F18-6 fixed, F18-7 fixed, F19-1 fixed, F19-2 fixed, F19-3 fixed, F19-4 fixed, F19-5 still-open, F19-6 fixed, F20-1 fixed, F20-2 fixed, F20-3 fixed, F20-4 fixed, F20-5 fixed, F20-6 fixed, F24-2 not-checked, F24-4 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\27-grok-reply-grok.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\27-grok-reply-grok.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\27-grok-reply-grok.events.jsonl
+
+## Q1
+
+Maintain:
+
+- F15-1 **fixed** at `maintain/env.rs:273` and `:303`, peer check `:422`, fetch refusal `maintain/web.rs:279`. IP literals, `localhost`, RFC1918, loopback, link-local, ULA and multicast never supply a body. Residual: finding #1.
+- F14-1 **fixed** at `maintain/env.rs:203`, `:221`, `:379`. ureq 2.12 starts `timeout_connect` before DNS, so a slow lookup consumes that window rather than adding another 15s. The leftover thread is finding #4.
+- F14-2 / F15-2 **fixed** at `maintain/models.rs:83`: a pair whose seated id is still active is never evicted.
+- F15-3 **partly** at `maintain/smoke.rs:335`. Provider or seated-model changes fail closed. An endpoint or plan change that keeps both still clones the new object (`:351`).
+- F14-3 **fixed** at `maintain/smoke.rs:476` (`create_dir` plus `create_new` inside it).
+- F14-4 **fixed** at `maintain/smoke.rs:318` (`validate_roster`).
+- F14-5 **fixed** at `maintain/models.rs:520` (`created > now+600` never qualifies; `+23h` is announce-only; exactly `+600s` still qualifies).
+- F15-5 **fixed** at `maintain/mod.rs:1278` (fresh `installed_version`, no older release).
+- F15-6 **fixed** at `maintain/mod.rs:630`, before `acquire_lock` (`:639`), which is what creates the directory. `state_dir` (`:80`) does not.
+- F16-1 / F17-5 **fixed**. Catalog identity is the full URL; `maintain/models.rs:810` trusts only an exact source match. Legacy `web:<host>` matches nothing.
+
+`--rev` / `--diff`:
+
+- F19-1 / F20-1 **fixed**. `consult/reviewed.rs:135` gives http a worktree only under `--rev`. `consult/http.rs:226` packs that tree or refuses. `pack/reviewer.rs:350` binds the patch and refuses a budget miss before any request.
+- F19-2 / F18-4 / F20-6 **fixed** at `consult/reviewed.rs:1055` (redactor) plus ignore / `.eckignore` exclusion. Untracked files that are not ignored stay in.
+- F19-3 / F20-3 **fixed** at `consult/reviewed.rs:970`: `<stem>.<sha8>.patch`, exclusive create, no overwrite.
+- F18-1 / F19-6 **fixed**. `consult/orchestrate/mod.rs` `reviewed_info` names the worktree sha; `:2636` withholds priors when that sha is not HEAD.
+- F18-2 / F20-2 **fixed** at `engines/worktree.rs:33` and `:121` (`GIT_OPTIONAL_LOCKS=0` and `--no-optional-locks`).
+- F18-3 **fixed** at `consult/orchestrate/mod.rs:3999` (snapshot after the patch) and `consult/orchestrate/tree.rs:220`. Live agy is untested. The prefix is finding #3.
+- F18-5 **fixed** at `engines/worktree.rs:836`: a linked brief refuses; other links are skipped.
+- F18-6 **fixed** for a link present at checkout (`engines/worktree.rs:612` unlinks outside and dangling targets before the reviewer). Finding #2 is a race the older walker already closed.
+- F20-4 **fixed** at `consult/revision.rs:165` (`--ignored` with `-uall`).
+- F18-7 **fixed** at `engines/worktree.rs:1102`: handoffs are named only after a real stage. `events.jsonl` is skipped.
+- F19-5 git-option half **fixed** at `consult/reviewed.rs:106` and `:872`, and `engines/worktree.rs:72`. The `C3_CHILD` half still writes, by decision.
+- Agy denial retry **fixed** at `consult/orchestrate/secondary.rs:102`.
+- F19-4 **still holds**: `setup/branches.rs:894` fails the run if the owner record cannot be written; `engines/worktree.rs:131` removes that worktree.
+- F20-5 **still holds**: `engines/worktree.rs:1034` counts untracked names and shows only prompt-safe tracked paths.
+
+## Q2
+
+A public name with a public A or AAAA record is fetched. A same-host redirect is followed and checked again. An IP-literal URL is refused on purpose, including a public address (`env.rs:303`). Any one non-public address in the lookup fails the whole name. ureq is given no proxy, so `HTTP_PROXY` is not used. A catalog clock more than 10 minutes fast makes a new id announce-only. `--rev main` when `main` is HEAD does not withhold: both sides are full shas (`mod.rs:2636`). A brief in a normal directory is staged.
+
+`0.0.0.1` and `100.64.0.1` still pass (finding #1). After the resolver returns, ureq connects to those addresses and `remote_addr` is checked again, so a later rebinding to 127.0.0.1 does not. A `--rev` / `--diff` token with a space, a control character, a leading `-`, or more than 256 characters is refused before git. `ls-tree` and `cat-file` (`worktree.rs:744`, `:830`) omit `--end-of-options`; they see a sha or a token that already failed the dash check.
+
+## Q3
+
+`resolve_within` (`env.rs:242`) leaves the DNS thread running after the wait. A no-hard-link patch write that fails mid-`write_all` can leave a short file at the final name (`reviewed.rs:970`); a crash can also leave `<stem>.<uuid>.tmp`. The smoke scratch dir is removed on drop and is not deleted if `create_dir` fails; a kill can leave it. If outside-link removal fails and the follow-up removal fails, the worktree stays (`worktree.rs:149`). `MODELS=off` does not take the lock.
+
+## Q4
+
+Without `--rev`, http still packs the live tree. `live_head` is recorded only for `--rev`. Kimi and claude isolation without `--rev` now also set `GIT_OPTIONAL_LOCKS=0` and may gain the outside-link sentence. An old `web:<host>` record loads and is not trusted until a refetch, so telemetry can drop names 0.2.4 would have sent. `telemetry_parity` was updated for the URL key. An http run with no patch omits the patch section.
+
+## Q5
+
+`pack/redact.rs:14` misses a low-entropy password, a split secret, and any value that is not secret-shaped. Those still ride in a one-revision patch when the file is untracked and not ignored. The ledger sha256 is of the redacted bytes `place_patch` writes, and `redactions` is that replacement count. `from_utf8_lossy` (`reviewed.rs:1055`) can change a non-UTF-8 diff before the hash, so the file matches the hash and is not git's raw diff. Withholding uses full shas: it does not fire for another spelling of live HEAD, and it does fire when the commit differs. `Some(0)` still drops invented priors.
+
+## Q6
+
+Untested here: the live-tree agy half of F18-3, an https http `--rev` round trip, a real stalled resolver against the 15s clock, and the directory-swap in finding #2. The suite was not executed. Not read in full: `c3config` host checks, the rest of `build_with_extras`, and every test body.
+
+## Requested checks
+
+RC1. Working directory `crates/c3`. Read-only. Assert `is_public_address` on `0.0.0.1` and `100.64.0.1` (a one-off test or the existing address test). Both are `true` today, which confirms finding #1. Budget: 5 minutes.
+
+RC2. Working directory `crates/c3`. Read-only unit call of `bound_roster` where provider and model match the chosen seat but `endpoint.base_url` changed (F15-3). `Ok` plus the new URL in the one-entry JSON confirms the residual. Budget: 5 minutes.
+
+RC3. Disposable repo, workspace-write, Windows. During `unlink_outside_links`, replace a real subdirectory with a junction to a sentinel that holds a symlink, and see whether that outside symlink is removed (finding #2). Budget: 15 minutes.
+
+
+### Findings
+
+- **F27-1** [major] `crates/c3/src/maintain/env.rs:273`, `crates/c3/src/maintain/env.rs:257`, `crates/c3/src/maintain/env.rs:422` - is_public_address treats 0.0.0.0/8 (except 0.0.0.0) and 100.64.0.0/10 as public, and the IPv6 check does not cover deprecated site-local fec0::/10. A catalog hostname that resolves to 0.0.0.1 or 100.64.0.1 is looked up, connected, and its body is read. On Linux, 0.0.0.0/8 is a local route; 100.64.0.0/10 is non-global (CGNAT, and overlays such as Tailscale). Trigger: A configured https catalog or page hostname resolves to 0.0.0.1 or 100.64.0.1, or a same-host redirect does, and c3 maintain fetches it. Evidence: read-code: IPv4 rejection is only is_loopback, is_private (RFC1918), is_link_local, is_unspecified and is_multicast. 0.0.0.1 and 100.64.0.1 match none of those. IPv6 checks loopback, unspecified, multicast, fc00::/7 and fe80::/10 only.; read-code: The unit list of refused addresses does not include 0.0.0.1 or 100.64.0.1, and 172.32.0.1 is asserted public.; read-code: Both the pre-connect lookup and check_peer use is_public_address, so an address that function allows is connected and its body is read. Verify: RC1: assert is_public_address is false for 0.0.0.1 and 100.64.0.1. Today both are true. Remedy: Reject 0.0.0.0/8, 100.64.0.0/10, broadcast, and the other non-global IPv4 ranges, plus IPv6 site-local fec0::/10, in is_public_address, and add them to the address test.
+- **F27-2** [major] `crates/c3/src/engines/worktree.rs:612`, `crates/c3/src/engines/worktree.rs:643`, `crates/c3/src/engines/worktree.rs:541` - unlink_outside_links lists a directory and later descends into it without the re-check that unlink_links_inside_with performs. If that directory is replaced by a junction or directory symlink before read_dir, the walk follows it and can unlink links in the target, which may be outside the worktree. canonicalize on a link also follows the link to decide whether it is inside. Trigger: During ThrowawayWorktree::create, after symlink_metadata has classified a child as a real directory, that path becomes a junction to another tree that contains a symlink. Evidence: read-code: The loop calls read_dir on a queued path with no real_dir_canonical inside-check. A non-link directory is pushed onto the stack. A link is classified with std::fs::canonicalize, which follows it.; read-code: The older walker re-checks that the directory still canonicalizes inside the worktree before read_dir and again before acting, and aborts otherwise. The new walker does not. Verify: RC3: swap a subdirectory for a junction to a sentinel during the walk and see whether a symlink in the sentinel is removed. Remedy: Use the same inside() re-check as unlink_links_inside_with before every read_dir, and abort the worktree if a directory no longer resolves inside it.
+- **F27-3** [minor] `crates/c3/src/consult/orchestrate/tree.rs:220` - The collab tree check ignores every live path under <task>/handoffs/<patch-stem>. so an agy or muse reviewer can write another file with that prefix and the run still looks clean. The bridge's own patch and its temp file are a narrower set. Trigger: A live-tree agy run with --diff writes a file such as handoffs/<stem>.notes.md in the task directory and changes nothing else. Evidence: read-code: own_prefixes gains format!("{}/handoffs/{}.", task, stem), which matches any later suffix, not only .<sha8>.patch and the write temp. Verify: Run a fake agy consult with --diff that writes only handoffs/<stem>.notes.md and read tree_check_outcome. Remedy: Ignore only the written patch path and the <stem>.<uuid>.tmp pattern, not every name that shares the stem prefix.
+- **F27-4** [note] `crates/c3/src/maintain/env.rs:242`, `crates/c3/src/maintain/env.rs:219` - When a public lookup exceeds the deadline, fetch returns, but the c3-maintain-dns thread is left blocked in the OS resolver until that lookup finishes. A redirect chain can leave one such thread per hop. The thread does not connect. Trigger: A catalog name lookup stalls longer than the time remaining in the 15s deadline. Evidence: read-code: The comment says the thread is left to finish on its own. On recv_timeout failure the function returns TimedOut and drops the receiver; the spawned lookup keeps running. Verify: Point a catalog at a resolver that sleeps 30s, time the fetch (it should error at 15s), and list c3-maintain-dns threads after the error. Remedy: Document the leftover as a bound, or detach the lookup so a late result cannot outlive the pass by more than the OS DNS timeout you accept. Killing the thread is not available.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-5 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-6 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-7 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-8 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-9 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-10 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-11 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-12 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-13 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-14 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-15 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-16 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-17 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-18 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-19 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-20 - not-checked - Outside this maintain/--rev/--diff review.
+- F02-21 - not-checked - Outside this maintain/--rev/--diff review.
+- F03-1 - not-checked - Outside this maintain/--rev/--diff review.
+- F03-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F03-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F03-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F03-5 - not-checked - Outside this maintain/--rev/--diff review.
+- F03-6 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-1 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-5 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-6 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-7 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-8 - not-checked - Outside this maintain/--rev/--diff review.
+- F04-9 - not-checked - Outside this maintain/--rev/--diff review.
+- F10-1 - not-checked - Outside this maintain/--rev/--diff review.
+- F10-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F10-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F10-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F10-5 - not-checked - Outside this maintain/--rev/--diff review.
+- F10-7 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-1 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-5 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-6 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-7 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-8 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-9 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-10 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-11 - not-checked - Outside this maintain/--rev/--diff review.
+- F11-12 - not-checked - Outside this maintain/--rev/--diff review.
+- F12-1 - not-checked - Outside this maintain/--rev/--diff review.
+- F12-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F12-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F12-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F13-1 - not-checked - Outside this maintain/--rev/--diff review.
+- F13-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F13-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F13-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F13-5 - not-checked - Outside this maintain/--rev/--diff review.
+- F13-6 - not-checked - Outside this maintain/--rev/--diff review.
+- F13-7 - not-checked - Outside this maintain/--rev/--diff review.
+- F13-8 - not-checked - Outside this maintain/--rev/--diff review.
+- F14-1 - fixed - One deadline covers lookup wait, connect and body chunks. The DNS thread can outlive the return (finding #4).
+- F14-2 - fixed - merge_older no longer evicts a pair whose seated id is still active.
+- F14-3 - fixed - Scratch directory is exclusively created; the roster file is create_new inside it.
+- F14-4 - fixed - bound_roster uses validate_roster, so non-integer reserve and non-bool on_request refuse.
+- F14-5 - fixed - A stamp later than now+600s does not qualify. +600s still does.
+- F15-1 - fixed - Stated classes and post-connect peer checks hold. 0.0.0.0/8 and 100.64.0.0/10 still pass (finding #1).
+- F15-2 - fixed - Protected older pairs survive the 500 cap while the seated id stays active.
+- F15-3 - still-open - Model and provider changes are refused. An endpoint or plan edit that keeps both is still smoked.
+- F15-5 - fixed - Recovery compares the vendor release with the version installed after rollback.
+- F15-6 - fixed - MODELS=off returns before the lock that creates the state directory.
+- F16-1 - fixed - Trust is the full catalog URL. A private URL on a host that also has a public URL is not trusted.
+- F16-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F16-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F16-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F16-6 - not-checked - Outside this maintain/--rev/--diff review.
+- F16-7 - not-checked - Outside this maintain/--rev/--diff review.
+- F16-8 - not-checked - Outside this maintain/--rev/--diff review.
+- F16-9 - not-checked - Outside this maintain/--rev/--diff review.
+- F16-10 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-1 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-3 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-4 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-5 - fixed - Same URL-key fix as F16-1. Legacy host keys are not published.
+- F17-6 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-7 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-8 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-9 - not-checked - Outside this maintain/--rev/--diff review.
+- F17-10 - not-checked - Outside this maintain/--rev/--diff review.
+- F18-1 - fixed - Reviewed line, ledger and new findings use the worktree revision; live HEAD is a side field.
+- F18-2 - fixed - Worktree git calls set GIT_OPTIONAL_LOCKS=0 and status uses --no-optional-locks.
+- F18-3 - fixed - Collab snapshot is after the patch write. Live agy was not tested. Prefix is broader than the patch (finding #3).
+- F18-4 - fixed - Ignored and .eckignore paths are omitted. Other untracked files remain, then pass the redactor.
+- F18-5 - fixed - A linked brief refuses the run. Linked handoffs and state.md are skipped, not followed.
+- F18-6 - fixed - Links present at checkout that lead outside or dangle are unlinked before the reviewer. A swap during the walk is finding #2.
+- F18-7 - fixed - The prompt names handoffs only when files were staged. events.jsonl is not staged.
+- F19-1 - fixed - http --rev packs the revision worktree and refuses when none was made.
+- F19-2 - fixed - Same patch redaction and ignore exclusion as F18-4 / F20-6.
+- F19-3 - fixed - Patch path includes the content hash and is not overwritten.
+- F19-4 - fixed - Owner-record failure still removes the worktree and fails the run. This commit did not weaken it.
+- F19-5 - still-open - Option injection is refused before git. A C3_CHILD consult still writes its handoff, left open by decision.
+- F19-6 - fixed - Same bookkeeping as F18-1. Open findings are withheld when the reviewed sha is not live HEAD.
+- F20-1 - fixed - The --diff patch is a pack section. A patch that misses the budget refuses the run before a request.
+- F20-2 - fixed - Same optional-lock guard as F18-2 on worktree setup.
+- F20-3 - fixed - Same content-addressed exclusive patch file as F19-3.
+- F20-4 - fixed - Worktree before/after status includes ignored files.
+- F20-5 - fixed - Untracked names are counted, not printed. Prompt-safe tracked paths are still shown. This commit did not put raw names back.
+- F20-6 - fixed - Same as F19-2: ignored and .eckignore files stay out; remaining text is redacted.
+- F24-2 - not-checked - Outside this maintain/--rev/--diff review.
+- F24-4 - not-checked - Outside this maintain/--rev/--diff review.
+
+## Verdict: HOLD
+
+Most of the maintain and --rev/--diff fixes hold, but an endpoint-only roster edit is still smoked, the new public-address gate still allows non-global targets, and the new link walk can leave the worktree.
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, fixed) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+
+### Unproven scenarios
+
+- The live-tree agy half of F18-3 was not executed; the snapshot order was only read.
+- No https end-to-end http --rev run was inspected; the pack is built in a unit test only.
+- A real stalled resolver was not timed. The 15s bound is from the code and ureq 2.12 connect_host, which starts timeout_connect before DNS.
+- Whether 0.0.0.1 connects to a local service on Windows was not run. The classifier allows it on every OS.
+- The directory-swap race in finding #2 was not executed.
+- Tests in the patch were read in part and not run.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 4200a3e3 member 2 of 3: kimi-claude :: k3.1-pro [claude] (roster #1) ===
+codex-consult: usable reply - kimi-claude :: k3.1-pro [claude], mode new, thread 23bd0c8f-0f91-4cca-becb-a9429afc7037 (source: events), wall 686.4 s
+verdict    : REJECT - The original secret-exfiltration trigger remains possible and the public-fetch deadline/address invariants are not fully established.
+findings   : 0 blocker, 0 major, 2 minor, 1 note -> F28-1..F28-3 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 not-checked, F10-4 not-checked, F10-5 not-checked, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F14-1 still-open, F14-2 fixed, F14-3 fixed, F14-4 fixed, F14-5 fixed, F15-1 still-open, F15-2 fixed, F15-3 fixed, F15-5 fixed, F15-6 fixed, F16-1 fixed, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 fixed, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 fixed, F18-2 fixed, F18-3 fixed, F18-4 still-open, F18-5 fixed, F18-6 fixed, F18-7 fixed, F19-1 fixed, F19-2 still-open, F19-3 fixed, F19-4 fixed, F19-5 still-open, F19-6 fixed, F20-1 fixed, F20-2 fixed, F20-3 fixed, F20-4 fixed, F20-5 fixed, F20-6 still-open, F24-2 not-checked, F24-4 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\28-claudecode-reply-kimi-claude.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\28-claudecode-reply-kimi-claude.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\28-claudecode-reply-kimi-claude.events.jsonl
+
+## Q1 — Disposition
+
+**Maintainer:** F14-1 is **still-open**: `hop_agent` gives both lookup and connect the original `remaining`; a lookup finishing near the deadline can therefore be followed by another full connect timeout (`crates/c3/src/maintain/env.rs:203`, `:221`). F15-1 is **still-open**: `is_public_address` accepts non-public ranges such as CGNAT `100.64.0.0/10` and benchmark `198.18.0.0/15` (`env.rs:273`). Fixed: F14-2/F15-2 (`maintain/models.rs:72`), F14-3 (`maintain/smoke.rs:386`, `:466`), F14-4 (`smoke.rs:308`), F14-5 (`models.rs:520`), F15-3 (`maintain/mod.rs:1374`; `smoke.rs:308`), F15-5 (`maintain/mod.rs:1257`), F15-6 (`mod.rs:622`), and F16-1/F17-5 (`maintain/web.rs:88`, `:188`; `models.rs:807`).
+
+**Revision/diff:** Fixed: F19-1/F20-1 (`consult/http.rs:217`; `pack/reviewer.rs:196`), F19-3/F20-3 (`consult/reviewed.rs:970`), F18-1/F19-6 (`consult/orchestrate/mod.rs:1078`, `:2636`; `orchestrate/ledger.rs:9`, `:119`), F18-2/F20-2 (`engines/worktree.rs:31`, `:118`), F18-3 (`orchestrate/mod.rs:3996`), F18-5 (`worktree.rs:840`; `reviewed.rs:386`), F18-6 (`worktree.rs:612`), F20-4 (`consult/revision.rs:165`; `reviewed.rs:503`), F18-7 (`worktree.rs:1102`; `orchestrate/mod.rs:4291`), F19-4 (`worktree.rs:113`, `:131`), and F20-5 (`worktree.rs:1040`). F19-5 is **partly** fixed: option injection is blocked (`reviewed.rs:95`, `:558`; `mcp/mod.rs:326`), while child record writes remain by decision. F18-4/F19-2/F20-6 are **still-open**: patch redaction is only lexical; split/base64/low-entropy secrets remain (`pack/redact.rs:14`), and the private-key regex replaces only the BEGIN line, not its body (`redact.rs:119`).
+
+## Q2 — Refusals and hostile inputs
+
+Global-IPv6 CDN addresses and same-origin redirect hops pass; ordinary brief directories pass. IP-literal URLs and private-proxy peers are intentionally refused. A new legitimate refusal occurs above 500 excluded paths (`reviewed.rs:758`, `:885`; finding #2). Rebinding uses the vetted resolver result, but the omitted address classes above still pass. CLI/MCP validation precedes git and git receives `--end-of-options`.
+
+## Q3 — Error residue
+
+A timed-out lookup thread is deliberately detached and can outlive the fetch (`env.rs:245`). Temp unlink failures are ignored; the no-hard-link fallback can leave a partial final patch after write/sync failure (`reviewed.rs:1017`; finding #1). Scratch directories, worktrees and pass locks have cleanup paths; crashes can naturally strand scratch/worktrees.
+
+## Q4 — Unintended behaviour
+
+No non-`--rev` ledger/prior-finding change was found: `reviewed_info` falls back to the live fingerprint and default pack extras preserve the old assembly. Older host-keyed state loads but is intentionally untrusted. An HTTP run without a patch retains live-tree packing.
+
+## Q5 — Redaction and hashes
+
+The recorded SHA256 is correctly computed after redaction, and file counting uses the written text. However, secrets outside the lexical rules still leak, and lossy UTF-8 conversion changes non-UTF-8 evidence (`reviewed.rs:1055`; finding #3). Withholding compares resolved commit SHAs, so aliases of live HEAD do not withhold and older revisions do (`orchestrate/mod.rs:2636`).
+
+## Q6 — Material test gaps
+
+No real slow-DNS-plus-connect test, non-public boundary-address test, no-hard-link write-failure test, generic/private-key patch exfiltration test, live-tree agy own-patch test, or end-to-end HTTPS HTTP run was shown.
+
+## Requested checks
+
+- **RC1 — F14-1:** Repo root; workspace-write; 10 min. Add a real-transport test with a 14 s lookup followed by a stalled connect; run `cargo test -p c3 <test>` and require return by 15 s.
+- **RC2 — F15-1:** Repo root; workspace-write; 5 min. Test `100.64.0.1` and `198.18.0.1` through `is_public_address` and `resolve_within`; both must be refused.
+- **RC3 — F19-2:** Scratch fixture; workspace-write; 5 min. Diff an untracked private key and a low-entropy password through a local fake reviewer; inspect that neither value/body reaches the patch.
+- **RC4 — finding #1:** Repo root; workspace-write; 5 min. Inject hard-link failure then final-file write failure; require no final/temp file and no partial readable by a sibling.
+
+### Findings
+
+- **F28-1** [minor] `crates/c3/src/consult/reviewed.rs:1017`, `crates/c3/src/consult/reviewed.rs:1024`, `crates/c3/src/consult/reviewed.rs:1029` - The no-hard-link patch fallback exposes a partially written final file and leaves it behind after write or sync failure; temp-file removal failures are also ignored, so error paths can leave artifacts that make later identical runs fail or let a sibling observe partial bytes. Trigger: Hard-link creation fails on a filesystem without hard-link support, then writing or syncing the exclusively created destination fails, or removal of the temporary hard link fails. Evidence: read-code: The temporary unlink result is discarded; the fallback opens the final path directly and maps write/sync errors without removing the newly created file. Verify: Inject hard-link failure followed by a destination write/sync failure, then inspect both the final and temporary paths and a concurrent same-content placement attempt. Remedy: Keep using a temporary file on every filesystem, remove partial outputs on every error, report cleanup failure, and use an atomic no-overwrite placement strategy appropriate to the filesystem.
+- **F28-2** [note] `crates/c3/src/consult/reviewed.rs:758`, `crates/c3/src/consult/reviewed.rs:885` - A legitimate diff touching more than 500 ignored or .eckignore-excluded files is now refused outright, even though those files are meant simply to be omitted. Trigger: A range or working-tree diff has 501 changed paths matched by repository ignore rules or .eckignore. Evidence: read-code: hidden.len() greater than PATCH_HIDDEN_MAX returns an error instead of rendering the remaining patch. Verify: Create a scratch diff containing 501 tracked, force-added ignored files plus one ordinary change and run --diff; observe refusal. Remedy: Pass exclusions through a file-based mechanism or another bounded implementation that does not reject the review solely because many paths were excluded.
+- **F28-3** [minor] `crates/c3/src/consult/reviewed.rs:1055` - Patch generation lossily converts arbitrary git output to UTF-8, replacing invalid byte sequences and potentially misrepresenting non-UTF-8 source or filenames given to the reviewer. Trigger: A reviewed text diff contains non-UTF-8 bytes in file contents or paths. Evidence: read-code: String::from_utf8_lossy(&raw) is applied before redaction and hashing; the resulting replacement characters are written as the patch. Verify: Commit a non-UTF-8 text change in a scratch repository, render --diff, and compare the patch bytes with git diff output. Remedy: Use a byte-aware redactor or explicitly refuse non-UTF-8 patches rather than silently altering review evidence.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside this consultation's scoped range.
+- F02-2 - not-checked - Outside this consultation's scoped range.
+- F02-3 - not-checked - Outside this consultation's scoped range.
+- F02-4 - not-checked - Outside this consultation's scoped range.
+- F02-5 - not-checked - Outside this consultation's scoped range.
+- F02-6 - not-checked - Outside this consultation's scoped range.
+- F02-7 - not-checked - Outside this consultation's scoped range.
+- F02-8 - not-checked - Outside this consultation's scoped range.
+- F02-9 - not-checked - Outside this consultation's scoped range.
+- F02-10 - not-checked - Outside this consultation's scoped range.
+- F02-11 - not-checked - Outside this consultation's scoped range.
+- F02-12 - not-checked - Outside this consultation's scoped range.
+- F02-13 - not-checked - Outside this consultation's scoped range.
+- F02-14 - not-checked - Outside this consultation's scoped range.
+- F02-15 - not-checked - Outside this consultation's scoped range.
+- F02-16 - not-checked - Outside this consultation's scoped range.
+- F02-17 - not-checked - Outside this consultation's scoped range.
+- F02-18 - not-checked - Outside this consultation's scoped range.
+- F02-19 - not-checked - Outside this consultation's scoped range.
+- F02-20 - not-checked - Outside this consultation's scoped range.
+- F02-21 - not-checked - Outside this consultation's scoped range.
+- F03-1 - not-checked - Outside this consultation's scoped range.
+- F03-2 - not-checked - Outside this consultation's scoped range.
+- F03-3 - not-checked - Outside this consultation's scoped range.
+- F03-4 - not-checked - Outside this consultation's scoped range.
+- F03-5 - not-checked - Outside this consultation's scoped range.
+- F03-6 - not-checked - Outside this consultation's scoped range.
+- F04-1 - not-checked - Outside this consultation's scoped range.
+- F04-2 - not-checked - Outside this consultation's scoped range.
+- F04-3 - not-checked - Outside this consultation's scoped range.
+- F04-4 - not-checked - Outside this consultation's scoped range.
+- F04-5 - not-checked - Outside this consultation's scoped range.
+- F04-6 - not-checked - Outside this consultation's scoped range.
+- F04-7 - not-checked - Outside this consultation's scoped range.
+- F04-8 - not-checked - Outside this consultation's scoped range.
+- F04-9 - not-checked - Outside this consultation's scoped range.
+- F10-1 - not-checked - Outside this consultation's scoped range.
+- F10-2 - not-checked - Outside this consultation's scoped range.
+- F10-3 - not-checked - Outside this consultation's scoped range.
+- F10-4 - not-checked - Outside this consultation's scoped range.
+- F10-5 - not-checked - Outside this consultation's scoped range.
+- F10-7 - not-checked - Outside this consultation's scoped range.
+- F11-1 - not-checked - Outside this consultation's scoped range.
+- F11-2 - not-checked - Outside this consultation's scoped range.
+- F11-3 - not-checked - Outside this consultation's scoped range.
+- F11-4 - not-checked - Outside this consultation's scoped range.
+- F11-5 - not-checked - Outside this consultation's scoped range.
+- F11-6 - not-checked - Outside this consultation's scoped range.
+- F11-7 - not-checked - Outside this consultation's scoped range.
+- F11-8 - not-checked - Outside this consultation's scoped range.
+- F11-9 - not-checked - Outside this consultation's scoped range.
+- F11-10 - not-checked - Outside this consultation's scoped range.
+- F11-11 - not-checked - Outside this consultation's scoped range.
+- F11-12 - not-checked - Outside this consultation's scoped range.
+- F12-1 - not-checked - Outside this consultation's scoped range.
+- F12-2 - not-checked - Outside this consultation's scoped range.
+- F12-3 - not-checked - Outside this consultation's scoped range.
+- F12-4 - not-checked - Outside this consultation's scoped range.
+- F13-1 - not-checked - Outside this consultation's scoped range.
+- F13-2 - not-checked - Outside this consultation's scoped range.
+- F13-3 - not-checked - Outside this consultation's scoped range.
+- F13-4 - not-checked - Outside this consultation's scoped range.
+- F13-5 - not-checked - Outside this consultation's scoped range.
+- F13-6 - not-checked - Outside this consultation's scoped range.
+- F13-7 - not-checked - Outside this consultation's scoped range.
+- F13-8 - not-checked - Outside this consultation's scoped range.
+- F14-1 - still-open - Lookup and connect still share the original per-hop remaining budget rather than a recomputed post-lookup budget.
+- F14-2 - fixed - Cap eviction protects pairs whose seated model remains active.
+- F14-3 - fixed - Smoke uses an exclusively created scratch directory and create_new roster.
+- F14-4 - fixed - Protection and inactivity now use validate_roster results.
+- F14-5 - fixed - Candidates beyond now+600 seconds no longer qualify.
+- F15-1 - still-open - The address predicate omits non-public ranges including CGNAT and benchmark space.
+- F15-2 - fixed - Active seated-model refusal pairs survive the cap.
+- F15-3 - fixed - Roster text is re-read at smoke time and checked for provider plus selected model.
+- F15-5 - fixed - The installed version is re-read before trying a newer release.
+- F15-6 - fixed - MODELS=off returns before lock or state-directory creation.
+- F16-1 - fixed - Catalog identity and trust are per canonical full URL.
+- F16-2 - not-checked - Outside this consultation's scoped range.
+- F16-3 - not-checked - Outside this consultation's scoped range.
+- F16-4 - not-checked - Outside this consultation's scoped range.
+- F16-6 - not-checked - Outside this consultation's scoped range.
+- F16-7 - not-checked - Outside this consultation's scoped range.
+- F16-8 - not-checked - Outside this consultation's scoped range.
+- F16-9 - not-checked - Outside this consultation's scoped range.
+- F16-10 - not-checked - Outside this consultation's scoped range.
+- F17-1 - not-checked - Outside this consultation's scoped range.
+- F17-2 - not-checked - Outside this consultation's scoped range.
+- F17-3 - not-checked - Outside this consultation's scoped range.
+- F17-4 - not-checked - Outside this consultation's scoped range.
+- F17-5 - fixed - Private and public catalogs on one host no longer share trust.
+- F17-6 - not-checked - Outside this consultation's scoped range.
+- F17-7 - not-checked - Outside this consultation's scoped range.
+- F17-8 - not-checked - Outside this consultation's scoped range.
+- F17-9 - not-checked - Outside this consultation's scoped range.
+- F17-10 - not-checked - Outside this consultation's scoped range.
+- F18-1 - fixed - Records use the reviewed worktree fingerprint and retain live_head separately.
+- F18-2 - fixed - Review setup and patch git commands disable optional locks.
+- F18-3 - fixed - The collab snapshot is taken after patch creation.
+- F18-4 - still-open - Lexical redaction still permits untracked secrets outside its patterns to enter patches.
+- F18-5 - fixed - External linked sources are refused or skipped without being read.
+- F18-6 - fixed - Outside and dangling links are removed immediately after checkout.
+- F18-7 - fixed - The final prompt reflects actual staging and excludes both event-stream names.
+- F19-1 - fixed - HTTP packs under --rev come from the worktree and refuse a missing worktree.
+- F19-2 - still-open - An untracked arbitrary secret can survive the lexical redactor.
+- F19-3 - fixed - Content-named exclusive patch placement prevents cross-range overwrite.
+- F19-4 - fixed - Owner-record failure now prevents worktree use.
+- F19-5 - still-open - Option injection is fixed; child consultation record writes remain by explicit decision.
+- F19-6 - fixed - Older-revision findings and records no longer bind to live HEAD.
+- F20-1 - fixed - The patch is included as a sanitized HTTP pack section.
+- F20-2 - fixed - Live status uses no-optional-locks and shared git commands set GIT_OPTIONAL_LOCKS=0.
+- F20-3 - fixed - Patch names include content hashes and existing differing bytes are never overwritten.
+- F20-4 - fixed - Before/after snapshots include ignored files with status --ignored and -uall.
+- F20-5 - fixed - Untracked names are withheld and displayed tracked names are prompt-sanitized.
+- F20-6 - still-open - The patch redactor does not cover arbitrary or split/encoded secrets.
+- F24-2 - not-checked - Outside this consultation's scoped range.
+- F24-4 - not-checked - Outside this consultation's scoped range.
+
+## Verdict: REJECT
+
+The original secret-exfiltration trigger remains possible and the public-fetch deadline/address invariants are not fully established.
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, fixed) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+
+### Unproven scenarios
+
+- No tests or commands were run in this read-only consultation.
+- Real ureq timing across slow lookup, connect, proxy and body phases remains unmeasured.
+- CDN/global-IPv6 behavior and no-hard-link filesystem behavior were not exercised.
+- The brief's identified live-tree agy and end-to-end HTTPS HTTP cases remain untested here.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 4200a3e3 member 3 of 3: meta :: muse-spark-1.3-contributor [muse] (roster #3) ===
+WARNING: ACCEPT with 9 unchecked prior blocker(s) (F02-1, F02-2, F02-16, F02-19, F02-21, F03-1, F11-3, F11-7, F13-1).
+codex-consult: usable reply - meta :: muse-spark-1.3-contributor [muse], mode new, thread 01a206b4-2d80-79c3-b711-6493cfb45a27 (source: events), wall 128.3 s
+warning    : muse: warning: rules file at \\?\C:\Users\Dmytro\AppData\Local\Temp\c3-kimi-wt-7024f64bb68946e18ec22117d2348cc7\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules
+warning    : muse: warning: project MCP servers from .mcp.json, if any, are not loaded because the workspace is untrusted; restart with --trust-workspace to load them
+format repair: succeeded in 34.5 s; drift: 2 note(s)
+  drift: numbered answers differ: prose 0, reply_markdown 6
+  drift: 12 of the 18 prose sentences (>= 60 chars) are not in reply_markdown (first: 'untested or thinly covered: real-network proxy behavior, sta...')
+verdict    : ACCEPT - The blockers and all in-scope triggers read as fixed; residuals are a proxy/thread hardening gap and two narrow races, filed as findings.
+findings   : 0 blocker, 1 major, 2 minor, 0 note -> F29-1..F29-3 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 not-checked, F10-4 not-checked, F10-5 not-checked, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F14-1 fixed, F14-2 fixed, F14-3 fixed, F14-4 fixed, F14-5 fixed, F15-1 fixed, F15-2 fixed, F15-3 fixed, F15-5 fixed, F15-6 fixed, F16-1 fixed, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 fixed, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 fixed, F18-2 fixed, F18-3 fixed, F18-4 fixed, F18-5 fixed, F18-6 fixed, F18-7 fixed, F19-1 fixed, F19-2 fixed, F19-3 fixed, F19-4 fixed, F19-5 fixed, F19-6 fixed, F20-1 fixed, F20-2 fixed, F20-3 fixed, F20-4 fixed, F20-5 fixed, F20-6 fixed, F24-2 not-checked, F24-4 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\29-muse-reply-meta.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\29-muse-reply-meta.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\29-muse-reply-meta.events.jsonl
+
+Q1. In-scope ids read as fixed on the trigger as written: F15-1 `env.rs:300`, F14-1 `env.rs:198`, F15-2/F14-2 `models.rs` cap keeps seated pairs, F15-3 `smoke.rs:303`, F14-3 `smoke.rs:383`, F14-4 `smoke.rs:300`, F14-5 ten-minute rule, F15-5 re-read after rollback, F15-6 switch-before-lock, F16-1/F17-5 `web.rs:83,188`; --rev/--diff: F19-1/F20-1 `http.rs:1271`, F19-2/F18-4/F20-6 redactor+ignore, F19-3/F20-3 `<stem>.<sha8>` exclusive, F18-1/F19-6 `reviewed_info`+withheld, F18-2/F20-2 `GIT_OPTIONAL_LOCKS=0`, F18-3 snapshot-after-patch, F18-5 `reviewed.rs:348`, F18-6 unlink-outside, F20-4 `--ignored`, F18-7 claim-after-staging, F19-5 shared check plus `--end-of-options`. F19-4/F20-5 were prior-commit items; nothing here contradicts them.
+
+Q2. Legitimate refusals possible: CDN host with mixed public/private answers refuses the whole fetch; IPv6 or proxy deployments need review (finding #1); a revision spelled with trailing whitespace is trimmed and accepted. Hostile bypass of the direct trigger is closed at lookup and peer per hop; proxy and DNS-to-connect rebinding remain (finding #1); rev/diff syntax is checked before git in CLI and MCP.
+
+Q3. Lookup thread past the deadline is left running (finding #1). Patch temp/hard-link, scratch dir (`Drop` removes only created dirs), worktree and lock handling otherwise read as cleaned up; no contrary path was read.
+
+Q4. Non---rev runs keep the live-tree path, index connection and ledger keys; live HEAD has no `live_head` extra and priors are listed. Older host-keyed state is read without error and untrusted until re-fetched. `telemetry_parity` expectations were updated to URL keys. HTTP without patch is unchanged apart from extras plumbing.
+
+Q5. Redaction keeps sha256 of the file as written and records a count, so the ledger matches what the reviewer saw; a missed secret shape would still leak, and an over-broad shape would mangle the diff — shapes were not exhaustively audited here. Withheld rule fires only for `--rev` whose sha differs from HEAD at plan time (finding #3).
+
+Q6. Untested or thinly covered: real-network proxy behavior, stalled-lookup thread lifetime, link swap between kind-check and read, HEAD moving between plan and staging, patch budget refusal end-to-end over HTTP, and secret-shape recall/precision on patches.
+
+### Findings
+
+- **F29-1** [major] `crates/c3/src/maintain/env.rs:155` - Public-fetch origin check can be bypassed through a configured HTTP(S) proxy, and a stalled DNS lookup thread is left running past the 15 s deadline. Trigger: C3_MAINTAIN_TEST_HTTP off, real network with HTTPS_PROXY set and a public catalog hostname resolving to a private address; or a catalog hop whose lookup stalls past 15 s. Evidence: read-code: hop_agent builds a ureq agent with custom resolver and timeout_connect(remaining); SystemEnv::http_get does not clear proxy env and check_peer validates resp.remote_addr(), which under a proxy is the proxy peer, not the origin.; read-code: resolve_within spawns c3-maintain-dns thread and on recv_timeout returns Timeout while sender thread keeps running detached; fetch maps only post-deadline errors to the deadline text.; read-code: fetch re-validates start and each redirect hop as https without userinfo and requires a named public host plus a public peer at every hop. Verify: Run a public catalog fetch with a stub proxy and a private origin, record the peer that check_peer saw, and list threads after a stalled-lookup fetch. Remedy: Bypass or clear proxy env for public_only GETs (or resolve and dial without proxy), document proxy behavior, and detach/join the DNS thread with a bounded lifetime or a cached token so no thread outlives the deadline.
+- **F29-2** [minor] `crates/c3/src/consult/reviewed.rs:348` - Staging link refusal has a check-to-read window: source_kind uses symlink_metadata plus canonicalize, but the brief/handoffs bytes are read later, so a link swapped in between is still read through. Trigger: A path that is a real dir/file at source_kind time is replaced by a symlink to outside the repo before stage_dir/stage_file reads it. Evidence: read-code: source_kind returns Linked for reparse points or canonical paths escaping the repo, else Dir/File; setup_review_tree then calls stage_dir/stage_file and brief_bytes in later statements with no re-check.; read-code: Doc promises nothing is ever read through a link, with linked handoffs/state counted in links_skipped. Verify: Interleave a link swap between the kind check and the copy in a fixture and confirm nothing outside the repo reaches the worktree. Remedy: Open staging sources with no-follow semantics (openat NOFOLLOW / symlink_metadata re-check at open) or re-validate symlink_metadata immediately before each read/copy and fail closed on change.
+- **F29-3** [minor] `crates/c3/src/consult/orchestrate/mod.rs:1849` - Withheld-findings gating compares the planned --rev sha string with a fresh HEAD resolve at plan time; a HEAD that moves between resolve and staging, or an unresolvable HEAD, can withhold on live HEAD or list priors on another revision. Trigger: Concurrent commit moves HEAD after the plan-time resolve, or HEAD is unresolvable while --rev names the same logical tip. Evidence: read-code: priors_withheld is set when isolation is_rev and sha != resolve_commit(HEAD), then open_findings are cleared; reviewed_info/live_head come from the worktree fingerprint and pre-run revision_info.; read-code: Prompt shows one withheld sentence and asks for empty prior_findings; finish ignores the reply priors section when withheld. Verify: Move HEAD between plan and staging in a fixture and check whether priors are listed or withheld versus the revision actually read. Remedy: Decide withholding from the staged worktree sha versus the live HEAD read at the same post-staging point, and define the empty-HEAD behavior explicitly.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside scope of this part; not re-checked.
+- F02-2 - not-checked - Outside scope of this part; not re-checked.
+- F02-3 - not-checked - Outside scope of this part; not re-checked.
+- F02-4 - not-checked - Outside scope of this part; not re-checked.
+- F02-5 - not-checked - Outside scope of this part; not re-checked.
+- F02-6 - not-checked - Outside scope of this part; not re-checked.
+- F02-7 - not-checked - Outside scope of this part; not re-checked.
+- F02-8 - not-checked - Outside scope of this part; not re-checked.
+- F02-9 - not-checked - Outside scope of this part; not re-checked.
+- F02-10 - not-checked - Outside scope of this part; not re-checked.
+- F02-11 - not-checked - Outside scope of this part; not re-checked.
+- F02-12 - not-checked - Outside scope of this part; not re-checked.
+- F02-13 - not-checked - Outside scope of this part; not re-checked.
+- F02-14 - not-checked - Outside scope of this part; not re-checked.
+- F02-15 - not-checked - Outside scope of this part; not re-checked.
+- F02-16 - not-checked - Outside scope of this part; not re-checked.
+- F02-17 - not-checked - Outside scope of this part; not re-checked.
+- F02-18 - not-checked - Outside scope of this part; not re-checked.
+- F02-19 - not-checked - Outside scope of this part; not re-checked.
+- F02-20 - not-checked - Outside scope of this part; not re-checked.
+- F02-21 - not-checked - Outside scope of this part; not re-checked.
+- F03-1 - not-checked - Outside scope of this part; not re-checked.
+- F03-2 - not-checked - Outside scope of this part; not re-checked.
+- F03-3 - not-checked - Outside scope of this part; not re-checked.
+- F03-4 - not-checked - Outside scope of this part; not re-checked.
+- F03-5 - not-checked - Outside scope of this part; not re-checked.
+- F03-6 - not-checked - Outside scope of this part; not re-checked.
+- F04-1 - not-checked - Outside scope of this part; not re-checked.
+- F04-2 - not-checked - Outside scope of this part; not re-checked.
+- F04-3 - not-checked - Outside scope of this part; not re-checked.
+- F04-4 - not-checked - Outside scope of this part; not re-checked.
+- F04-5 - not-checked - Outside scope of this part; not re-checked.
+- F04-6 - not-checked - Outside scope of this part; not re-checked.
+- F04-7 - not-checked - Outside scope of this part; not re-checked.
+- F04-8 - not-checked - Outside scope of this part; not re-checked.
+- F04-9 - not-checked - Outside scope of this part; not re-checked.
+- F10-1 - not-checked - Outside scope of this part; not re-checked.
+- F10-2 - not-checked - Outside scope of this part; not re-checked.
+- F10-3 - not-checked - Outside scope of this part; not re-checked.
+- F10-4 - not-checked - Outside scope of this part; not re-checked.
+- F10-5 - not-checked - Outside scope of this part; not re-checked.
+- F10-7 - not-checked - Outside scope of this part; not re-checked.
+- F11-1 - not-checked - Outside scope of this part; not re-checked.
+- F11-2 - not-checked - Outside scope of this part; not re-checked.
+- F11-3 - not-checked - Outside scope of this part; not re-checked.
+- F11-4 - not-checked - Outside scope of this part; not re-checked.
+- F11-5 - not-checked - Outside scope of this part; not re-checked.
+- F11-6 - not-checked - Outside scope of this part; not re-checked.
+- F11-7 - not-checked - Outside scope of this part; not re-checked.
+- F11-8 - not-checked - Outside scope of this part; not re-checked.
+- F11-9 - not-checked - Outside scope of this part; not re-checked.
+- F11-10 - not-checked - Outside scope of this part; not re-checked.
+- F11-11 - not-checked - Outside scope of this part; not re-checked.
+- F11-12 - not-checked - Outside scope of this part; not re-checked.
+- F12-1 - not-checked - Outside scope of this part; not re-checked.
+- F12-2 - not-checked - Outside scope of this part; not re-checked.
+- F12-3 - not-checked - Outside scope of this part; not re-checked.
+- F12-4 - not-checked - Outside scope of this part; not re-checked.
+- F13-1 - not-checked - Outside scope of this part; not re-checked.
+- F13-2 - not-checked - Outside scope of this part; not re-checked.
+- F13-3 - not-checked - Outside scope of this part; not re-checked.
+- F13-4 - not-checked - Outside scope of this part; not re-checked.
+- F13-5 - not-checked - Outside scope of this part; not re-checked.
+- F13-6 - not-checked - Outside scope of this part; not re-checked.
+- F13-7 - not-checked - Outside scope of this part; not re-checked.
+- F13-8 - not-checked - Outside scope of this part; not re-checked.
+- F14-1 - fixed - Deadline now covers lookup, connect and chunked body per hop; direct trigger fixed. Proxy/thread residual in finding #1.
+- F14-2 - fixed - Cap keeps pairs whose seated id is still an active roster model; same fix as F15-2.
+- F14-3 - fixed - Own scratch dir with exclusive create plus create_new roster; sibling symlink path gone.
+- F14-4 - fixed - bound_roster uses router validate_roster and its reserve/on-request/inactive marks.
+- F14-5 - fixed - Created later than now+600s never qualifies; beyond a day stays negative evidence.
+- F15-1 - fixed - Named-host, resolve-time and peer checks at every hop; direct trigger fixed. Proxy/thread residual in finding #1.
+- F15-2 - fixed - Eviction protects seated ids; cap applies to others oldest-first.
+- F15-3 - fixed - Target carries provider and seated model; mismatch fails closed before anything is created.
+- F15-5 - fixed - Installed version re-read after smoke/rollback; older vendor release not installed.
+- F15-6 - fixed - Switch read before lock and state dir; off --models touches no files.
+- F16-1 - fixed - Catalog identity is full URL; each URL fetched and trusted only by its own public entry; legacy host keys untrusted.
+- F16-2 - not-checked - Outside scope of this part; not re-checked.
+- F16-3 - not-checked - Outside scope of this part; not re-checked.
+- F16-4 - not-checked - Outside scope of this part; not re-checked.
+- F16-6 - not-checked - Outside scope of this part; not re-checked.
+- F16-7 - not-checked - Outside scope of this part; not re-checked.
+- F16-8 - not-checked - Outside scope of this part; not re-checked.
+- F16-9 - not-checked - Outside scope of this part; not re-checked.
+- F16-10 - not-checked - Outside scope of this part; not re-checked.
+- F17-1 - not-checked - Outside scope of this part; not re-checked.
+- F17-2 - not-checked - Outside scope of this part; not re-checked.
+- F17-3 - not-checked - Outside scope of this part; not re-checked.
+- F17-4 - not-checked - Outside scope of this part; not re-checked.
+- F17-5 - fixed - Same per-URL trust fix as F16-1.
+- F17-6 - not-checked - Outside scope of this part; not re-checked.
+- F17-7 - not-checked - Outside scope of this part; not re-checked.
+- F17-8 - not-checked - Outside scope of this part; not re-checked.
+- F17-9 - not-checked - Outside scope of this part; not re-checked.
+- F17-10 - not-checked - Outside scope of this part; not re-checked.
+- F18-1 - fixed - Records name worktree revision with live_head beside it; open findings withheld otherwise.
+- F18-2 - fixed - Worktree setup/check and patch use GIT_OPTIONAL_LOCKS=0 and --no-optional-locks.
+- F18-3 - fixed - Snapshot taken after patch write; patch stem is an own-prefix.
+- F18-4 - fixed - Patches pass the redactor and exclude ignored/.eckignored files; sha is of redacted bytes.
+- F18-5 - fixed - Brief link refuses; handoffs/state links skipped and counted. Check-to-read window in finding #2.
+- F18-6 - fixed - Outside-leading/dangling checkout links unlinked after checkout and named as data.
+- F18-7 - fixed - Prompt completed after staging; events.jsonl and *.events.jsonl both skipped.
+- F19-1 - fixed - HTTP pack built from --rev worktree; no worktree means nothing sent.
+- F19-2 - fixed - Same redactor/ignore fix as F18-4.
+- F19-3 - fixed - Content-named <stem>.<sha8>.patch with exclusive create; same bytes reused, foreign file never overwritten.
+- F19-4 - fixed - Prior commit's item; no contrary evidence in this diff.
+- F19-5 - fixed - Second half fixed: one check shared by CLI and MCP plus --end-of-options. First half rejected by decision.
+- F19-6 - fixed - Same withheld-priors fix as F18-1.
+- F20-1 - fixed - Patch is a bound pack part with budget refusal before any send.
+- F20-2 - fixed - Same index-lock fix as F18-2.
+- F20-3 - fixed - Same content-named exclusive patch fix as F19-3.
+- F20-4 - fixed - Worktree comparison includes --ignored paths.
+- F20-5 - fixed - Prior commit's item; isolation paragraph now also covers new isolated engines; no contrary evidence here.
+- F20-6 - fixed - Same redactor/ignore fix as F18-4/F19-2.
+- F24-2 - not-checked - Outside scope of this part; not re-checked.
+- F24-4 - not-checked - Outside scope of this part; not re-checked.
+
+## Verdict: ACCEPT
+
+The blockers and all in-scope triggers read as fixed; residuals are a proxy/thread hardening gap and two narrow races, filed as findings.
+
+**WARNING: ACCEPT with 9 unchecked prior blocker(s) (F02-1, F02-2, F02-16, F02-19, F02-21, F03-1, F11-3, F11-7, F13-1).**
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, fixed) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+
+### Unproven scenarios
+
+- Whether ureq honors proxy env for public GETs in this build and which peer remote_addr reports through it.
+- Redactor recall/precision on non-tested secret shapes and whether counts survive all patch forms.
+- Behavior when HEAD moves between plan-time resolve and post-staging fingerprint.
+
+### First-run checklist (observable)
+
+_(none)_
+
+Panel 4200a3e3: 3 of 3 entries ran (asked 3, started 3, usable 3; wall clock 1051.5 s; at once)
+  kimi-claude :: k3.1-pro [claude]           REJECT   0 blocker, 0 major, 2 minor, 1 note  prior: 25 fixed, 6 still-open, 85 not-checked  686.4 s  handoffs/28-claudecode-reply-kimi-claude.md
+  grok :: grok-4.7 [grok]                    HOLD     0 blocker, 2 major, 1 minor, 1 note  prior: 29 fixed, 2 still-open, 85 not-checked  815.9 s  handoffs/27-grok-reply-grok.md
+  meta :: muse-spark-1.3-contributor [muse]  ACCEPT   0 blocker, 1 major, 2 minor          prior: 31 fixed, 85 not-checked                128.3 s  handoffs/29-muse-reply-meta.md

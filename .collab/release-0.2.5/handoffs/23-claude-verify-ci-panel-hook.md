@@ -74,7 +74,7 @@ Not fixed by decision:
   green; c3-cli `ci_check` 10, `hook_scripts` 5, `delegation_rule` 6, `finish` 8,
   `panel_light_required` 2; `branches`, `init_doctor`, `update`, `wave9_consilium`,
   `notspooled_parity`, `wave6_live_diffs` green. Some binaries were still running at commit time.
-- CI: see the launch note.
+- CI for this commit (748ba3a): Linux green on both jobs; the Windows job failed in ONE unit test, `ci_check::tests::the_checks_deadline_kills_gh_and_its_children` (a grandchild of the stopped gh survived). The next two commits (b9f665a, then fdf193a, which makes the tree kill terminate every descendant enumerated before it) are green on all three jobs.
 - NOT covered by a test: the sources record no gap for this part beyond the binaries that had not
   finished locally.
 
