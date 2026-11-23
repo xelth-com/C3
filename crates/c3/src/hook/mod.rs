@@ -81,95 +81,25 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     }
     // (0.2.5, red CI) one line when the latest completed CI run of the default branch failed, read
     // through `gh`: at most one call per repository and day (the attempt is cached in C3's state
-    // directory), under its own deadline, silent without `gh` / a GitHub remote / a login, with
-    // `C3_CI_CHECK=off` / `"ci_check": false`, and inside a C3 child.
-    if let Some(l) = line_within(CI_LINE_DEADLINE, crate::ci_check::hook_line) {
+    // directory), silent without `gh` / a GitHub remote / a login, with `C3_CI_CHECK=off` /
+    // `"ci_check": false`, and inside a C3 child. (R4, F16-3) Every git and `gh` process of the check
+    // runs under ONE deadline (`ci_check::HOOK_DEADLINE`, 3 s) and is killed when it fires.
+    if let Some(l) = crate::ci_check::hook_line() {
         println!("{l}");
     }
     0
 }
 
-/// The one deadline of the CI line: `gh`'s own wait plus the git calls that precede it.
-const CI_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
-
 /// (0.2.5, F02-6) The one deadline of the branch line's git calls.
 pub const BRANCH_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The branch line, or `None` when it is not ready within `deadline` (a slow or stalled git, a slow
-/// file system): the scan runs on a thread of its own, and one that misses the deadline is left
-/// behind - its result is never printed, and the process ends without waiting for it. (0.2.5 R2,
-/// F13-5) Its git children are stopped first: killed, and no further one started, before the hook
-/// goes on, so none outlives `c3 hook`.
+/// file system): the scan runs on a thread of its own ([`crate::bounded::within`]), and one that
+/// misses the deadline is left behind - its result is never printed, and the process ends without
+/// waiting for it. (0.2.5 R2, F13-5) Its git children are stopped first: killed, and no further one
+/// started, before the hook goes on, so none outlives `c3 hook`.
 fn branch_line_within(deadline: std::time::Duration) -> Option<String> {
-    let children = std::sync::Arc::new(crate::setup::branches::ScanChildren::default());
-    line_within_stopping(deadline, crate::setup::branches::hook_line, children)
-}
-
-/// [`line_within`] whose work registers its git children in `children`
-/// ([`crate::setup::branches::with_scan_children`]); when the deadline passes they are stopped
-/// ([`crate::setup::branches::ScanChildren::stop`]) before `None` is returned.
-fn line_within_stopping(
-    deadline: std::time::Duration,
-    f: fn() -> Option<String>,
-    children: std::sync::Arc<crate::setup::branches::ScanChildren>,
-) -> Option<String> {
-    std_handles_not_inheritable();
-    let bound = std::sync::Arc::clone(&children);
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("c3-hook-line".to_string())
-        .spawn(move || {
-            let _ = tx.send(crate::setup::branches::with_scan_children(bound, f));
-        })
-        .ok()?;
-    match rx.recv_timeout(deadline) {
-        Ok(line) => line,
-        Err(_) => {
-            children.stop();
-            None
-        }
-    }
-}
-
-/// `f()` on a thread of its own, its result when it is ready within `deadline`, else `None`.
-fn line_within(deadline: std::time::Duration, f: fn() -> Option<String>) -> Option<String> {
-    // The git children of a scan that misses the deadline must not keep the hook's own output open
-    // (a reader that waits for end-of-stream - Claude Code collecting the hook's output - would
-    // wait for them): this process's standard handles are made non-inheritable first, as the
-    // detached maintenance pass does. A child's own stdout/stderr pipes are not affected.
-    std_handles_not_inheritable();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("c3-hook-line".to_string())
-        .spawn(move || {
-            let _ = tx.send(f());
-        })
-        .ok()?;
-    rx.recv_timeout(deadline).ok().flatten()
-}
-
-/// Make this process's standard handles non-inheritable (Windows; elsewhere a no-op): a child
-/// started later keeps only the handles it is given explicitly.
-fn std_handles_not_inheritable() {
-    #[cfg(windows)]
-    {
-        const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
-        const STD_HANDLES: [u32; 3] = [-10i32 as u32, -11i32 as u32, -12i32 as u32];
-        extern "system" {
-            fn GetStdHandle(n: u32) -> isize;
-            fn SetHandleInformation(h: isize, mask: u32, flags: u32) -> i32;
-        }
-        for n in STD_HANDLES {
-            // SAFETY: GetStdHandle takes a constant and returns a handle value (or 0 / -1); a
-            // valid handle is only re-flagged, never closed.
-            unsafe {
-                let h = GetStdHandle(n);
-                if h != 0 && h != -1 {
-                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
-                }
-            }
-        }
-    }
+    crate::bounded::within(deadline, crate::setup::branches::hook_line)
 }
 
 /// (R30) The re-hydration line for the `compact` SessionStart source: the coordinator identity the
@@ -347,17 +277,21 @@ mod tests {
     fn a_hook_line_past_its_deadline_is_dropped() {
         let d = std::time::Duration::from_millis(300);
         assert_eq!(
-            line_within(std::time::Duration::from_secs(10), quick_line).as_deref(),
+            crate::bounded::within(std::time::Duration::from_secs(10), quick_line).as_deref(),
             Some("c3: quick")
         );
         let start = std::time::Instant::now();
-        assert_eq!(line_within(d, stalled_line), None);
+        assert_eq!(crate::bounded::within(d, stalled_line), None);
         assert!(
             start.elapsed() < std::time::Duration::from_secs(5),
             "{:?}",
             start.elapsed()
         );
         assert_eq!(BRANCH_LINE_DEADLINE, std::time::Duration::from_secs(2));
+        assert_eq!(
+            crate::ci_check::HOOK_DEADLINE,
+            std::time::Duration::from_secs(3)
+        );
     }
 
     /// A line whose work is a stalled git-like child, started through the branch scan's runner.
@@ -381,7 +315,7 @@ mod tests {
     fn the_branch_deadline_stops_the_scans_children() {
         let children = std::sync::Arc::new(crate::setup::branches::ScanChildren::default());
         let start = std::time::Instant::now();
-        let line = line_within_stopping(
+        let line = crate::bounded::within_stopping(
             std::time::Duration::from_millis(1500),
             stalled_child_line,
             std::sync::Arc::clone(&children),

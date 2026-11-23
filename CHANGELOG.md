@@ -39,13 +39,15 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 - **A red CI run is named, not left for someone to notice.** `c3 finish`, after its commit, and the
   SessionStart hook ask the GitHub CLI for the latest completed run of the default branch (`gh run
-  list --branch <default> --limit 5 --json ...`) and print one line when it failed: `CI: the latest
-  run on main failed - <title> (run <id>)` (also under `"ci"` in `c3 finish --json`). A cancelled or
-  skipped run decides nothing; a green one prints nothing. It is a note, never a refusal; `gh` runs
-  under a deadline (10 s for `finish`, 3 s in the hook) and is killed past it; it is silent without
-  `gh` on PATH, a login, or a GitHub remote. The hook asks at most once a day per repository (the
-  attempt is cached in `<codex home>/c3/ci-check.json`, written before the call, so a failing `gh`
-  costs one try a day too) and never inside a C3 child. Default ON; `C3_CI_CHECK=off` or
+  list --branch <default> --limit 20 --json status,conclusion,databaseId,createdAt,event`) and print
+  one line when it failed: `CI: the latest completed run on main failed (run <id>) - gh run view
+  <id>` (`c3 finish --json` carries `"ci": {branch, run_id, line}`). A cancelled or skipped run and a
+  pull request's run decide nothing; a green one prints nothing. It is a note, never a refusal;
+  every git and `gh` process of the check runs under one deadline (10 s for `finish`, 3 s in the
+  hook) and is killed past it; it is silent without `gh` on PATH, a login, a GitHub remote or a
+  default branch. The hook asks at most once a day per repository (the attempt is recorded in the
+  repository's own `<codex home>/c3/ci-check-<hash>.json`, written before the call, so a failing
+  `gh` costs one try a day too) and never inside a C3 child. Default ON; `C3_CI_CHECK=off` or
   `"ci_check": false` in the C3 config turns it off. CI sat red for a week (2026-11-08..15) with
   nobody looking.
 - **`c3 doctor` reports - and `--fix` completes - a delegation rule written before a section
@@ -55,9 +57,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   section, taken from the embedded template, in the file's own line ending, through a temp file and a
   rename (a link and a hard-linked file are refused and reported; the file is read again immediately
   before the rename and left as it is when it changed - the moment between that re-read and the
-  rename itself remains). A file the user
-  rewrote is reported as a warning and never edited. The SessionStart hook does not do this, and
-  nothing happens inside a C3 child.
+  rename itself remains). `c3 doctor` recognises a C3-written rule by its title line alone (a file
+  that keeps that line counts as C3's, whatever its body); `--fix` only ever appends the missing
+  section and changes no existing byte; a file without the title line is reported as a warning and
+  never edited. The SessionStart hook does not do this, and nothing happens inside a C3 child.
 - **`c3 doctor` now flags a pinned agent model.** Each `.claude/agents/*.md` whose frontmatter
   `model:` names a concrete id (e.g. `claude-opus-4-8`) instead of a floating alias is reported,
   one line per file, with the alias to write instead (derived from the id's family). The aliases
@@ -165,8 +168,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   model-repair and red-CI lines never reached a plugin session, because the scripts kept only a
   whitelist of four lines. Both now forward every line of `c3 hook` that starts with `c3: `,
   `codex-consult: ` or `CI: ` - in the order printed, each once, at most 10, each cut to 400
-  characters (`...` appended) - and then the waiting rule; the two print byte-identical text
-  (tested with a fake `c3`, the `.ps1` under Windows PowerShell 5.1 and the `.sh` under `sh`).
+  characters (`...` appended) - and then the waiting rule. The two print identical text for ASCII
+  lines; a longer non-ASCII line may be cut at a different point (the `.sh` counts bytes under
+  `mawk`, the `.ps1` UTF-16 code units) (tested with a fake `c3`, the `.ps1` under Windows
+  PowerShell 5.1 and the `.sh` under `sh`).
 - **CI no longer stops at the first failed test binary.** The `ci` workflow's test steps (Windows and
   Linux, default features and `index-surreal`) run with `--no-fail-fast`, so one failed binary does
   not hide the rest; `kill_record_durable`'s `git()` helper now panics with git's exit code and
@@ -185,9 +190,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `glm-5.3-flash` side by side - a model and its light sibling repeat each other, so their agreement
   looked like corroboration and a seat was spent. The routed draw and the roster order (also the
   "no ratings" fallback, where that panel came from) now seat at most one roster entry per lab: the
-  model's maker (the entry's `lab`, a claude endpoint's host, else the model id's prefix; an
-  unknown one counts as a lab of its own), never the provider label - `kimi` and `kimi-claude` are
-  one lab, Qwen and DeepSeek behind `alibaba-claude` are two. Each lab is represented by its
+  model's maker (the entry's `lab`, case-folded; a claude endpoint's host; else the model id's
+  vendor prefix, matched only at a boundary; an unknown one counts as a lab of its own), never the
+  provider label - `kimi` and `kimi-claude` are one lab when their models, endpoint hosts or declared
+  labs say Moonshot, Qwen and DeepSeek behind `alibaba-claude` are two. Each lab is represented by its
   best-weighted eligible entry (the first in roster order on a tie), then the draw runs among labs;
   a size above the lab count is cut to one seat per lab with a warning, and the reserve a lost seat
   is refilled from holds only labs without a seat. Every `--require`d entry is still seated (two of
@@ -198,15 +204,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - **On a weighty purpose a panel holds the upper tier.** On framing, decision, core-contract,
   acceptance and stuck, a panel of two or more seats now gives one seat to a `"panel": "weighty"`
   entry when one is eligible (available, not held by its reserve, not on-request) and no required
-  entry already is one - drawn first among the weighty entries (rule `tier-draw` / `tier-explore`,
-  `tier` in roster order). The same 2026-11-20 run had seated three low-cost entries for a framing
-  question with weighty entries available.
+  entry already is one - drawn first among the weighty entries whose lab holds no seat yet (rule
+  `tier-draw` / `tier-explore`, `tier` in roster order); when every such entry shares a lab with a
+  required seat, the plan warns instead (the one-lab rule is kept). The same 2026-11-20 run had
+  seated three low-cost entries for a framing question with weighty entries available.
 - **`c3 router explain` and the panel plan say when a lab already holds the seat.** A member kept
   out by the one-seat-per-lab rule shows `not picked: lab zhipu already seated by #3` in the plan
   (dry run and real run) and in `panel.members`, and the summary lists it on its own line
   `not picked (one seat per lab): ...` instead of under the panel size; `c3 router explain` marks
-  an entry its lab's best-weighted candidate keeps out (`[lab zhipu: #3 takes its seat - one seat
-  per lab]`).
+  an entry whose lab's seat another entry holds (`[lab zhipu: #3 takes its seat - one seat per
+  lab]`), judged with the panel's own member election and draw.
 - **OpenAI's GPT-6.2 models are known to telemetry.** The `openai` class's closed model list now
   also holds `gpt-6.1-sol`, `gpt-6.2-astra` and `gpt-6.2-sol` (released 2026-11, listed for
   ChatGPT accounts by Codex). Before this a judge record naming them was sent as `other`. The
@@ -350,6 +357,80 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   secondary prompts got the reviewer-is-not-a-coordinator sentence in wave R1; the agy denial retry
   now carries it too (structured and raw), asserted in
   `the_secondary_prompts_carry_the_role_constraint`.
+- **Nothing GitHub-controlled reaches the session as text (F16-2, F17-1, F17-10).** The red-CI line
+  of `c3 finish` and the SessionStart hook carried the failed run's `displayTitle` after only
+  whitespace collapsing: an escape sequence, a bidi override or a sentence addressed to the agent in
+  a commit title reached every session start. The line is now C3's own words, the branch C3
+  resolved (a ref name without control, format or white-space characters, else no line) and the
+  run's id (digits only, else no line): `CI: the latest completed run on <branch> failed (run
+  <id>) - gh run view <id>`; the title is no longer even asked for. A pull request's run (`event`
+  `pull_request` / `pull_request_target` - a fork's branch can carry the default branch's name) is
+  not the default branch's run and decides nothing. `c3 finish --json` carries `"ci": {branch,
+  run_id, line}`, no title. The sentence says "latest completed run", which is what is chosen.
+- **One deadline covers everything the CI check starts (F16-3).** `c3 finish` ran the check's git
+  calls with no deadline before `gh`'s 10 s, and the hook's 5 s wrapper abandoned its thread without
+  killing a `gh` it had started. Every git and `gh` process of the check now runs under one
+  deadline - 10 s in `c3 finish`, 3 s in the hook - through the mechanism the hook's branch line
+  already used (wave R2's `run_registered` / `ScanChildren`, moved to `crates/c3/src/bounded.rs`
+  and shared); when it fires each running child is killed together with its descendants (a `.cmd`
+  shim, the git a `gh` runs) and reaped, and no further one starts, so nothing the check started
+  outlives `c3 finish` or `c3 hook`.
+- **The CI check asks about the right branch and the right run (F16-4, F17-7).** When `origin/HEAD`
+  names a branch with no local counterpart (`develop` only as `origin/develop`, beside a local
+  `main`), the check asked gh about the local fallback; it now asks about the remote's default
+  (`c3.defaultBranch` still wins; with no default at all it stays silent). The runs are ordered by
+  `createdAt` read as a time, not as text (mixed offsets sorted an older run first), a timestamp that
+  does not parse silences the check, and gh is asked for 20 runs instead of 5.
+- **A GitHub remote is recognised by its host (F17-8).** Any `git remote -v` line containing
+  `github.com/` counted, so `https://gitlab.example/github.com/mirror` started gh and spent the
+  day's hook attempt. The remote URL is now parsed (https, ssh, scp-like `git@host:path`) and its
+  host compared with `github.com`.
+- **One daily-gate file per repository (F16-9).** The hook's "asked today" record was one shared
+  `ci-check.json`, read, changed and renamed back by every session: two sessions starting together
+  dropped each other's attempt, and a repository was asked again at once. Each repository now has
+  its own small file, `<codex home>/c3/ci-check-<16 hex of sha256(canonical path)>.json`, written
+  through a temp file and a rename - no read-modify-write of a shared file. A shared `ci-check.json`
+  left by an older build is ignored and removed; gate files older than 30 days are removed.
+- **`c3 router explain` and `c3 router replay` show what the panel does (F16-6, F17-2).** Explain
+  picked each lab's seat among the roster's entries with its own on-request / held / weighty checks,
+  so an unavailable entry (a missing key, a refused engine) was marked as its lab's pick and a
+  required or upper-tier sibling's seat was ignored. It now builds the panel's own member election
+  (`panel_members`: availability, refusals, the weighty and light gates, the reserve hold) and the
+  roster's required entries, runs the panel's own preparation, and names the seat holder from the
+  draw's own pools (`routing::lab_stands`, shared with the draw): `[not eligible: <reason>]`, `[lab
+  zhipu: #1 takes its seat (required) - ...]`, `[... (upper tier) ...]`, or both candidates when
+  the routed upper-tier draw decides. Replay rebuilt a routed draw from scores and multipliers
+  rounded to 4 decimals, so a near tie could replay to another winner: the record now also carries
+  the draw's unrounded values when rounding changed them (`ext.c3.draw = [{position, score,
+  mult}]`; the rounded `score` / `budget_mult` stay for display, and a record rounding did not change
+  stays the plugin's), the replay weighs those, and a routed record without them (an older
+  build's) replays as before with a note that its values are rounded.
+- **Every maker of the roster has a lab (F16-7, F17-4).** MiniMax and Meta's Llama ids had no vendor
+  prefix, so an `api.minimax.io` endpoint entry (lab `minimax` by its host) and a `minimax-m3` codex
+  entry, or two `meta-llama/...` ids, were seated side by side. `minimax`, `meta-llama` and `llama`
+  joined the prefix table, which now names the same lab as `lab_of_host` for every host that function
+  knows (tested); a prefix matches only at a boundary (the id ends, or `-`, `_`, `.`, `/`, `:` or a
+  digit follows), the claude aliases `opus` / `sonnet` / `haiku` / `fable` only as the whole id (so
+  `opus-custom` is not Anthropic's - only a `claude-` id is), and a declared `lab` is case-folded
+  (`OpenAI` and `openai` are one lab).
+- **A missed upper-tier guarantee is said out loud (F16-8, F17-3).** On a weighty purpose, when every
+  eligible `panel: weighty` entry shared a lab with a required (non-weighty) entry, the panel ran
+  without a weighty member and said nothing. The plan now warns `upper tier missed: purpose <p> owes
+  a seat to a weighty entry, but every eligible one shares a lab with a seat already taken (lab <l>
+  is held by #<n>, keeping out #<m> <lineage>) - one seat per lab`. The one-lab rule is not relaxed.
+- **The hook script's cut and catch path (F16-10, F17-9).** `c3-hook.ps1` cut a long line at 400
+  UTF-16 code units and could split an emoji's surrogate pair, printing half a character; it now
+  cuts before such a pair (forwarded lines, the no-prefix fallback and the error line). Its `catch`
+  path printed only the error line; it now prints the waiting rule after it, exactly as the normal
+  path does (the `.sh` always did). The claim that the two scripts print byte-identical text for
+  every input is withdrawn: identical for ASCII lines, a longer non-ASCII line may be cut at a
+  different point (the `.sh` counts bytes under `mawk`).
+- **The delegation rule's check, said as it is (F17-6).** The CHANGELOG and README promised that a
+  delegation rule "the user rewrote" is never edited, but `c3 doctor` recognises a C3-written rule by
+  its title line alone - a file that keeps that line around a body of the user's own counts as
+  C3's. They now say exactly that, and that `c3 doctor --fix` only ever appends the missing
+  "BRANCHES AND WORKTREES" section and changes no existing byte (tested on such a file).
+
 - **`c3 doctor --fix` never removes through a link and never removes a worktree a live review may
   own (F13-1, F13-8, F12-1).** Staleness read the throwaway path with `std::fs::metadata`, which
   follows a link: a junction or symlink named `c3-kimi-wt-<32 hex>` in the temp directory, pointing

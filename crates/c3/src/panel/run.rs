@@ -211,6 +211,43 @@ struct Built {
 
 /// Resolve the whole plan (`Select-PanelMembers`, required reviewers, `Select-PanelRouting`, the
 /// roles, `Get-PanelPlan`) — everything before the lock.
+/// The members `Select-PanelRouting` seats, from `Select-PanelMembers`' selection: each row's
+/// resolved identity and state, and (wave 9) its plan group's budget multiplier - each plan group's
+/// draw-weight multiplier, from its remaining subscription share vs. the remaining share of its
+/// period, cached per group (network reads are cached on disk for 5 min). (F07-3) `network` is the
+/// mode the selection's reserve hold used, so the draw cannot weight a seat the hold would refuse.
+/// (0.2.5 R4) `c3 router explain` builds its members here too.
+pub(crate) fn member_inputs(
+    selection: &providers::PanelSelection,
+    utc_now: chrono::DateTime<chrono::Utc>,
+    network: bool,
+) -> Vec<MemberInput> {
+    let member_entries: Vec<c3_core::roster::RosterEntry> =
+        selection.members.iter().map(|m| m.entry.clone()).collect();
+    let budget_mults = crate::budget::multipliers_for(&member_entries, utc_now, network);
+    selection
+        .members
+        .iter()
+        .map(|m| MemberInput {
+            budget_mult: budget_mults
+                .get(&crate::budget::budget_key(&m.entry))
+                .copied()
+                .unwrap_or(1.0),
+            entry: m.entry.clone(),
+            provider: m.identity.provider.clone(),
+            model: m.identity.model.clone(),
+            engine: if m.entry.engine.is_empty() {
+                "codex".into()
+            } else {
+                m.entry.engine.clone()
+            },
+            state: m.state.clone(),
+            reason: m.reason.clone(),
+            skip_kind: m.skip_kind.clone(),
+        })
+        .collect()
+}
+
 fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
@@ -365,37 +402,8 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         ));
     }
 
-    // (wave 9) budget-aware routing: each plan group's draw-weight multiplier, from its remaining
-    // subscription share vs. the remaining share of its period. Cached per group; network reads are
-    // cached on disk for 5 min, so this stays cheap on every panel.
-    let member_entries: Vec<c3_core::roster::RosterEntry> =
-        selection.members.iter().map(|m| m.entry.clone()).collect();
-    // (F07-3) same network mode as the reserve hold `panel_members` applied, so the draw cannot
-    // weight a seat the hold would refuse.
-    let budget_mults = crate::budget::multipliers_for(&member_entries, utc_now, !ctx.no_network);
-
     // The seats (`Select-PanelRouting`) — routed by the real ratings, else roster order.
-    let members: Vec<MemberInput> = selection
-        .members
-        .iter()
-        .map(|m| MemberInput {
-            budget_mult: budget_mults
-                .get(&crate::budget::budget_key(&m.entry))
-                .copied()
-                .unwrap_or(1.0),
-            entry: m.entry.clone(),
-            provider: m.identity.provider.clone(),
-            model: m.identity.model.clone(),
-            engine: if m.entry.engine.is_empty() {
-                "codex".into()
-            } else {
-                m.entry.engine.clone()
-            },
-            state: m.state.clone(),
-            reason: m.reason.clone(),
-            skip_kind: m.skip_kind.clone(),
-        })
-        .collect();
+    let members: Vec<MemberInput> = member_inputs(&selection, utc_now, !ctx.no_network);
 
     let (size_wanted, size_source) = if o.panel_all {
         (0, "-PanelAll")

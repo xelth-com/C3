@@ -237,3 +237,39 @@ fn doctor_fix_refuses_a_hard_linked_delegation_rule() {
     assert_eq!(std::fs::read_to_string(&rule).unwrap(), old);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// (R4, F17-6) What is checked, said exactly: `c3 doctor` recognises a C3-written rule by its title
+// line alone, so a file that keeps that line around a body of the user's own counts as C3's - and
+// `--fix` only ever APPENDS the missing section: every existing byte stays as it was.
+#[test]
+fn doctor_fix_on_a_title_line_file_only_appends_and_keeps_every_byte() {
+    let title = DELEGATION_TEMPLATE
+        .lines()
+        .next()
+        .unwrap()
+        .trim_start_matches('\u{feff}')
+        .trim_end();
+    let mine = format!("{title}\r\n\r\nmy own rules\r\n  with odd   spacing\r\n");
+    let repo = repo_with_rule("title-only", &mine);
+    let rule = repo.join(".claude/rules/02-delegation.md");
+    let (code, out, err) = run_c3(&repo, &["doctor", "--fix"], NO_CONFIG);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        out.contains("[fixed] .claude/rules/02-delegation.md"),
+        "{out}"
+    );
+    let body = std::fs::read(&rule).unwrap();
+    assert!(
+        body.starts_with(mine.as_bytes()),
+        "an existing byte changed:\n{}",
+        String::from_utf8_lossy(&body)
+    );
+    let added = String::from_utf8(body[mine.len()..].to_vec()).unwrap();
+    assert!(
+        added.trim_start().starts_with("## BRANCHES AND WORKTREES"),
+        "{added}"
+    );
+    // in the file's own line ending
+    assert!(!added.replace("\r\n", "").contains('\n'), "{added:?}");
+    let _ = std::fs::remove_dir_all(&repo);
+}

@@ -310,11 +310,13 @@ thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.
   `acceptance` and `core-contract`; on every other purpose it is one routed pick
   (`--panel-seed` reproduces it). `c3 providers` and `c3 router explain` show both states.
 - **One seat per lab, and the upper tier on weighty questions**: a panel seats at most ONE roster
-  entry per lab - the model's maker, from the entry's `"lab"` or else its model id's prefix (`glm`
-  zhipu, `qwen` alibaba, `deepseek` deepseek, `kimi`/`k3` moonshot, `mimo` xiaomi, `gemini` google,
-  `muse` meta, `grok` xai, `gpt`/`o<n>` openai, `claude` and its aliases anthropic, `dola`/`seed`
-  bytedance; a claude endpoint entry without a `lab` takes its host's), never the provider label:
-  `kimi` and `kimi-claude` are one lab, Qwen and DeepSeek behind `alibaba-claude` are two. Each lab
+  entry per lab - the model's maker, from the entry's `"lab"` (case-folded) or else its model id's
+  prefix, matched only at a boundary (`glm` zhipu, `qwen` alibaba, `deepseek` deepseek, `kimi`/`k3`
+  moonshot, `mimo` xiaomi, `minimax` minimax, `gemini` google, `muse`/`meta-llama`/`llama` meta,
+  `grok` xai, `gpt`/`o<n>` openai, `claude-` anthropic (the aliases `opus`/`sonnet`/`haiku`/`fable`
+  only as the whole id), `dola`/`seed` bytedance; a claude endpoint entry without a `lab` takes its
+  host's), never the provider label: `kimi` and `kimi-claude` are one lab when their models, hosts
+  or declared labs say Moonshot, Qwen and DeepSeek behind `alibaba-claude` are two. Each lab
   is represented by its best-weighted eligible entry (the first in roster order without ratings)
   and the draw runs among labs; a sibling shows `not picked: lab zhipu already seated by #3`, and a
   size above the lab count is cut to one seat per lab with a warning. Every `--require`d entry is
@@ -322,9 +324,13 @@ thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.
   names the shared labs), and the bare default's single routed pick is unchanged. On a weighty
   purpose (`framing`, `decision`, `core-contract`, `acceptance`, `stuck`) a panel of two or more
   seats gives one seat to a `"panel": "weighty"` entry when one is eligible (available, not held,
-  not on-request) and no required entry already is one (rule `tier-draw`; `tier` in roster order).
-  The ledger's `panel.routing.ext.c3.seating` names the rules whenever they could change the seats,
-  so `c3 router replay` replays them; `c3 router explain` marks an entry its lab's pick keeps out.
+  not on-request) and no required entry already is one (rule `tier-draw`; `tier` in roster order);
+  when every such entry shares a lab with a required seat the plan warns `upper tier missed: ...`
+  instead (the one-lab rule holds). The ledger's `panel.routing.ext.c3.seating` names the rules
+  whenever they could change the seats, and `ext.c3.draw` the draw's unrounded scores and
+  multipliers whenever rounding changed them, so `c3 router replay` replays them exactly; `c3 router
+  explain` judges each entry as the panel does (its member election, required entries, the upper
+  tier) and marks why it would not run or which entry holds its lab's seat.
   The plugin-compat run (`C3_PLUGIN_COMPAT=1`, the harness oracle) keeps the plugin's draw.
 - **`--budget <percent>`** (env `CODEX_CONSULT_QUOTA_BUDGET`, default 90, 0 = off): the stall watch
   reads the run's rollout every 15 s and stops the main turn at the budget - the partial kept, no
@@ -722,13 +728,17 @@ one session's memory. C3 keeps the state in the repository and checks it.
 - **Switch (default ON).** `C3_BRANCH_CHECK=off`, or `"branch_check": false` in
   `<codex home>/c3/config.json`, turns the hook line off (`c3 branches` and `c3 doctor` are explicit).
 - **A red CI run is named.** `c3 finish` (after its commit) and the SessionStart hook ask `gh run list
-  --branch <default>` for the latest completed run and print `CI: the latest run on main failed -
-  <title> (run <id>)` when it failed; never a refusal, under a 10 s (hook: 3 s) deadline, silent
-  without `gh`, a login or a GitHub remote, and the hook asks once a day per repository. Switch
-  (default ON): `C3_CI_CHECK=off`, or `"ci_check": false` in `<codex home>/c3/config.json`.
+  --branch <default>` for the latest completed run (a pull request's run does not count) and print
+  `CI: the latest completed run on main failed (run <id>) - gh run view <id>` when it failed - no
+  run title or other text from GitHub; never a refusal, every git and gh process under one 10 s
+  (hook: 3 s) deadline, silent without `gh`, a login, a GitHub remote (the remote URL's host is
+  `github.com`) or a default branch, and the hook asks once a day per repository. Switch (default
+  ON): `C3_CI_CHECK=off`, or `"ci_check": false` in `<codex home>/c3/config.json`.
 - **Old rule text is completed.** `c3 init` never rewrites `.claude/rules/02-delegation.md`; `c3 doctor`
   reports a C3-written copy that lacks the "BRANCHES AND WORKTREES" section and `c3 doctor --fix`
-  appends exactly that section (a rewritten file is only reported).
+  appends exactly that section. C3 recognises its own copy by the template's title line alone;
+  `--fix` only ever appends the section and changes no existing byte, and a file without that line
+  is only reported.
 - **C3's own throwaway worktree.** Before the `kimi` engine removes the worktree its reviewer ran in,
   every symlink and junction inside it is unlinked without being followed, so a forced removal can
   never empty a checkout a link points into. Such a worktree (directly in the system temp directory,

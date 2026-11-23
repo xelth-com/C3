@@ -89,10 +89,11 @@ pub fn run(args: FinishArgs) -> i32 {
             let branch_note = branch_report
                 .as_ref()
                 .and_then(crate::setup::branches::finish_note_for);
-            // (0.2.5) a red latest CI run of the default branch, read through `gh` (never a
-            // refusal, at most 10 s, silent without `gh` / a login / a GitHub remote, off with
-            // `C3_CI_CHECK=off`).
-            let ci_line = crate::ci_check::finish_line(&repo_root);
+            // (0.2.5) a red latest completed CI run of the default branch, read through `gh` (never
+            // a refusal; every git and gh process of the check under one 10 s deadline; silent
+            // without `gh` / a login / a GitHub remote, off with `C3_CI_CHECK=off`). `--json`
+            // carries its branch, run id and line - no title.
+            let ci = crate::ci_check::finish_failure(&repo_root);
             if args.json {
                 let branches_json = branch_report
                     .as_ref()
@@ -114,7 +115,7 @@ pub fn run(args: FinishArgs) -> i32 {
                     "snapshot_note": r.snapshot_note,
                     "pruned": r.pruned,
                     "branches": branches_json,
-                    "ci": ci_line,
+                    "ci": ci.as_ref().map(crate::ci_check::CiFailure::json),
                 });
                 println!("{obj}");
             } else {
@@ -142,7 +143,7 @@ pub fn run(args: FinishArgs) -> i32 {
                 if let Some(note) = &branch_note {
                     println!("{note}");
                 }
-                if let Some(line) = &ci_line {
+                if let Some(line) = ci.as_ref().map(crate::ci_check::CiFailure::line) {
                     println!("{line}");
                 }
             }

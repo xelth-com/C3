@@ -17,9 +17,12 @@ use super::routing::{
 /// Purposes on which a framing/decision panel warns below two seats.
 const PANEL_FLOOR_PURPOSES: &[&str] = &["framing", "decision"];
 
-/// The vendor prefix table (`$script:LabVendors`), longest-match-by-order as the plugin walks it.
-/// (0.2.5, wave C1) Every model family of the current roster resolves: `grok` (xAI) joined, and the
-/// OpenAI `o<digit>` reasoning ids resolve in [`model_lab`] (a bare `o` prefix would catch `opus`).
+/// The vendor prefix table (`$script:LabVendors`), first match in table order as the plugin walks
+/// it. (0.2.5, wave C1) Every model family of the current roster resolves: `grok` (xAI) joined, and
+/// the OpenAI `o<digit>` reasoning ids resolve in [`model_lab`] (a bare `o` prefix would catch
+/// `opus`). (0.2.5 R4, F16-7 / F17-4) A prefix matches only at a boundary ([`prefix_at_boundary`]),
+/// and every maker of the roster has a lab: MiniMax and Meta's Llama ids joined, so the prefix table
+/// and [`c3_core::claude::lab_of_host`] name the same lab for every host that function knows.
 const LAB_VENDORS: &[(&str, &str)] = &[
     ("qwen", "alibaba"),
     ("deepseek", "deepseek"),
@@ -29,17 +32,36 @@ const LAB_VENDORS: &[(&str, &str)] = &[
     ("dola", "bytedance"),
     ("seed", "bytedance"),
     ("mimo", "xiaomi"),
+    ("minimax", "minimax"),
     ("gemini", "google"),
     ("muse", "meta"),
+    ("meta-llama", "meta"),
+    ("llama", "meta"),
     ("grok", "xai"),
     ("gpt", "openai"),
-    // (0.6.0, wave 29) the claude engine's ids and aliases
+    // (0.6.0, wave 29) the claude engine's ids
     ("claude", "anthropic"),
+];
+
+/// (0.6.0, wave 29) The claude engine's model aliases: an id that IS one of them (a `[1m]` suffix
+/// aside) is Anthropic's. (0.2.5 R4, F16-7) Never a prefix - `opus-custom` is not Anthropic's model
+/// (only a `claude-` id is).
+const LAB_ALIASES: &[(&str, &str)] = &[
     ("opus", "anthropic"),
     ("sonnet", "anthropic"),
     ("haiku", "anthropic"),
     ("fable", "anthropic"),
 ];
+
+/// Whether `id` starts with `prefix` at a boundary: the id ends there, or the next character is
+/// `-`, `_`, `.`, `/`, `:` or a digit (`qwen3`, `glm-5`, `k3.1`; not `seedream`, `gptx`).
+fn prefix_at_boundary(id: &str, prefix: &str) -> bool {
+    id.strip_prefix(prefix).is_some_and(|rest| {
+        rest.chars()
+            .next()
+            .is_none_or(|c| matches!(c, '-' | '_' | '.' | '/' | ':') || c.is_ascii_digit())
+    })
+}
 
 /// `Get-PanelDefaultSize` (D6): the default seats for a purpose (`0` = every eligible member).
 pub fn default_size(purpose: &str) -> i32 {
@@ -56,14 +78,20 @@ pub fn default_size(purpose: &str) -> i32 {
 /// `Get-ModelLab`: the lab a model id belongs to by its vendor prefix; `""` when unknown.
 /// (0.2.5, wave C1) An OpenAI `o<digit>` id (`o3`, `o4-mini`) is openai; an id with a `/` that
 /// does not resolve whole (an OpenRouter-style `vendor/model`) is tried by its last segment.
+/// (0.2.5 R4) Case-folded, a `[1m]` suffix dropped; a prefix counts only at a boundary, an alias of
+/// the claude engine only as the whole id.
 pub fn model_lab(model: &str) -> String {
-    let m = model.trim().to_lowercase();
+    let lower = model.trim().to_lowercase();
+    let m = lower.strip_suffix("[1m]").unwrap_or(&lower).trim();
     if m.is_empty() {
         return String::new();
     }
     let by_prefix = |id: &str| -> Option<&'static str> {
+        if let Some((_, lab)) = LAB_ALIASES.iter().find(|(a, _)| *a == id) {
+            return Some(*lab);
+        }
         for (prefix, lab) in LAB_VENDORS {
-            if id.starts_with(prefix) {
+            if prefix_at_boundary(id, prefix) {
                 return Some(*lab);
             }
         }
@@ -73,7 +101,7 @@ pub fn model_lab(model: &str) -> String {
         }
         None
     };
-    if let Some(lab) = by_prefix(&m) {
+    if let Some(lab) = by_prefix(m) {
         return lab.to_string();
     }
     if let Some((_, last)) = m.rsplit_once('/') {
@@ -104,9 +132,11 @@ impl LabSource {
 
 /// `Get-EntryLab` (D1): the entry's declared `lab`, else the vendor table on its resolved model,
 /// else a singleton lab (its lineage, lowercased). `model`/`lineage` are the resolved values.
+/// (0.2.5 R4, F16-7) A declared lab is case-folded (`OpenAI` and `openai` are one lab).
 pub fn entry_lab(declared_lab: &str, model: &str, lineage: &str) -> (String, LabSource) {
-    if !declared_lab.is_empty() {
-        return (declared_lab.to_string(), LabSource::Roster);
+    let declared = declared_lab.trim();
+    if !declared.is_empty() {
+        return (declared.to_lowercase(), LabSource::Roster);
     }
     let v = model_lab(model);
     if !v.is_empty() {
@@ -119,7 +149,7 @@ pub fn entry_lab(declared_lab: &str, model: &str, lineage: &str) -> (String, Lab
 /// without a declared `lab` takes the lab of its base URL's host first, else [`entry_lab`] on the
 /// resolved `model` / `lineage`.
 pub fn member_lab(entry: &RosterEntry, model: &str, lineage: &str) -> (String, LabSource) {
-    let host_lab = match (&entry.endpoint, entry.lab.is_empty()) {
+    let host_lab = match (&entry.endpoint, entry.lab.trim().is_empty()) {
         (Some(ep), true) if entry.auth == "endpoint" => c3_core::claude::lab_of_host(&ep.host_name),
         _ => "",
     };
@@ -597,18 +627,39 @@ pub struct PanelRoutingInput<'a> {
     pub required: &'a [i64],
 }
 
-/// `Select-PanelRouting` (D1, D4-D7) with the plugin's weights: no priors, default parameters.
-pub fn select_panel_routing(input: &PanelRoutingInput) -> PanelRoutingResult {
-    select_panel_routing_with(&RouterContext::default(), input)
+/// [`select_panel_routing_with`]'s state up to the draw - shared with [`lab_seat_marks`], so `c3
+/// router explain` judges eligibility, labs, pins and the upper tier exactly as the panel does.
+struct Prepared {
+    /// Every member in roster order, enriched (a required member a soft gate held back rejoined).
+    seated: Vec<SeatedMember>,
+    prior_uses: Vec<PriorUse>,
+    /// Indices into `seated` of the eligible (state `run`).
+    eligible_idx: Vec<usize>,
+    eligible_count: i64,
+    compat: bool,
+    /// (0.2.5, wave C1) one seat per lab applies.
+    lab_rule: bool,
+    panel_all: bool,
+    k: i64,
+    size_asked: i64,
+    size_source: String,
+    pinned_count: i64,
+    size_raised: bool,
+    /// `routed` | `roster` (after the "no ratings" fallback).
+    mode: String,
+    fallback: String,
+    seed_bytes: Vec<u8>,
+    seed_hex: String,
+    /// The draw candidates: the eligible members in roster order.
+    cands: Vec<Candidate>,
+    k_before_labs: i64,
+    /// The upper-tier positions (empty: the guarantee is not in force).
+    tier: Vec<i64>,
 }
 
-/// `Select-PanelRouting` with the weight source of router v1 (M9): the same draw, the score
-/// from [`router::score`]. With no priors in `ctx` and default parameters every number and
-/// every byte of the record equals [`select_panel_routing`]'s.
-pub fn select_panel_routing_with(
-    ctx: &RouterContext,
-    input: &PanelRoutingInput,
-) -> PanelRoutingResult {
+/// The enrichment, eligibility, size, mode, seed, candidates and upper tier of
+/// [`select_panel_routing_with`] - everything before the draw.
+fn prepare(ctx: &RouterContext, input: &PanelRoutingInput) -> Prepared {
     let &PanelRoutingInput {
         members,
         size,
@@ -621,11 +672,9 @@ pub fn select_panel_routing_with(
         task,
         brief_sha,
         nonce,
-        nonce_source,
         required,
+        ..
     } = input;
-    let neutral = ROUTING_NEUTRAL;
-
     // Enrich each member: a required member that only the weighty gate (0.6.0: or the light gate)
     // held back rejoins as `run`.
     let mut seated: Vec<SeatedMember> = Vec::new();
@@ -789,6 +838,71 @@ pub fn select_panel_routing_with(
         Vec::new()
     };
 
+    Prepared {
+        seated,
+        prior_uses,
+        eligible_idx,
+        eligible_count,
+        compat,
+        lab_rule,
+        panel_all,
+        k,
+        size_asked,
+        size_source,
+        pinned_count,
+        size_raised,
+        mode,
+        fallback,
+        seed_bytes,
+        seed_hex,
+        cands,
+        k_before_labs,
+        tier,
+    }
+}
+
+/// `Select-PanelRouting` (D1, D4-D7) with the plugin's weights: no priors, default parameters.
+pub fn select_panel_routing(input: &PanelRoutingInput) -> PanelRoutingResult {
+    select_panel_routing_with(&RouterContext::default(), input)
+}
+
+/// `Select-PanelRouting` with the weight source of router v1 (M9): the same draw, the score
+/// from [`router::score`]. With no priors in `ctx` and default parameters every number and
+/// every byte of the record equals [`select_panel_routing`]'s.
+pub fn select_panel_routing_with(
+    ctx: &RouterContext,
+    input: &PanelRoutingInput,
+) -> PanelRoutingResult {
+    let &PanelRoutingInput {
+        purpose,
+        order,
+        nonce,
+        nonce_source,
+        ..
+    } = input;
+    let neutral = ROUTING_NEUTRAL;
+    let Prepared {
+        mut seated,
+        prior_uses,
+        eligible_idx,
+        eligible_count,
+        compat,
+        lab_rule,
+        panel_all,
+        k,
+        size_asked,
+        size_source,
+        pinned_count,
+        size_raised,
+        mode,
+        fallback,
+        seed_bytes,
+        seed_hex,
+        cands,
+        k_before_labs,
+        tier,
+    } = prepare(ctx, input);
+
     // Seats: (member index into `seated`, rule).
     let mut seats: Vec<(usize, i32, String)> = Vec::new();
     // (C3 panel re-seat (c)) the eligible-but-unseated members in draw order, for promotion when a
@@ -947,6 +1061,12 @@ pub fn select_panel_routing_with(
             ));
         }
     }
+    // (0.2.5 R4, F16-8 / F17-3) the upper-tier guarantee missed because every eligible weighty
+    // entry shares a lab with a seat already taken (a required one): said out loud - the one-lab
+    // rule is not relaxed.
+    if let Some(w) = tier_missed_warning(purpose, &tier, &cands, &seats, &seated) {
+        warnings.push(w);
+    }
     if mode == "routed" || lab_rule {
         for &i in &eligible_idx {
             if seated[i].lab_source == LabSource::Singleton {
@@ -986,6 +1106,32 @@ pub fn select_panel_routing_with(
     if lab_rule && (labs_shared || tier_seated) {
         let v = ext.get_or_insert_with(|| serde_json::json!({ "c3": {} }));
         v["c3"]["seating"] = serde_json::json!({ "labs": "one-per-lab", "tier": tier });
+    }
+    // (0.2.5 R4, F16-6) The record keeps `score` and `budget_mult` rounded (for display, as the
+    // plugin writes them); a routed draw weighed the UNROUNDED values, so when rounding lost
+    // anything the record also carries them at full precision - `ext.c3.draw = [{position, score,
+    // mult}]`, eligible order - and `c3 router replay` weighs those: a near tie replays to the
+    // winner it had. Roster order weighs nothing, and a record that rounding did not change stays
+    // the plugin's.
+    if !compat && mode == "routed" {
+        let lossy = eligible_idx.iter().any(|&i| {
+            round(seated[i].score.score, 4) != seated[i].score.score
+                || round(seated[i].mult, 4) != seated[i].mult
+        });
+        if lossy {
+            let draw: Vec<serde_json::Value> = eligible_idx
+                .iter()
+                .map(|&i| {
+                    serde_json::json!({
+                        "position": seated[i].position,
+                        "score": seated[i].score.score,
+                        "mult": seated[i].mult,
+                    })
+                })
+                .collect();
+            let v = ext.get_or_insert_with(|| serde_json::json!({ "c3": {} }));
+            v["c3"]["draw"] = serde_json::Value::Array(draw);
+        }
     }
     let routing = RoutingRecord {
         mode: mode.clone(),
@@ -1052,6 +1198,118 @@ pub fn select_panel_routing_with(
         routing,
         warnings,
     }
+}
+
+/// (0.2.5 R4, F16-8 / F17-3) The warning for an upper-tier guarantee the one-lab rule could not
+/// keep: the seat was owed (`tier` names the eligible weighty positions and no pin is one of them),
+/// no seat went to the tier, and every tier entry's lab already holds a seat. Names the purpose,
+/// each lab and the entries it kept out.
+fn tier_missed_warning(
+    purpose: &str,
+    tier: &[i64],
+    cands: &[Candidate],
+    seats: &[(usize, i32, String)],
+    seated: &[SeatedMember],
+) -> Option<String> {
+    if tier.is_empty()
+        || cands.iter().any(|c| c.pinned && tier.contains(&c.position))
+        || seats.iter().any(|(_, _, r)| r.starts_with("tier"))
+    {
+        return None;
+    }
+    let seated_at = |lab: &str| -> Option<i64> {
+        seats
+            .iter()
+            .map(|(mi, _, _)| &seated[*mi])
+            .find(|m| m.lab == lab)
+            .map(|m| m.position)
+    };
+    // (lab, the seat holding it, the tier entries it keeps out)
+    let mut parts: Vec<(String, i64, Vec<String>)> = Vec::new();
+    for c in cands.iter().filter(|c| tier.contains(&c.position)) {
+        let by = seated_at(&c.lab)?;
+        let shown = seated
+            .iter()
+            .find(|m| m.position == c.position)
+            .map(|m| format!("#{} {}", m.position, m.lineage))
+            .unwrap_or_else(|| format!("#{}", c.position));
+        match parts.iter_mut().find(|(l, _, _)| *l == c.lab) {
+            Some((_, _, kept)) => kept.push(shown),
+            None => parts.push((c.lab.clone(), by, vec![shown])),
+        }
+    }
+    let text: Vec<String> = parts
+        .iter()
+        .map(|(lab, by, kept)| {
+            format!(
+                "lab {lab} is held by #{by}, keeping out {}",
+                kept.join(", ")
+            )
+        })
+        .collect();
+    Some(format!(
+        "upper tier missed: purpose {purpose} owes a seat to a weighty entry, but every eligible one shares a lab with a seat already taken ({}) - one seat per lab",
+        text.join("; ")
+    ))
+}
+
+/// (0.2.5 R4, F16-6 / F17-2) What `c3 router explain` marks on each roster entry, by position: why
+/// an entry would not run (`not eligible: <reason>` - the panel's own skip reason; an on-request
+/// entry and one held by its reserve are left to explain's own marks), and, under the one-seat-per-
+/// lab rule, which entry holds its lab's seat when it is not this one - a required entry, the
+/// upper-tier entry (certain, or when the routed upper-tier draw falls to that lab), else the lab's
+/// representative in the draw. Judged by [`select_panel_routing_with`]'s own preparation and the
+/// draw's own pools ([`routing::lab_stands`]), for the inputs a panel of this purpose would get.
+pub fn lab_seat_marks(ctx: &RouterContext, input: &PanelRoutingInput) -> Vec<(i64, String)> {
+    let p = prepare(ctx, input);
+    let mut marks: Vec<(i64, String)> = Vec::new();
+    for (i, m) in p.seated.iter().enumerate() {
+        let kind = input
+            .members
+            .get(i)
+            .map(|x| x.skip_kind.as_str())
+            .unwrap_or("");
+        if m.state != "run" && kind != "request" && kind != "reserve" {
+            marks.push((m.position, format!("not eligible: {}", m.reason)));
+        }
+    }
+    if !p.lab_rule {
+        return marks;
+    }
+    let stands = routing::lab_stands(&p.cands, p.k.max(0) as usize, &p.tier, p.mode != "routed");
+    for c in p.cands.iter().filter(|c| !c.pinned) {
+        let Some(st) = stands.iter().find(|s| s.lab == c.lab) else {
+            continue;
+        };
+        let lab = &st.lab;
+        let me = c.position;
+        let text = if let Some(&pin) = st.pins.first() {
+            Some(format!(
+                "lab {lab}: #{pin} takes its seat (required) - one seat per lab"
+            ))
+        } else {
+            match (st.tier, st.open) {
+                (Some(t), _) if st.tier_certain => (t != me).then(|| {
+                    format!("lab {lab}: #{t} takes its seat (upper tier) - one seat per lab")
+                }),
+                (Some(t), Some(r)) if t != r => Some(if me == r {
+                    format!("lab {lab}: #{t} takes its seat instead when the upper-tier draw falls to lab {lab}")
+                } else if me == t {
+                    format!("lab {lab}: #{r} takes its seat unless the upper-tier draw falls to lab {lab} (then #{me})")
+                } else {
+                    format!("lab {lab}: #{r} takes its seat, #{t} when the upper-tier draw falls to lab {lab} - one seat per lab")
+                }),
+                (_, Some(r)) => {
+                    (r != me).then(|| format!("lab {lab}: #{r} takes its seat - one seat per lab"))
+                }
+                _ => None,
+            }
+        };
+        if let Some(t) = text {
+            marks.push((me, t));
+        }
+    }
+    marks
 }
 
 // re-export the neutral/explore constants used by callers/tests.
@@ -1761,7 +2019,10 @@ mod tests {
             inp.ratings = &ratings;
             let res = select_panel_routing(&inp);
             assert_eq!(res.routing.mode, "routed");
-            assert!(res.routing.ext.is_none());
+            // the plugin's draw: no seating rules recorded (R4: the draw's unrounded values are)
+            let ext = res.routing.ext.as_ref().expect("the unrounded draw values");
+            assert!(ext["c3"].get("seating").is_none(), "{ext}");
+            assert!(ext["c3"]["draw"].is_array(), "{ext}");
             let p = res.picked[0].position;
             if !seen.contains(&p) {
                 seen.push(p);
@@ -1882,5 +2143,308 @@ mod tests {
             required: &[],
         });
         assert!(!res.warnings.iter().any(|w| w.starts_with("panel floor:")));
+    }
+
+    // ------------------------------------------------ (0.2.5 R4) labs, explain, tier, precision
+
+    // (R4, F16-7 / F17-4) Every maker of the roster has a lab; a prefix counts only at a boundary;
+    // a claude alias only as the whole id; a declared lab is case-folded.
+    #[test]
+    fn every_maker_has_a_lab_and_prefixes_match_at_a_boundary() {
+        for (id, lab) in [
+            ("minimax-m3", "minimax"),
+            ("MiniMax-M2.5", "minimax"),
+            ("meta-llama/llama-4-maverick", "meta"),
+            ("llama-3.3-70b", "meta"),
+            ("llama4", "meta"),
+            ("minimax/minimax-m3", "minimax"),
+            ("qwen3-coder", "alibaba"),
+            ("glm_5", "zhipu"),
+            ("kimi:k2", "moonshot"),
+            ("claude-opus-4-8", "anthropic"),
+            ("opus", "anthropic"),
+            ("opus[1m]", "anthropic"),
+            ("Sonnet", "anthropic"),
+        ] {
+            assert_eq!(model_lab(id), lab, "{id}");
+        }
+        for id in [
+            "opus-custom",
+            "opus2",
+            "sonnet-mini",
+            "fablelike",
+            "seedream-3",
+            "gptx",
+            "glmish",
+            "claudette",
+            "minimaxer",
+            "llamafile-x",
+        ] {
+            assert_eq!(model_lab(id), "", "{id}");
+        }
+        // the four entries of F16-7
+        let lab = |lab: &str, model: &str| {
+            member_lab(
+                &RosterEntry {
+                    lab: lab.into(),
+                    ..entry(1, "p", model)
+                },
+                model,
+                &format!("p :: {model}"),
+            )
+            .0
+        };
+        assert_ne!(lab("", "opus-custom"), lab("", "claude-opus-4-8"));
+        assert_eq!(lab("OpenAI", "x-1"), lab("", "gpt-6.2-sol"));
+        assert_eq!(lab(" OpenAI ", "x-1"), "openai");
+        let mut ep = endpoint_member(1, "minimax-claude", "MiniMax-M2").entry;
+        ep.endpoint.as_mut().unwrap().host_name = "api.minimax.io".into();
+        assert_eq!(
+            member_lab(&ep, "MiniMax-M2", "minimax-claude :: MiniMax-M2").0,
+            lab("", "minimax-m2")
+        );
+    }
+
+    // (R4, F16-7) `lab_of_host` and the prefix table name the same lab for every host the function
+    // knows: each of its labs has a prefix, and a model of that maker resolves to it.
+    #[test]
+    fn lab_of_host_and_the_prefix_table_agree() {
+        for (host, model) in [
+            ("api.openai.com", "gpt-6.2-sol"),
+            ("chatgpt.com", "o4-mini"),
+            ("api.z.ai", "glm-5.3"),
+            ("open.bigmodel.cn", "glm-5.3-flash"),
+            ("api.xiaomimimo.com", "mimo-v2.6-pro"),
+            ("api.kimi.ai", "kimi-for-coding"),
+            ("api.moonshot.ai", "kimi-k3"),
+            ("api.minimax.io", "minimax-m3"),
+            ("api.minimax.cn", "MiniMax-M2"),
+        ] {
+            let host_lab = c3_core::claude::lab_of_host(host);
+            assert!(!host_lab.is_empty(), "{host}");
+            assert!(
+                LAB_VENDORS.iter().any(|(_, l)| *l == host_lab),
+                "no prefix names lab {host_lab} ({host})"
+            );
+            assert_eq!(model_lab(model), host_lab, "{model} at {host}");
+        }
+    }
+
+    // (R4, F16-8 / F17-3) On a weighty purpose, when every eligible weighty entry shares a lab with
+    // a required (non-weighty) entry, no tier seat is drawn - the one-lab rule holds - and the plan
+    // says so: the purpose, the lab and the entries kept out.
+    #[test]
+    fn a_missed_upper_tier_is_warned_about() {
+        let members = vec![
+            member(1, "kimi", "kimi-for-coding", "run"),
+            weighty(member(2, "kimi-claude", "kimi-k3", "run")),
+            member(3, "gemini", "gemini-3", "run"),
+        ];
+        for order in ["roster", "routed"] {
+            let mut inp = input(&members, 2, "purpose", "acceptance", "n", &[1]);
+            inp.order = order;
+            let ratings = ratings_for("gemini", "gemini-3", "acceptance");
+            inp.ratings = &ratings;
+            let res = select_panel_routing(&inp);
+            let picked: Vec<i64> = res.picked.iter().map(|p| p.position).collect();
+            assert!(
+                !picked.contains(&2),
+                "{order}: the one-lab rule was relaxed: {picked:?}"
+            );
+            assert!(picked.contains(&1));
+            let w: Vec<&String> = res
+                .warnings
+                .iter()
+                .filter(|w| w.starts_with("upper tier missed:"))
+                .collect();
+            assert_eq!(w.len(), 1, "{order}: {:?}", res.warnings);
+            assert!(w[0].contains("purpose acceptance"), "{}", w[0]);
+            assert!(w[0].contains("lab moonshot is held by #1"), "{}", w[0]);
+            assert!(w[0].contains("#2 kimi-claude :: kimi-k3"), "{}", w[0]);
+        }
+        // a weighty entry of a free lab is seated: no warning; a required weighty entry: none
+        let free = vec![
+            member(1, "kimi", "kimi-for-coding", "run"),
+            weighty(member(2, "gemini", "gemini-3", "run")),
+        ];
+        let res = select_panel_routing(&input(&free, 2, "purpose", "acceptance", "n", &[1]));
+        assert!(res.picked.iter().any(|p| p.position == 2));
+        assert!(!res
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("upper tier missed:")));
+        let res = select_panel_routing(&input(&members, 2, "purpose", "acceptance", "n", &[2]));
+        assert!(!res
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("upper tier missed:")));
+        // a light purpose owes no tier seat
+        let res = select_panel_routing(&input(&members, 2, "purpose", "diff-review", "n", &[1]));
+        assert!(!res
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("upper tier missed:")));
+    }
+
+    fn marks_of(members: &[MemberInput], purpose: &str, required: &[i64]) -> Vec<(i64, String)> {
+        lab_seat_marks(
+            &RouterContext::default(),
+            &input(
+                members,
+                default_size(purpose),
+                "purpose",
+                purpose,
+                "",
+                required,
+            ),
+        )
+    }
+
+    fn mark(marks: &[(i64, String)], position: i64) -> Option<String> {
+        marks
+            .iter()
+            .find(|(p, _)| *p == position)
+            .map(|(_, m)| m.clone())
+    }
+
+    // (R4, F16-6 / F17-2) `c3 router explain` judges a lab's seat with the panel's own eligibility:
+    // an unavailable entry is no lab pick (its available sibling is), a required entry holds its
+    // lab's seat although a sibling weighs more, and the upper-tier entry holds it on a weighty
+    // purpose when the seat is certain to go to its lab.
+    #[test]
+    fn explain_marks_follow_the_panels_eligibility() {
+        // #3 (better rated) is unavailable: #2 represents zhipu, #3 says why it does not run
+        let mut down = member(3, "ZAI", "glm-5.3-flash", "skipped");
+        down.reason = "unavailable: no key".into();
+        down.skip_kind = "unavailable".into();
+        let members = vec![
+            member(1, "mimo", "mimo-v2.6-pro", "run"),
+            member(2, "ZAI", "glm-5.3", "run"),
+            down,
+            member(4, "ZAI", "glm-5.2", "run"),
+        ];
+        let marks = marks_of(&members, "diff-review", &[]);
+        assert_eq!(
+            mark(&marks, 3).as_deref(),
+            Some("not eligible: unavailable: no key")
+        );
+        assert_eq!(mark(&marks, 2), None);
+        assert_eq!(
+            mark(&marks, 4).as_deref(),
+            Some("lab zhipu: #2 takes its seat - one seat per lab")
+        );
+        assert_eq!(mark(&marks, 1), None);
+
+        // a required zhipu entry lighter than its unpinned sibling (rated better) holds the seat
+        let members = vec![
+            member(1, "ZAI", "glm-5.2", "run"),
+            member(2, "ZAI", "glm-5.3", "run"),
+            member(3, "mimo", "mimo-v2.6-pro", "run"),
+        ];
+        let ratings = ratings_for("ZAI", "glm-5.3", "diff-review");
+        let mut inp = input(&members, 2, "purpose", "diff-review", "", &[1]);
+        inp.ratings = &ratings;
+        let marks = lab_seat_marks(&RouterContext::default(), &inp);
+        assert_eq!(
+            mark(&marks, 2).as_deref(),
+            Some("lab zhipu: #1 takes its seat (required) - one seat per lab")
+        );
+        assert_eq!(mark(&marks, 1), None);
+        // and the real panel agrees, over many seeds
+        for n in 1..=40 {
+            let nonce = n.to_string();
+            let mut inp = input(&members, 2, "purpose", "diff-review", &nonce, &[1]);
+            inp.ratings = &ratings;
+            let res = select_panel_routing(&inp);
+            assert!(!res.picked.iter().any(|p| p.position == 2), "nonce {n}");
+        }
+
+        // a weighty purpose: the only weighty entry's lab takes the upper-tier seat with it, its
+        // better-rated sibling is marked
+        let members = vec![
+            member(1, "ZAI", "glm-5.3-flash", "run"),
+            weighty(member(2, "ZAI", "glm-5.3", "run")),
+            member(3, "mimo", "mimo-v2.6-pro", "run"),
+        ];
+        let ratings = ratings_for("ZAI", "glm-5.3-flash", "framing");
+        let mut inp = input(&members, 3, "purpose", "framing", "", &[]);
+        inp.ratings = &ratings;
+        let marks = lab_seat_marks(&RouterContext::default(), &inp);
+        assert_eq!(
+            mark(&marks, 1).as_deref(),
+            Some("lab zhipu: #2 takes its seat (upper tier) - one seat per lab")
+        );
+        assert_eq!(mark(&marks, 2), None);
+        for n in 1..=40 {
+            let nonce = n.to_string();
+            let mut inp = input(&members, 3, "purpose", "framing", &nonce, &[]);
+            inp.ratings = &ratings;
+            let res = select_panel_routing(&inp);
+            assert!(res.picked.iter().any(|p| p.position == 2), "nonce {n}");
+            assert!(!res.picked.iter().any(|p| p.position == 1), "nonce {n}");
+        }
+
+        // two labs with weighty entries: the routed draw decides which lab gets the tier seat
+        let members = vec![
+            member(1, "ZAI", "glm-5.3-flash", "run"),
+            weighty(member(2, "ZAI", "glm-5.3", "run")),
+            weighty(member(3, "gemini", "gemini-3", "run")),
+            member(4, "ZAI", "glm-5.2", "run"),
+        ];
+        let ratings = ratings_for("ZAI", "glm-5.3-flash", "framing");
+        let mut inp = input(&members, 3, "purpose", "framing", "", &[]);
+        inp.ratings = &ratings;
+        let marks = lab_seat_marks(&RouterContext::default(), &inp);
+        assert_eq!(
+            mark(&marks, 1).as_deref(),
+            Some(
+                "lab zhipu: #2 takes its seat instead when the upper-tier draw falls to lab zhipu"
+            )
+        );
+        assert_eq!(
+            mark(&marks, 2).as_deref(),
+            Some("lab zhipu: #1 takes its seat unless the upper-tier draw falls to lab zhipu (then #2)")
+        );
+        assert_eq!(
+            mark(&marks, 4).as_deref(),
+            Some("lab zhipu: #1 takes its seat, #2 when the upper-tier draw falls to lab zhipu - one seat per lab")
+        );
+        // and the panel seats zhipu only through #1 or #2
+        for n in 1..=60 {
+            let nonce = n.to_string();
+            let mut inp = input(&members, 3, "purpose", "framing", &nonce, &[]);
+            inp.ratings = &ratings;
+            let res = select_panel_routing(&inp);
+            assert!(!res.picked.iter().any(|p| p.position == 4), "nonce {n}");
+        }
+    }
+
+    // (R4, F16-6) A routed record keeps its scores and multipliers rounded for display and carries
+    // the draw's unrounded values when rounding changed them; a record rounding did not change stays
+    // the plugin's.
+    #[test]
+    fn a_routed_record_carries_the_draws_full_precision() {
+        let mut a = member(1, "ZAI", "glm-5.3", "run");
+        a.budget_mult = 0.123456789;
+        let members = vec![a, member(2, "mimo", "mimo-v2.6-pro", "run")];
+        let mut ratings = ratings_for("ZAI", "glm-5.3", "diff-review");
+        ratings.extend(ratings_for("mimo", "mimo-v2.6-pro", "diff-review"));
+        let mut inp = input(&members, 2, "-PanelSize", "diff-review", "n", &[]);
+        inp.ratings = &ratings;
+        let res = select_panel_routing(&inp);
+        assert_eq!(res.routing.mode, "routed");
+        let seated = res.members.iter().find(|m| m.position == 1).unwrap();
+        let draw = res.routing.ext.as_ref().expect("ext")["c3"]["draw"].clone();
+        assert_eq!(draw[0]["position"], 1);
+        assert_eq!(draw[0]["mult"].as_f64(), Some(seated.mult));
+        assert_eq!(draw[0]["score"].as_f64(), Some(seated.score.score));
+        assert_eq!(res.routing.eligible[0].mult, round(seated.mult, 4));
+        assert!(res.routing.ext.as_ref().unwrap()["c3"]
+            .get("seating")
+            .is_none());
+        // roster order weighs nothing: no draw block
+        let res = select_panel_routing(&input(&members, 2, "-PanelSize", "diff-review", "n", &[]));
+        assert_eq!(res.routing.mode, "roster");
+        assert!(res.routing.ext.is_none());
     }
 }

@@ -767,6 +767,104 @@ fn seated_labs<'a>(cands: &'a [Candidate], seats: &[Seat]) -> Vec<&'a str> {
         .collect()
 }
 
+/// The unpinned candidates (indices into `cands`, candidate order) whose lab holds no seat in
+/// `seats` - only the upper-tier ones (`tier`) when `only_tier`.
+fn open_pool(cands: &[Candidate], seats: &[Seat], tier: &[i64], only_tier: bool) -> Vec<usize> {
+    let labs = seated_labs(cands, seats);
+    (0..cands.len())
+        .filter(|&i| {
+            let c = &cands[i];
+            !c.pinned
+                && !labs.contains(&c.lab.as_str())
+                && (!only_tier || tier.contains(&c.position))
+        })
+        .collect()
+}
+
+/// The routed draw's upper-tier pool once `seats` are taken: the best upper-tier candidate of each
+/// lab that holds no seat (indices into `cands`, candidate order).
+fn tier_pool(cands: &[Candidate], seats: &[Seat], tier: &[i64]) -> Vec<usize> {
+    best_per_lab(cands, &open_pool(cands, seats, tier, true))
+}
+
+/// Roster order's upper-tier pick once `seats` are taken: the first upper-tier candidate whose lab
+/// holds no seat (index into `cands`).
+fn roster_tier_pick(cands: &[Candidate], seats: &[Seat], tier: &[i64]) -> Option<usize> {
+    open_pool(cands, seats, tier, true).first().copied()
+}
+
+/// (0.2.5 R4, F16-6 / F17-2) Who holds a lab's seat in a one-seat-per-lab panel, before any seed is
+/// drawn - what `c3 router explain` says, computed with the same pools the draw uses
+/// ([`invoke_lab_draw`], [`roster_lab_seats`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabStand {
+    pub lab: String,
+    /// The lab's pinned (required) positions: they hold its seat, whatever else it offers.
+    pub pins: Vec<i64>,
+    /// The position that takes the upper-tier seat for this lab, when the seat is owed, there is
+    /// room for it beside the pins, and the lab holds no pin.
+    pub tier: Option<i64>,
+    /// Whether the upper-tier seat is certain to go to this lab (roster order picks one lab; a
+    /// routed draw whose upper-tier pool holds this lab alone); else the routed draw decides.
+    pub tier_certain: bool,
+    /// The position that represents the lab otherwise: the best-weighted candidate (the first in
+    /// candidate order on a tie) in a routed draw, the first in candidate order in roster order.
+    pub open: Option<i64>,
+}
+
+/// Every lab of `candidates` (first-appearance order) and who holds its seat ([`LabStand`]), for a
+/// panel of `k` seats with the upper-tier positions `tier` (empty: no guarantee), seated by a routed
+/// draw or, with `roster_order`, in roster order.
+pub fn lab_stands(
+    candidates: &[Candidate],
+    k: usize,
+    tier: &[i64],
+    roster_order: bool,
+) -> Vec<LabStand> {
+    let pins = pinned_seats(candidates);
+    let tier_room = pins.len() < k && tier_owed(candidates, tier);
+    let tier_picks: Vec<usize> = if !tier_room {
+        Vec::new()
+    } else if roster_order {
+        roster_tier_pick(candidates, &pins, tier)
+            .into_iter()
+            .collect()
+    } else {
+        tier_pool(candidates, &pins, tier)
+    };
+    let open = open_pool(candidates, &pins, tier, false);
+    let reps = if roster_order {
+        first_per_lab(candidates, &open)
+    } else {
+        best_per_lab(candidates, &open)
+    };
+    let mut stands: Vec<LabStand> = Vec::new();
+    for c in candidates {
+        if stands.iter().any(|s| s.lab == c.lab) {
+            continue;
+        }
+        let of_lab = |list: &[usize]| {
+            list.iter()
+                .find(|&&i| candidates[i].lab == c.lab)
+                .map(|&i| candidates[i].position)
+        };
+        let lab_pins: Vec<i64> = candidates
+            .iter()
+            .filter(|o| o.pinned && o.lab == c.lab)
+            .map(|o| o.position)
+            .collect();
+        let tier_pick = of_lab(&tier_picks);
+        stands.push(LabStand {
+            lab: c.lab.clone(),
+            tier_certain: tier_pick.is_some() && tier_picks.len() == 1,
+            tier: tier_pick,
+            open: of_lab(&reps),
+            pins: lab_pins,
+        });
+    }
+    stands
+}
+
 /// (0.2.5, wave C1) The routed draw with ONE seat per lab: the pins take the first seats (every pin,
 /// two of one lab included); then, when `tier` is not empty (the upper-tier guarantee is in force:
 /// the positions of the eligible `panel: weighty` entries) and no pin is one of them, one seat is
@@ -786,19 +884,8 @@ pub fn invoke_lab_draw(
     tier: &[i64],
 ) -> LabDraw {
     let mut seats = pinned_seats(candidates);
-    let open = |seats: &[Seat], only_tier: bool| -> Vec<usize> {
-        let labs = seated_labs(candidates, seats);
-        (0..candidates.len())
-            .filter(|&i| {
-                let c = &candidates[i];
-                !c.pinned
-                    && !labs.contains(&c.lab.as_str())
-                    && (!only_tier || tier.contains(&c.position))
-            })
-            .collect()
-    };
     if seats.len() < k && tier_owed(candidates, tier) {
-        let pool = best_per_lab(candidates, &open(&seats, true));
+        let pool = tier_pool(candidates, &seats, tier);
         if !pool.is_empty() {
             let slot = seats.len() as i32 + 1;
             let (w, explored) = pick_slot(candidates, &pool, seed, slot, explore);
@@ -814,7 +901,7 @@ pub fn invoke_lab_draw(
             });
         }
     }
-    let mut left = best_per_lab(candidates, &open(&seats, false));
+    let mut left = best_per_lab(candidates, &open_pool(candidates, &seats, tier, false));
     let reserve = std::cmp::min(
         k.saturating_sub(seats.len()),
         left.iter()
@@ -900,14 +987,10 @@ pub fn invoke_lab_draw_reserve(
 pub fn roster_lab_seats(candidates: &[Candidate], k: usize, tier: &[i64]) -> (LabDraw, Vec<i64>) {
     let mut seats = pinned_seats(candidates);
     if seats.len() < k && tier_owed(candidates, tier) {
-        let labs = seated_labs(candidates, &seats);
-        if let Some(c) = candidates
-            .iter()
-            .find(|c| !c.pinned && tier.contains(&c.position) && !labs.contains(&c.lab.as_str()))
-        {
+        if let Some(i) = roster_tier_pick(candidates, &seats, tier) {
             seats.push(Seat {
                 slot: seats.len() as i32 + 1,
-                position: c.position,
+                position: candidates[i].position,
                 rule: "tier".into(),
             });
         }
@@ -1435,5 +1518,54 @@ mod tests {
         assert_eq!(s.all, 3);
         // w = (2 + 0.5 + 1) / (3 + 2) = 3.5/5 = 0.7; score = 0.25 + 1.75*0.7 = 1.475.
         assert!((s.score - 1.475).abs() < 1e-9);
+    }
+
+    // (0.2.5 R4, F16-6) `lab_stands` names who holds each lab's seat with the draw's own pools: a
+    // pin holds its lab; the upper-tier pick is certain when one lab offers it (or in roster order);
+    // otherwise the lab's best-weighted entry (routed) or first entry (roster order) represents it -
+    // and every seed of the real draw agrees.
+    #[test]
+    fn lab_stands_name_who_holds_each_labs_seat() {
+        let mut pinned = cand(1, "zhipu", 0.5);
+        pinned.pinned = true;
+        let cands = vec![
+            pinned,
+            cand(2, "zhipu", 1.9),
+            cand(3, "xiaomi", 1.0),
+            cand(4, "xiaomi", 1.5),
+            cand(5, "google", 1.2),
+        ];
+        let stands = lab_stands(&cands, 3, &[], false);
+        let of = |lab: &str| stands.iter().find(|s| s.lab == lab).unwrap().clone();
+        assert_eq!(of("zhipu").pins, vec![1]);
+        assert_eq!(of("xiaomi").open, Some(4));
+        assert_eq!(of("google").open, Some(5));
+        assert_eq!(lab_stands(&cands, 3, &[], true)[1].open, Some(3));
+        // the upper tier: #3 is xiaomi's only weighty entry and the only tier lab - certain
+        let stands = lab_stands(&cands, 3, &[3], false);
+        let x = stands.iter().find(|s| s.lab == "xiaomi").unwrap();
+        assert_eq!((x.tier, x.tier_certain, x.open), (Some(3), true, Some(4)));
+        for n in 0..60u8 {
+            let d = invoke_lab_draw(&cands, 3, &[n; 32], ROUTING_NEUTRAL, ROUTING_EXPLORE, &[3]);
+            let ps: Vec<i64> = d.seats.iter().map(|s| s.position).collect();
+            assert!(
+                ps.contains(&3) && !ps.contains(&4) && !ps.contains(&2),
+                "{ps:?}"
+            );
+        }
+        // two tier labs: not certain; no room beside the pins: no tier pick at all
+        let stands = lab_stands(&cands, 3, &[3, 5], false);
+        assert!(stands.iter().all(|s| !s.tier_certain));
+        assert_eq!(
+            stands.iter().filter_map(|s| s.tier).collect::<Vec<_>>(),
+            vec![3, 5]
+        );
+        assert!(lab_stands(&cands, 1, &[3], false)
+            .iter()
+            .all(|s| s.tier.is_none()));
+        // a tier entry in a pinned lab is never a tier pick
+        assert!(lab_stands(&cands, 3, &[2], false)
+            .iter()
+            .all(|s| s.tier.is_none()));
     }
 }

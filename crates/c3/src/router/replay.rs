@@ -5,6 +5,13 @@
 //! record's own seed, size, eligible scores, labs and required flags, so a record the plugin
 //! wrote replays exactly like one C3 wrote. The point is auditability: anyone can prove a
 //! panel's seats follow from the recorded inputs and the published draw.
+//!
+//! (0.2.5 R4, F16-6) A routed record's `score` and `budget_mult` are rounded to 4 decimals (the
+//! plugin's display form); the draw weighed the unrounded values. A record C3 writes since then
+//! carries those at full precision whenever rounding changed them (`ext.c3.draw`), and the replay
+//! weighs them - a near tie replays to the winner it had. A routed record without them (written by
+//! an older build, or one whose values were exact at 4 decimals) replays from the rounded values as
+//! before, and the report says so.
 
 use std::path::PathBuf;
 
@@ -22,6 +29,9 @@ pub struct ReplayReport {
     pub panels: usize,
     /// The first mismatch, if any (its message is printed and the process exits 1).
     pub first_diff: Option<String>,
+    /// (R4) The consult numbers of the routed panels replayed from their rounded scores and
+    /// multipliers (no `ext.c3.draw`).
+    pub rounded: Vec<i64>,
 }
 
 impl ReplayReport {
@@ -62,6 +72,9 @@ pub fn replay_sessions(file: &SessionsFile, nn: Option<i64>) -> ReplayReport {
         seen.push(key);
         report.panels += 1;
 
+        if routing.mode == "routed" && recorded_draw(routing).is_none() {
+            report.rounded.push(entry.n);
+        }
         if let Some(diff) = replay_one(entry.n, routing) {
             report.first_diff = Some(diff);
             return report;
@@ -81,6 +94,7 @@ fn replay_one(n: i64, routing: &PanelRouting) -> Option<String> {
     let explore = recorded_explore(routing);
 
     // Reconstruct the draw's candidates from the eligible rows, in record order.
+    let precise = recorded_draw(routing);
     let cands: Vec<Candidate> = routing
         .eligible
         .iter()
@@ -89,7 +103,14 @@ fn replay_one(n: i64, routing: &PanelRouting) -> Option<String> {
             lab: e.lab.clone(),
             // (wave 9) the draw weighed `score * budget_mult`; the record carries the multiplier
             // (absent = 1.0) so the replay reproduces the seats without a fresh network read.
-            weight: e.score * recorded_mult(e),
+            // (R4) The unrounded pair when the record carries it.
+            weight: match precise
+                .as_ref()
+                .and_then(|d| d.iter().find(|(p, _, _)| *p == e.position))
+            {
+                Some((_, score, mult)) => score * mult,
+                None => e.score * recorded_mult(e),
+            },
             pinned: e.required,
         })
         .collect();
@@ -214,6 +235,32 @@ fn recorded_mult(e: &c3_core::ledger::RoutingEligible) -> f64 {
         .unwrap_or(1.0)
 }
 
+/// (R4, F16-6) The draw's unrounded `(position, score, mult)` of the record's `ext.c3.draw`, when
+/// it carries them; `None` for a record without them (rounded values only).
+fn recorded_draw(routing: &PanelRouting) -> Option<Vec<(i64, f64, f64)>> {
+    let rows = routing
+        .extra
+        .get("ext")?
+        .get("c3")?
+        .get("draw")?
+        .as_array()?;
+    Some(
+        rows.iter()
+            .filter_map(|r| {
+                let mult = r
+                    .get("mult")
+                    .and_then(|v| v.as_f64())
+                    .filter(|m| m.is_finite() && *m > 0.0)?;
+                Some((
+                    r.get("position")?.as_i64()?,
+                    r.get("score")?.as_f64()?,
+                    mult,
+                ))
+            })
+            .collect(),
+    )
+}
+
 /// The lineage recorded for a seat's position (for the explored comparison).
 fn lineage_at(routing: &PanelRouting, position: i64) -> String {
     routing
@@ -315,6 +362,13 @@ pub fn run(collab_dir: &str, task: &str, nn: Option<i64>) -> i32 {
         println!("replay: no routed panel found");
         return 2;
     }
+    if !report.rounded.is_empty() {
+        let ns: Vec<String> = report.rounded.iter().map(|n| format!("n={n}")).collect();
+        println!(
+            "replay: note - {} replayed from scores and multipliers rounded to 4 decimals (the record carries no full-precision values: written by a build before 0.2.5, or exact at that precision); a near tie can replay to another winner",
+            ns.join(", ")
+        );
+    }
     match &report.first_diff {
         None => {
             println!("replay: identical");
@@ -325,5 +379,89 @@ pub fn run(collab_dir: &str, task: &str, nn: Option<i64>) -> i32 {
             println!("{diff}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::Digest;
+
+    /// A routed two-seat-pool record of size 1 whose rounded scores and multipliers are equal, with
+    /// the draw's unrounded values (`ext.c3.draw`) when `precise`; `picked` is the winner the
+    /// UNROUNDED weights give for `seed`.
+    fn record(seed: &[u8], precise: bool) -> PanelRouting {
+        let exact = [(1i64, 0.25004f64, 0.20004f64), (2, 0.24996, 0.19996)];
+        let cands: Vec<Candidate> = exact
+            .iter()
+            .map(|(p, s, m)| Candidate {
+                position: *p,
+                lab: format!("lab{p}"),
+                weight: s * m,
+                pinned: false,
+            })
+            .collect();
+        let seats = invoke_panel_draw(&cands, 1, seed, ROUTING_NEUTRAL, ROUTING_EXPLORE);
+        let seed_hex: String = seed.iter().map(|b| format!("{b:02x}")).collect();
+        let mut v = serde_json::json!({
+            "mode": "routed", "order": "routed", "fallback": "", "seed": seed_hex,
+            "nonce": "n", "nonce_source": "-PanelSeed", "size": 1, "size_asked": 1,
+            "size_source": "-PanelSize", "reserve": 0,
+            "eligible": exact.iter().map(|(p, _, _)| serde_json::json!({
+                "position": p, "lineage": format!("p{p} :: m{p}"), "lab": format!("lab{p}"),
+                "lab_source": "vendor", "score": 0.25, "basis": "rated", "ratings": 3.0,
+                "required": false, "budget_mult": 0.2,
+            })).collect::<Vec<_>>(),
+            "picked": seats.iter().map(|s| serde_json::json!({
+                "slot": s.slot, "position": s.position, "lineage": format!("p{0} :: m{0}", s.position),
+                "lab": format!("lab{}", s.position), "rule": s.rule, "budget_mult": 0.2,
+            })).collect::<Vec<_>>(),
+            "explored": [],
+            "required": [],
+        });
+        if precise {
+            v["ext"] = serde_json::json!({ "c3": { "draw": exact.iter().map(|(p, s, m)| serde_json::json!({
+                "position": p, "score": s, "mult": m,
+            })).collect::<Vec<_>>() } });
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
+    // (R4, F16-6) A near tie the rounded values cannot tell apart: the record with the draw's
+    // unrounded values replays identically; the same record without them (an older build's) can
+    // replay to the other winner, and the report says it was replayed from rounded values.
+    #[test]
+    fn a_near_tie_replays_from_full_precision() {
+        let mut found = None;
+        for i in 0u32..200_000 {
+            let seed = sha2::Sha256::digest(i.to_be_bytes()).to_vec();
+            let precise = record(&seed, true);
+            if precise.picked[0].rule.ends_with("-explore") {
+                continue;
+            }
+            if replay_record(&record(&seed, false)).is_some() {
+                found = Some(seed);
+                break;
+            }
+        }
+        let seed = found.expect("a seed whose rounded replay differs");
+        assert_eq!(replay_record(&record(&seed, true)), None);
+        assert!(replay_record(&record(&seed, false))
+            .unwrap()
+            .contains("seat 1 replayed as"));
+        // the report names a routed panel replayed from rounded values
+        let mk = |precise: bool| -> SessionsFile {
+            let routing = serde_json::to_value(record(&seed, precise)).unwrap();
+            serde_json::from_value(serde_json::json!({
+                "codex": { "consults": [ { "n": 7, "panel": { "id": "p1", "routing": routing } } ] }
+            }))
+            .unwrap()
+        };
+        let old = replay_sessions(&mk(false), None);
+        assert_eq!(old.rounded, vec![7]);
+        assert!(old.first_diff.is_some());
+        let new = replay_sessions(&mk(true), None);
+        assert!(new.rounded.is_empty());
+        assert!(new.identical());
     }
 }

@@ -4,9 +4,11 @@
 //! else.
 //!
 //! The section is "BRANCHES AND WORKTREES" (the last section of the template, taken from the
-//! embedded template itself, so it cannot drift from what `c3 init` writes). The file counts as one
-//! C3 wrote when it still carries the template's own title line; a file the user rewrote (no such
-//! line) is reported and never edited. The edit is the model repair's: a sibling temporary file,
+//! embedded template itself, so it cannot drift from what `c3 init` writes). (0.2.5 R4, F17-6) The
+//! file counts as one C3 wrote when it still carries the template's own title line - that line is
+//! the whole test, whatever the body says; a file without it is reported and never edited. The
+//! repair only ever APPENDS the missing section: no existing byte changes. The edit is the model
+//! repair's: a sibling temporary file,
 //! read back, the original re-read against the snapshot the edit was computed from, a rename over
 //! the original, links and hard links refused ([`crate::setup::repo_models::replace_file`]). The
 //! SessionStart hook does not do this, and nothing happens inside a C3 child (`C3_CHILD`).

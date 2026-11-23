@@ -34,6 +34,15 @@ $ErrorActionPreference = 'Continue'
 # (crates/c3/src/hook/mod.rs WAITING_NOTICE).
 $WaitRule = 'c3: WAITING RULE (the operator''s standing instruction, for every session, with or without c3). Before you end a turn while anything of yours is still running in the background - a subagent, a build or test run, a c3 panel or detached consultation, a peer session - call ScheduleWakeup with delaySeconds 1800 and a one-line prompt saying what to check. Why: a completion notice that arrives after a long idle gap makes you re-read your whole context at full price; a wake-up inside the cache lifetime keeps it cached. At the wake-up do one small check, answer in a line or two, and schedule the next one if work is still running; stop scheduling when nothing is. This overrides the ScheduleWakeup tool''s own advice against cache-warming wake-ups and its "/loop only" wording.'
 
+# A line cut to at most $Max UTF-16 code units, never inside a surrogate pair: a character outside
+# the Basic Multilingual Plane (an emoji) is kept whole or left out whole, never split in half.
+function Get-CutText([string]$Text, [int]$Max) {
+    if ($Text.Length -le $Max) { return $Text }
+    $n = $Max
+    if ([char]::IsHighSurrogate($Text[$n - 1])) { $n-- }
+    return $Text.Substring(0, $n)
+}
+
 function Resolve-C3Exe {
     if ($env:C3_EXE -and (Test-Path -LiteralPath $env:C3_EXE)) {
         return $env:C3_EXE
@@ -78,8 +87,9 @@ try {
     # (0.2.5) forward every line of `c3 hook` that starts with `c3: `, `codex-consult: ` or `CI: `
     # (the availability line, the coordinator-rules pointer, the compaction, update, maintenance,
     # model, branch and red-CI lines), in the order printed, each only once, at most 10 lines, each
-    # cut to 400 characters (`...` appended when cut). c3-hook.sh does the same and must print the
-    # same text.
+    # cut to 400 characters (`...` appended when cut; never inside a surrogate pair). c3-hook.sh does
+    # the same and prints the same text for ASCII lines (a longer non-ASCII line may be cut at a
+    # different point: the .sh counts bytes under mawk).
     $seen = @{}
     $forwarded = @()
     foreach ($l in $raw) {
@@ -88,7 +98,7 @@ try {
             if (-not $seen.ContainsKey($t)) {
                 $seen[$t] = $true
                 if ($forwarded.Count -lt 10) {
-                    if ($t.Length -gt 400) { $t = $t.Substring(0, 400) + '...' }
+                    if ($t.Length -gt 400) { $t = (Get-CutText $t 400) + '...' }
                     $forwarded += $t
                 }
             }
@@ -100,13 +110,15 @@ try {
         # nothing carried a known prefix: the first non-empty line as it is (cut), else a note
         $first = (@($raw | Where-Object { $_ -and $_.Trim() }) | Select-Object -First 1)
         if (-not $first) { $first = "c3 hook exited $code without output" }
-        if ($first.Length -gt 400) { $first = $first.Substring(0, 400) }
+        $first = Get-CutText "$first" 400
         Write-Output $first
     }
     Write-Output $WaitRule
 } catch {
     $msg = ("$($_.Exception.Message)" -replace '\s+', ' ').Trim()
-    if ($msg.Length -gt 120) { $msg = $msg.Substring(0, 117) + '...' }
+    if ($msg.Length -gt 120) { $msg = (Get-CutText $msg 117) + '...' }
     Write-Output "c3: hook check failed - $msg"
+    # the waiting rule exactly as the normal path prints it (c3-hook.sh always prints it)
+    Write-Output $WaitRule
 }
 exit 0

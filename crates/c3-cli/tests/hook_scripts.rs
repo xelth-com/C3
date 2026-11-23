@@ -3,7 +3,9 @@
 //! printed, each once, at most 10, each cut to 400 characters - and then print the waiting rule.
 //! A fake `c3` (named by `C3_EXE`) prints a prepared file; the scripts run as a plugin runs them:
 //! the `.ps1` under Windows PowerShell 5.1 (Windows only), the `.sh` under `sh` (skipped with a
-//! message where there is none). The two must print byte-identical text.
+//! message where there is none). The two print identical text for ASCII lines; a longer non-ASCII
+//! line may be cut at a different point (the `.sh` counts bytes under `mawk`, the `.ps1` UTF-16
+//! code units - never splitting a surrogate pair).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -143,7 +145,7 @@ fn the_scripts_forward_the_status_maintenance_branch_model_and_ci_lines() {
          some noise without a known prefix\n\
          c3 hook debug: not forwarded either\n\
          {long}\n\
-         CI: the latest run on main failed - Fix it (run 7)\n"
+         CI: the latest completed run on main failed (run 7) - gh run view 7\n"
     );
     let text = forwarded("set", &output);
     let lines = lines_before_rule(&text);
@@ -156,7 +158,7 @@ fn the_scripts_forward_the_status_maintenance_branch_model_and_ci_lines() {
             "c3: 2 branch(es) without a recorded state - c3 branches".to_string(),
             "c3: model settings refreshed in this repository - .claude/agents/a.md claude-opus-4-8 -> opus (left uncommitted)".to_string(),
             cut,
-            "CI: the latest run on main failed - Fix it (run 7)".to_string(),
+            "CI: the latest completed run on main failed (run 7) - gh run view 7".to_string(),
         ],
         "{text}"
     );
@@ -187,5 +189,75 @@ fn the_scripts_keep_their_fallbacks() {
         lines_before_rule(&text),
         vec!["error: something odd".to_string()],
         "{text}"
+    );
+}
+
+/// The `.ps1` under Windows PowerShell 5.1 with a fake `c3` that is itself a PowerShell script
+/// (`body`): the hook script runs it in-process, so its strings reach the hook as .NET strings (an
+/// emoji stays one surrogate pair) and a `throw` in it is an exception inside the hook's `try`.
+/// `None` off Windows.
+fn run_ps1_script(name: &str, body: &str) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let dir = scratch_dir(name);
+    let fake = dir.join("fake-c3.ps1");
+    std::fs::write(&fake, body).unwrap();
+    let o = Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(hooks_dir().join("c3-hook.ps1"))
+        .env("C3_EXE", &fake)
+        .env_remove("CLAUDE_PLUGIN_ROOT")
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn powershell");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(o.status.success(), "the hook script must exit 0");
+    Some(String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"))
+}
+
+// (R4, F16-10 / F17-9) The `.ps1` cuts a long line before a surrogate pair it would split - on the
+// forwarded path (then `...`) and on the no-prefix fallback - so no half character is printed.
+#[test]
+fn the_ps1_never_cuts_inside_a_surrogate_pair() {
+    // an emoji at UTF-16 units 399-400: a cut at 400 would keep its high half
+    let Some(text) = run_ps1_script(
+        "surrogate",
+        "$e = [char]::ConvertFromUtf32(0x1F600)\r\nWrite-Output ('c3: ' + ('x' * 395) + $e + 'tail')\r\n",
+    ) else {
+        eprintln!("skipped: the .ps1 runs on Windows only");
+        return;
+    };
+    assert_eq!(
+        lines_before_rule(&text),
+        vec![format!("c3: {}...", "x".repeat(395))],
+        "{text}"
+    );
+    let text = run_ps1_script(
+        "surrogate-first",
+        "$e = [char]::ConvertFromUtf32(0x1F600)\r\nWrite-Output (('y' * 399) + $e + 'z')\r\n",
+    )
+    .unwrap();
+    assert_eq!(lines_before_rule(&text), vec!["y".repeat(399)], "{text}");
+}
+
+// (R4, F17-9) An exception inside the `.ps1` still ends with the waiting rule, exactly as the normal
+// path prints it (the `.sh` always prints it).
+#[test]
+fn the_ps1_catch_path_prints_the_waiting_rule() {
+    let Some(text) = run_ps1_script("catch", "throw 'boom from the fake c3'\r\n") else {
+        eprintln!("skipped: the .ps1 runs on Windows only");
+        return;
+    };
+    assert_eq!(
+        lines_before_rule(&text),
+        vec!["c3: hook check failed - boom from the fake c3".to_string()],
+        "{text}"
+    );
+    let normal = forwarded("catch-normal", "c3: fine\n");
+    assert_eq!(
+        text.lines().last(),
+        normal.lines().last(),
+        "the catch path's rule differs from the normal path's"
     );
 }

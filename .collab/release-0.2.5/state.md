@@ -397,3 +397,32 @@ swap -> xelth.com/C3 page after the tag.
   agy half of the own-patch item; an end-to-end http run (`--base-url` must be https).
   Verifying R3 + R5 together on main (fmt, clippy clean; lib tests running), then one commit with
   the ci.yml timeouts.
+- 2026-11-23 05:25 CET: R3 + R5 + the ci.yml job timeouts committed as 5d92ca7, pushed, CI run
+  45105895566 watched (40-minute cap). Verified locally on the combined tree: fmt, clippy; c3-core
+  all green; c3 lib 816 of 817 (the one failure is the 5-second timing test
+  `consult::ingest::tests::normalise_is_linear_on_a_large_reply`, 9.7 s on the loaded machine,
+  1.5 s alone - debt: a wall-clock assertion); c3-cli mcp_integration 2, telemetry_parity 11,
+  kimi_engine 20, claude_engine 18. NOT verified locally: c3-cli `maintain` (a real grok.exe of
+  another session runs here; the run was also cut by its time limit: 24 passed, 1 failed, 13 not
+  reached) - left to CI. Their 31 findings set to `implemented`. R5's worktree removed; R3's is
+  locked by the harness - `parked`. Still running: wave R4. Then S1.
+  Open findings left `proposed`: only R4's (F16-2..4, F16-6..10, F17-1..4, F17-6..10).
+- 2026-11-23 05:45 CET: CI for 5d92ca7 (R3 + R5) GREEN on all three jobs (run 45105895566, Windows
+  18 min 25 s) - `maintain` included, which could not be verified locally.
+- 2026-11-23 ~05:50 CET, wave R4 reported (10 items) and APPLIED to main (`patches/r4.patch`, the
+  only conflict CHANGELOG.md, both sides kept): the CI line is `CI: the latest completed run on
+  <branch> failed (run <id>) - gh run view <id>` with no title, pull-request runs ignored,
+  `--json` `ci` is an object; R2's `ScanChildren` / `run_registered` moved to a shared module
+  `bounded.rs`, one deadline covers every git and gh process of the check and `stop` kills the
+  whole process tree (for the branch line too); `remote_default_branch` (origin/HEAD without a
+  local branch), runs ordered by parsed time, 20 runs; a GitHub remote by its host; one gate file
+  per repository; `router explain` uses the draw's own eligibility (it now runs the member
+  election, so it does the login / preflight checks), the routed record carries
+  `ext.c3.draw` at full precision when rounding lost something; labs for minimax / meta-llama /
+  llama, prefixes at a boundary; a missed upper-tier seat is a warning; the .ps1 never cuts a
+  surrogate pair and its catch path prints the waiting rule; wording for the delegation rule.
+  Verification on main (R1-R5 all applied): fmt, clippy clean; c3-core 251, c3 lib 828, every
+  other c3 test binary green; c3-cli ci_check 10, hook_scripts 5, delegation_rule 6, finish 8,
+  panel_light_required 2, branches, init_doctor, update, wave9_consilium, notspooled_parity,
+  wave6_live_diffs green; the remaining binaries were still running locally at commit time - CI
+  runs them all.

@@ -38,10 +38,8 @@
 //! most [`PATCH_CHECK_CAP`] of them.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::sync::{Arc, Mutex};
+use std::process::{Command, Output};
 
 /// The prefix that starts C3's record line.
 pub const RECORD_PREFIX: &str = "c3: ";
@@ -231,133 +229,11 @@ pub fn description_with_record(existing: Option<&str>, record: &BranchRecord) ->
 // git plumbing
 // ---------------------------------------------------------------------------------------------
 
+pub(crate) use crate::bounded::run_registered;
 /// (0.2.5 R2, F13-5) The git children of ONE deadline-bound scan - the SessionStart hook's branch
-/// line. While a thread is bound to a set ([`with_scan_children`]), every git process this module
-/// starts on that thread ([`run_registered`]) is registered in it for as long as it runs;
-/// [`ScanChildren::stop`] - the hook's deadline - kills the running ones and refuses every later
-/// start, so no git child of the scan outlives `c3 hook`. A thread bound to no set (every other
-/// caller) runs git exactly as `Command::output` does.
-#[derive(Default)]
-pub struct ScanChildren {
-    inner: Mutex<ScanChildrenInner>,
-}
-
-#[derive(Default)]
-struct ScanChildrenInner {
-    stopped: bool,
-    next_id: u64,
-    running: Vec<(u64, std::process::Child)>,
-    /// (tests) The pid of every child ever started through this set.
-    #[cfg(test)]
-    started: Vec<u32>,
-}
-
-impl ScanChildren {
-    fn lock(&self) -> std::sync::MutexGuard<'_, ScanChildrenInner> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    /// Kill every registered child that still runs (and reap it), and refuse every later start.
-    pub fn stop(&self) {
-        let mut g = self.lock();
-        g.stopped = true;
-        for (_, mut child) in g.running.drain(..) {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-
-    /// (tests) The pids of the children running now.
-    #[cfg(test)]
-    pub(crate) fn running_pids(&self) -> Vec<u32> {
-        self.lock().running.iter().map(|(_, c)| c.id()).collect()
-    }
-
-    /// (tests) The pid of every child ever started through this set.
-    #[cfg(test)]
-    pub(crate) fn started_pids(&self) -> Vec<u32> {
-        self.lock().started.clone()
-    }
-}
-
-thread_local! {
-    /// The [`ScanChildren`] this thread's git children are registered in, if any.
-    static SCAN_CHILDREN: std::cell::RefCell<Option<Arc<ScanChildren>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Run `f` on this thread with `set` bound: every git child this module starts meanwhile is
-/// registered in it (and stopped with it).
-pub fn with_scan_children<T>(set: Arc<ScanChildren>, f: impl FnOnce() -> T) -> T {
-    SCAN_CHILDREN.with(|s| *s.borrow_mut() = Some(set));
-    let out = f();
-    SCAN_CHILDREN.with(|s| *s.borrow_mut() = None);
-    out
-}
-
-/// The error of a start refused, or a child killed, by [`ScanChildren::stop`].
-fn stopped_error() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::TimedOut,
-        "stopped by the scan's deadline",
-    )
-}
-
-/// Run `cmd` to its end and collect its output, as `Command::output` does - registered in this
-/// thread's [`ScanChildren`] when one is bound: then stdin is null, stdout and stderr are read from
-/// pipes, and a stop kills the child (`Err`); a start after a stop is refused (`Err`, nothing is
-/// started).
-pub(crate) fn run_registered(mut cmd: Command) -> std::io::Result<Output> {
-    let Some(set) = SCAN_CHILDREN.with(|s| s.borrow().clone()) else {
-        return cmd.output();
-    };
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let (id, out_pipe, err_pipe) = {
-        let mut g = set.lock();
-        if g.stopped {
-            return Err(stopped_error());
-        }
-        // started under the lock: a stop either sees this child or this start sees the stop
-        let mut child = cmd.spawn()?;
-        let out = child.stdout.take();
-        let err = child.stderr.take();
-        g.next_id += 1;
-        let id = g.next_id;
-        #[cfg(test)]
-        g.started.push(child.id());
-        g.running.push((id, child));
-        (id, out, err)
-    };
-    // stderr on a helper thread, stdout here: both end when the child exits or is killed
-    let err_reader = err_pipe.map(|mut e| {
-        std::thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = e.read_to_end(&mut b);
-            b
-        })
-    });
-    let mut stdout = Vec::new();
-    if let Some(mut o) = out_pipe {
-        let _ = o.read_to_end(&mut stdout);
-    }
-    let stderr = err_reader.and_then(|h| h.join().ok()).unwrap_or_default();
-    let child = {
-        let mut g = set.lock();
-        let pos = g.running.iter().position(|(i, _)| *i == id);
-        pos.map(|p| g.running.swap_remove(p).1)
-    };
-    match child {
-        Some(mut c) => Ok(Output {
-            status: c.wait()?,
-            stdout,
-            stderr,
-        }),
-        // the stop took it, killed and reaped it
-        None => Err(stopped_error()),
-    }
-}
+/// line - are registered and stopped by the shared mechanism of [`crate::bounded`] (R4: the red-CI
+/// check uses it too): every git call of this module goes through [`run_registered`].
+pub use crate::bounded::{with_scan_children, ScanChildren};
 
 /// A git command in `repo` that never takes an optional lock (`GIT_OPTIONAL_LOCKS=0`: `git status`
 /// does not refresh or lock the index; a config write still takes its own required lock).
@@ -432,6 +308,21 @@ pub fn check_branch_name(repo: &Path, name: &str) -> Result<(), String> {
 /// to, `init.defaultBranch`, `main`, `master`. `Err` (the reason, with how to set it) when none
 /// applies: the invoking checkout's branch is never taken for the default.
 pub fn default_branch(repo: &Path) -> Result<String, String> {
+    resolve_default_branch(repo, true)
+}
+
+/// (0.2.5 R4, F16-4 / F17-7) The default branch as the REMOTE names it, for the red-CI check (which
+/// asks GitHub about it, not about a local branch): [`default_branch`]'s order, except that the
+/// branch `origin/HEAD` points to is taken even when it has no local counterpart (a clone whose
+/// default `develop` exists only as `origin/develop` asks about `develop`, never about a local
+/// `main`). `Err` when nothing names a default.
+pub fn remote_default_branch(repo: &Path) -> Result<String, String> {
+    resolve_default_branch(repo, false)
+}
+
+/// [`default_branch`] (`origin_needs_local`: `origin/HEAD` counts only with a local branch of that
+/// name) and [`remote_default_branch`] (it counts as it is).
+fn resolve_default_branch(repo: &Path, origin_needs_local: bool) -> Result<String, String> {
     if let Some(v) = git_out(repo, &["config", "--local", "--get", DEFAULT_BRANCH_KEY]) {
         let v = v.trim();
         if !v.is_empty() {
@@ -449,7 +340,7 @@ pub fn default_branch(repo: &Path) -> Result<String, String> {
         &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
     ) {
         if let Some(name) = s.trim().strip_prefix("refs/remotes/origin/") {
-            if branch_exists(repo, name) {
+            if (!origin_needs_local && !name.is_empty()) || branch_exists(repo, name) {
                 return Ok(name.to_string());
             }
         }
@@ -1966,82 +1857,6 @@ mod tests {
             assert_eq!(b.patches_on_default, None);
             assert_eq!(b.ahead, None);
         }
-    }
-
-    /// A child that sleeps for 30 s (a cross-platform sleeper, as the liveness tests use).
-    fn sleeper() -> Command {
-        if cfg!(windows) {
-            let mut c = Command::new("ping");
-            c.args(["-n", "30", "127.0.0.1"]);
-            c
-        } else {
-            let mut c = Command::new("sleep");
-            c.arg("30");
-            c
-        }
-    }
-
-    // (R2, F13-5) A stopped scan kills the child it is running (no process outlives the stop) and
-    // refuses every later start; a thread bound to no set runs its command plainly.
-    #[test]
-    fn a_stopped_scan_kills_its_running_child_and_starts_no_other() {
-        let set = Arc::new(ScanChildren::default());
-        let bound = Arc::clone(&set);
-        let worker =
-            std::thread::spawn(move || with_scan_children(bound, || run_registered(sleeper())));
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        let pid = loop {
-            if let Some(p) = set.running_pids().first() {
-                break *p;
-            }
-            assert!(
-                std::time::Instant::now() < until,
-                "the sleeper never started"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        };
-        let t = std::time::Instant::now();
-        set.stop();
-        let r = worker.join().unwrap();
-        assert!(r.is_err(), "a stopped child is an error: {r:?}");
-        assert!(
-            t.elapsed() < std::time::Duration::from_secs(10),
-            "{:?}",
-            t.elapsed()
-        );
-        assert!(
-            crate::liveness::proc::process_start_iso(pid).is_none(),
-            "the scan's child {pid} outlived the stop"
-        );
-        assert!(set.running_pids().is_empty());
-        // a later start is refused: nothing is started
-        let bound = Arc::clone(&set);
-        let r = std::thread::spawn(move || {
-            with_scan_children(bound, || {
-                let mut g = Command::new("git");
-                g.arg("--version");
-                run_registered(g)
-            })
-        })
-        .join()
-        .unwrap();
-        assert!(r.is_err());
-        assert_eq!(set.started_pids(), vec![pid]);
-        // unbound: as Command::output
-        let mut g = Command::new("git");
-        g.arg("--version");
-        assert!(run_registered(g).unwrap().status.success());
-        // bound and not stopped: the output is collected as Command::output collects it
-        let fresh = Arc::new(ScanChildren::default());
-        let out = with_scan_children(Arc::clone(&fresh), || {
-            let mut g = Command::new("git");
-            g.arg("--version");
-            run_registered(g)
-        })
-        .unwrap();
-        assert!(out.status.success());
-        assert!(String::from_utf8_lossy(&out.stdout).starts_with("git version"));
-        assert!(fresh.running_pids().is_empty());
     }
 
     fn sample() -> BranchReport {

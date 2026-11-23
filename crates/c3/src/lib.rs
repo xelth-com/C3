@@ -52,6 +52,8 @@ pub mod finish;
 
 pub mod ci_check;
 
+pub mod bounded;
+
 pub mod setup;
 
 pub mod budget;
