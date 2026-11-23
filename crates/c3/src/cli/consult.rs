@@ -198,6 +198,11 @@ pub struct ConsultArgs {
     /// passed by hand.
     #[arg(long, default_value = "", hide = true)]
     pub panel_spec: String,
+    /// INTERNAL: a file that holds the member spec (the value `--panel-spec` takes). A panel run
+    /// hands the spec over this way: with the prior findings as shown it does not fit on a command
+    /// line (Windows: 32 767 characters, os error 206). Never passed by hand.
+    #[arg(long, default_value = "", hide = true)]
+    pub panel_spec_file: String,
     /// Run the consultation in a background process and return at once (R12).
     #[arg(long)]
     pub detach: bool,
@@ -318,7 +323,7 @@ pub fn run(args: ConsultArgs) -> i32 {
         role: args.role,
         roles: args.roles,
         topic: args.topic,
-        panel_spec: args.panel_spec,
+        panel_spec: member_spec_arg(&args.panel_spec, &args.panel_spec_file),
         detach: args.detach,
         status: args.status,
         id: args.id,
@@ -334,4 +339,58 @@ pub fn run(args: ConsultArgs) -> i32 {
         brief_prefix: args.brief_prefix,
     };
     crate::consult::run(opts)
+}
+
+/// The member spec a panel run handed this process: the `--panel-spec` value, or the contents of
+/// `--panel-spec-file`. A file that cannot be read (or is empty) yields a value
+/// `MemberSpec::from_wire` refuses, so the member ends with the usual "-PanelSpec ... could not be
+/// read" refusal instead of running as a single consultation.
+fn member_spec_arg(inline: &str, file: &str) -> String {
+    if file.is_empty() {
+        return inline.to_string();
+    }
+    match std::fs::read_to_string(file) {
+        Ok(text) if !text.trim().is_empty() => text.trim().to_string(),
+        Ok(_) => "!the member spec file is empty".to_string(),
+        Err(e) => format!(
+            "!the member spec file could not be read: {}",
+            c3_core::one_line(&e.to_string())
+        ),
+    }
+}
+
+#[cfg(test)]
+mod member_spec_arg_tests {
+    use super::member_spec_arg;
+
+    /// (0.2.5) The member spec travels in a file; a large one comes back byte for byte, and a
+    /// missing or empty file is never taken for "no spec" (which would run a single consultation).
+    #[test]
+    fn the_member_spec_is_read_from_its_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-spec-arg-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = "QUJD".repeat(60_000); // 240 000 characters: far past a command line
+        let file = dir.join("member.spec");
+        std::fs::write(&file, format!("{big}\n")).unwrap();
+        assert_eq!(member_spec_arg("", &file.to_string_lossy()), big);
+        // the file wins over an inline value; without a file the inline value is used
+        assert_eq!(member_spec_arg("inline", &file.to_string_lossy()), big);
+        assert_eq!(member_spec_arg("inline", ""), "inline");
+        assert_eq!(member_spec_arg("", ""), "");
+        // an empty or missing file is a spec that cannot be read, never an absent one
+        std::fs::write(&file, "  \n").unwrap();
+        assert!(member_spec_arg("", &file.to_string_lossy()).starts_with('!'));
+        let missing = dir.join("none.spec");
+        let got = member_spec_arg("", &missing.to_string_lossy());
+        assert!(got.starts_with('!'), "{got}");
+        assert!(crate::panel::member::MemberSpec::from_wire(&got).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -2130,7 +2130,8 @@ struct MemberStart<'a> {
     listed: &'a [super::member::ListedFinding],
 }
 
-/// Launch one member as a child `c3 consult --task <t> --panel-spec <b64>` process.
+/// Launch one member as a child `c3 consult --task <t> --panel-spec-file <file>` process (the file
+/// holds the base64 spec).
 fn start_member(slots: &mut [Slot], m: &MemberStart) {
     let &MemberStart {
         i,
@@ -2171,12 +2172,25 @@ fn start_member(slots: &mut [Slot], m: &MemberStart) {
             return;
         }
     };
+    // The spec goes over a file in the panel's own temp directory, not the command line: with the
+    // prior findings as shown it outgrows one on a task with many open findings (Windows: 32 767
+    // characters, "os error 206" - seen live with 114 findings; Linux: 128 KiB per argument).
+    let spec_path = panel_tmp.join(format!("member-{:02}-{i}.spec", slots[i].nn));
+    if let Err(e) = std::fs::write(&spec_path, &wire) {
+        slots[i].state = SlotState::FailedStart;
+        slots[i].start_error = format!(
+            "could not write the member spec file under {}: {}",
+            panel_tmp.display(),
+            c3_core::one_line(&e.to_string())
+        );
+        return;
+    }
     let mut cmd = Command::new(&exe);
     cmd.arg("consult")
         .arg("--task")
         .arg(&o.task)
-        .arg("--panel-spec")
-        .arg(&wire)
+        .arg("--panel-spec-file")
+        .arg(&spec_path)
         .current_dir(&b.caller_cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::from(out))

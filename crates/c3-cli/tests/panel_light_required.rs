@@ -307,3 +307,56 @@ fn a_dry_run_panel_seats_one_entry_per_lab_and_the_upper_tier() {
     assert!(!stdout.contains("not picked"), "{stdout}");
     let _ = std::fs::remove_dir_all(&f.work);
 }
+
+/// (0.2.5) A panel on a task with many open findings starts its members. The member spec carries
+/// the findings as shown and travels in a file: on the command line it failed with "os error 206"
+/// (the file name or extension is too long) once a task had about a hundred open findings.
+#[test]
+fn a_panel_with_many_open_findings_starts_its_members() {
+    let f = fixture("panel-many-findings", ROSTER_ONE_LAB);
+    let long = "a claim long enough to matter ".repeat(12);
+    let findings: Vec<serde_json::Value> = (1..=160)
+        .map(|k| {
+            serde_json::json!({
+                "id": format!("F01-{k}"), "status": "implemented", "severity": "major",
+                "locations": [{"path": "app.txt", "line": 1}],
+                "claim": long, "trigger": long, "evidence": [], "verification": long,
+                "remedy": long
+            })
+        })
+        .collect();
+    std::fs::write(
+        f.repo.join(".collab").join("t").join("findings.json"),
+        serde_json::json!({"task_id": "t", "findings": findings, "ratings": []}).to_string(),
+    )
+    .unwrap();
+    let out = f.run(&[
+        "consult",
+        "--task",
+        "t",
+        "--panel-all",
+        "--prompt",
+        "x",
+        "--purpose",
+        "framing",
+        "--dry-run",
+    ]);
+    let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stdout:{}{stdout}{}stderr:{}{stderr}",
+        "\n",
+        "\n",
+        "\n"
+    );
+    assert!(
+        !stdout.contains("could not start the member process"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("160 open finding(s) listed in the prompt"),
+        "every member printed its own dry run with the findings: {stdout}"
+    );
+}

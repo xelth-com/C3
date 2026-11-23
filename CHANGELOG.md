@@ -541,7 +541,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   of its prior report use that record, so a sibling (or another process) changing a listed finding
   mid-panel can no longer erase or create a blocker the member never saw in that form, and an id
   that was not in the member's list is not accepted as a prior report. Its checks still merge into
-  the current store under the task lock.
+  the current store under the task lock. The spec travels to the member in a file in the panel's own
+  temp directory (`--panel-spec-file`), not on the command line: with the findings' text in it, a
+  task with about a hundred open findings could not start a single member (Windows: "os error 206",
+  the command line limit of 32 767 characters).
 - **The smoke counts as a proof only when it is one (F11-7, F10-5).** A codex smoke whose consult
   recorded no thread id, a turn missing from the ledger, a seat that opts into sub-agents, and a
   rollout that cannot be found, read or identified are now "unproven", not a pass: an automatic

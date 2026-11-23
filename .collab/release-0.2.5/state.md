@@ -426,3 +426,33 @@ swap -> xelth.com/C3 page after the tag.
   panel_light_required 2, branches, init_doctor, update, wave9_consilium, notspooled_parity,
   wave6_live_diffs green; the remaining binaries were still running locally at commit time - CI
   runs them all.
+- 2026-11-23 05:56 CET: R4 committed as 748ba3a, pushed, CI run 45108728499 watched. Its 17
+  findings set to `implemented`. The store now: 118 findings - 114 implemented, 3 wontfix (decided
+  boundaries F13-9, F15-4, F16-5), 1 rejected (F10-6), 0 proposed. R4's worktree removed. Local
+  runs on main with R1-R5: wave6_live_diffs, snapshot_partb, compat_wave5 green as well.
+- 2026-11-23 ~06:00 CET: wave S1 launched from 748ba3a (opus-worker, worktree
+  `agent-a8d34992991e2e59f`, brief `briefs/S1-standalone-c3-folder.md`). After it lands the
+  coordinator migrates this repository's own `.eck/` with the new binary.
+  Verification round prepared meanwhile: three delta briefs being written (handoffs 21-23: fix
+  commits 99e2da7, 5d92ca7, 748ba3a), to run with `scratchpad/bin/c3-review2.exe` (built from the
+  tree that became 748ba3a; reports `5d92ca7-dirty`) as `--rev 748ba3a --diff <range>`: with the
+  revision equal to the live HEAD the prior findings ARE offered, so the reviewers' `fixed` marks
+  land in the store. Planned seats: V1 Sol + Muse contributor + Grok; V2 kimi-claude + Grok +
+  Muse contributor; V3 Grok + GLM-5.3. A fourth part for S1 after it is committed.
+  New debts to write into TECH_DEBT after S1: the maintain tests' in-use probe reads the real
+  process table (a real grok.exe fails them); `normalise_is_linear_on_a_large_reply` is a
+  wall-clock assertion; the intermittent Windows CI hang / cancellation (split the test step per
+  crate); the bound-input rule covers agy only; no panel test for a re-seat after a staging
+  refusal; agy's Cascade reader names unconfirmed; the hook's 3 s CI budget under load; no
+  end-to-end http test under `--rev`; `git >= 2.30` for `--end-of-options`.
+- 2026-11-23 ~06:35 CET: the verification briefs are written (handoffs 21-23). The dry run of V1
+  found a REGRESSION from wave R1: no panel member could start (`could not start the member
+  process - os error 206`, the command line limit) because the member spec now carries the text
+  of every listed finding and went on the command line as `--panel-spec <base64>`; with this
+  task's 114 open findings it is far past 32 767 characters. No test had more than a few findings.
+  Fixed by the coordinator: the parent writes the spec to `member-<nn>-<i>.spec` in the panel's
+  temp directory and passes `--panel-spec-file`; `cli/consult.rs` reads it into the same option
+  (a missing or empty file is an unreadable spec, never an absent one). Tests: unit
+  `member_spec_arg_tests::the_member_spec_is_read_from_its_file`, integration
+  `panel_light_required::a_panel_with_many_open_findings_starts_its_members` (160 findings); the
+  live dry run with 114 findings now plans all three members. clippy clean, panel unit tests 62.
