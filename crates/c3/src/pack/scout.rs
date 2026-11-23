@@ -2,11 +2,11 @@
 //!
 //! * [`run_scout`] takes a snapshot of ANOTHER directory (it may be outside this repo; a
 //!   path INSIDE this repo is refused) at a chosen depth, writing it to
-//!   `.eck/scouts/scout_tree_<dirname>_<ts>.md` with a header that says how to fetch more.
+//!   `.c3/scouts/scout_tree_<dirname>_<ts>.md` with a header that says how to fetch more.
 //!   It reuses [`crate::pack::snapshot::run`] as the writer, then prepends the header.
 //! * [`run_fetch`] writes the full contents of the files of THIS repository that match the
-//!   given globs to `.eck/scouts/scout_data_<ts>.md`, through the same discovery (gitignore,
-//!   `.eckignore`, the hard-ignore and never-commit filters) and the same redactor the
+//!   given globs to `.c3/scouts/scout_data_<ts>.md`, through the same discovery (gitignore,
+//!   `.c3ignore`, the hard-ignore and never-commit filters) and the same redactor the
 //!   snapshot uses.
 
 use std::path::{Path, PathBuf};
@@ -52,6 +52,8 @@ fn safe_name(dir: &Path) -> String {
 pub struct ScoutOpts {
     /// This repository (where the scout file is written).
     pub repo_root: PathBuf,
+    /// C3's project folder the scout file goes into (`<repo>/.c3`, made sure of by the caller).
+    pub state_dir: PathBuf,
     /// The directory to scout (external; refused if inside `repo_root`).
     pub target: PathBuf,
     /// Depth 0-9 (0 = tree only, 5 = skeleton, 9 = full source).
@@ -85,12 +87,11 @@ pub fn run_scout(opts: &ScoutOpts) -> Result<PathBuf, String> {
     let name = safe_name(&opts.target);
     let ts = timestamp();
     let out = opts
-        .repo_root
-        .join(".eck")
+        .state_dir
         .join("scouts")
         .join(format!("scout_tree_{name}_{ts}.md"));
 
-    // A disposable collab root so the external snapshot's anchor/sequence state is never
+    // A disposable collab root and state folder so the external snapshot's anchor/sequence state is never
     // written into the scouted directory or this repository.
     let tmp_collab = std::env::temp_dir().join(format!(
         "c3-scout-{}-{}",
@@ -104,6 +105,7 @@ pub fn run_scout(opts: &ScoutOpts) -> Result<PathBuf, String> {
     let snap_opts = SnapshotOpts {
         repo_root: opts.target.clone(),
         collab_root: tmp_collab.clone(),
+        state_dir: tmp_collab.clone(),
         out: Some(out.clone()),
         delta: false,
         depth: opts.depth,
@@ -112,7 +114,7 @@ pub fn run_scout(opts: &ScoutOpts) -> Result<PathBuf, String> {
         tree: true,
         max_file_size: MAX_FILE_SIZE,
         fail: false,
-        eck: false,
+        state: false,
         keep: 0,
         embed_report: None,
         base: None,
@@ -148,8 +150,10 @@ To see more:\n\
 /// Options for [`run_fetch`].
 #[derive(Debug, Clone)]
 pub struct FetchOpts {
-    /// This repository (both the source of files and where the data file is written).
+    /// This repository (the source of files).
     pub repo_root: PathBuf,
+    /// C3's project folder the data file goes into (`<repo>/.c3`, made sure of by the caller).
+    pub state_dir: PathBuf,
     /// Repo-relative globs selecting the files to include (POSIX `/`).
     pub globs: Vec<String>,
 }
@@ -163,7 +167,7 @@ pub struct FetchResult {
 }
 
 /// Run `c3 fetch`. Writes the full, redacted contents of matching files of THIS repository
-/// into `.eck/scouts/scout_data_<ts>.md`.
+/// into `.c3/scouts/scout_data_<ts>.md`.
 pub fn run_fetch(opts: &FetchOpts) -> Result<FetchResult, String> {
     if opts.globs.is_empty() {
         return Err("c3 fetch needs at least one glob".to_string());
@@ -174,7 +178,7 @@ pub fn run_fetch(opts: &FetchOpts) -> Result<FetchResult, String> {
             max_file_size: MAX_FILE_SIZE,
             include_binary: false,
             never_commit: true,
-            eck_hidden: false,
+            handoff_hidden: false,
         },
     );
     let filter = ProfileFilter::new(&Resolved {
@@ -201,8 +205,7 @@ pub fn run_fetch(opts: &FetchOpts) -> Result<FetchResult, String> {
 
     let ts = timestamp();
     let out = opts
-        .repo_root
-        .join(".eck")
+        .state_dir
         .join("scouts")
         .join(format!("scout_data_{ts}.md"));
     if let Some(parent) = out.parent() {
@@ -251,6 +254,7 @@ mod tests {
         fs::create_dir_all(&sub).unwrap();
         let err = run_scout(&ScoutOpts {
             repo_root: repo.clone(),
+            state_dir: repo.join(".c3"),
             target: sub,
             depth: 0,
         })
@@ -259,6 +263,7 @@ mod tests {
         // The repo itself is also refused.
         let err2 = run_scout(&ScoutOpts {
             repo_root: repo.clone(),
+            state_dir: repo.join(".c3"),
             target: repo.clone(),
             depth: 0,
         })
@@ -291,6 +296,7 @@ mod tests {
 
         let r = run_fetch(&FetchOpts {
             repo_root: repo.clone(),
+            state_dir: repo.join(".c3"),
             globs: vec!["src/*.rs".to_string()],
         })
         .unwrap();
@@ -313,6 +319,7 @@ mod tests {
         let repo = scratch("fetch-empty");
         let err = run_fetch(&FetchOpts {
             repo_root: repo.clone(),
+            state_dir: repo.join(".c3"),
             globs: vec![],
         })
         .unwrap_err();

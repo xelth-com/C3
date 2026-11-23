@@ -64,7 +64,7 @@ fn fixture_repo(name: &str) -> PathBuf {
     git(&d, &["config", "user.email", "t@example.com"]);
     git(&d, &["config", "user.name", "Test"]);
     git(&d, &["config", "commit.gpgsign", "false"]);
-    std::fs::write(d.join(".gitignore"), ".eck/\n").unwrap();
+    std::fs::write(d.join(".gitignore"), ".c3/\n").unwrap();
     commit_file(&d, "README.md", "# scratch\n", "init");
 
     git(&d, &["checkout", "-q", "-b", "merged-b"]);
@@ -270,8 +270,8 @@ fn listing_set_and_clear() {
 
 /// Make `repo` an otherwise-clean C3 workspace for `c3 doctor`.
 fn make_doctor_clean(repo: &Path) {
-    std::fs::create_dir_all(repo.join(".eck")).unwrap();
-    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
+    std::fs::create_dir_all(repo.join(".c3")).unwrap();
+    std::fs::write(repo.join(".c3/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
     std::fs::write(
         repo.join(".mcp.json"),
         "{\"mcpServers\":{\"c3\":{\"command\":\"/abs/c3\",\"args\":[\"mcp\"]}}}",

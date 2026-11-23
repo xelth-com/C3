@@ -157,8 +157,10 @@ partial kept, and turns the reviewer's sub-agents off.
   model; the index feeds the periphery when present, else a lexical neighbourhood.
 - `c3 explain --claim "<c>" [--focus <glob>] [--audience <who>] --yes` — an explainer pack for
   one claim. **It leaves the machine only after you confirm** (`--yes` skips the prompt).
-- `c3 snapshot [--delta] [--depth 0-9] [--budget <n>] [--focus <glob>]` — a repository snapshot,
-  optionally a git delta since the last full snapshot's anchor.
+- `c3 snapshot [--delta] [--depth 0-9] [--budget <n>] [--focus <glob>] [--state]` — a repository
+  snapshot, optionally a git delta since the last full snapshot's anchor (kept in `.c3/anchor`);
+  `--state` writes the hand-off snapshot into `.c3/snapshots/` for a web reviewer that has no
+  bridge (`c3 finish` writes none unless given `--snapshot`).
 - `c3 index build|rebuild|query|stats` — the local code index (embedded SurrealDB, per project; opt-in: `cargo install --features index-surreal`, else it reports `none`).
   Never required for a consultation; `query` is BM25 + reciprocal-rank with a bounded 1-hop
   expansion.

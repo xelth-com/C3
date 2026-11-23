@@ -14,17 +14,21 @@ pub struct FinishArgs {
     /// The commit message (verbatim; the coordinator adds its own trailers).
     #[arg(long, allow_hyphen_values = true)]
     pub message: String,
-    /// The agent report written to AnswerToSA.md and the journal.
+    /// The agent report written to `.c3/last-report.md` and the journal.
     #[arg(long, allow_hyphen_values = true)]
     pub status: Option<String>,
     /// Read the agent report from a file instead of `--status`.
     #[arg(long)]
     pub status_file: Option<String>,
-    /// How many snapshots to keep in `.eck/snapshots/`.
+    /// How many snapshots to keep in `.c3/snapshots/` (with `--snapshot`).
     #[arg(long, default_value_t = 10)]
     pub keep: usize,
-    /// Skip the hand-off snapshot.
+    /// Also write the hand-off snapshot into `.c3/snapshots/` (and `.c3/lastsnapshot/`) - for a
+    /// web reviewer that has no bridge. Off by default.
     #[arg(long)]
+    pub snapshot: bool,
+    /// Accepted for older callers; does nothing (no snapshot is the default).
+    #[arg(long, hide = true)]
     pub no_snapshot: bool,
     /// Commit even when nothing is staged.
     #[arg(long)]
@@ -75,13 +79,14 @@ pub fn run(args: FinishArgs) -> i32 {
         message: args.message,
         status,
         keep: args.keep,
-        snapshot: !args.no_snapshot,
+        snapshot: args.snapshot,
         allow_empty: args.allow_empty,
         allow_secret: args.allow_secret,
     };
 
     match finish::run_finish(&opts) {
         Ok(r) => {
+            crate::state_dir::print_notes("c3 finish", &r.folder_notes, args.json);
             // After the commit: name the branches and worktrees that have no recorded state, and an
             // unknown default branch (a note, never a refusal; read-only - no optional git locks -,
             // no `git cherry`).

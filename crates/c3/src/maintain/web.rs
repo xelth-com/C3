@@ -11,11 +11,10 @@
 //! `C3_MODEL_WEB=off` or `"model_web": false` in the C3 config. `"model_catalogs"` replaces the
 //! default catalog list, `"model_pages"` adds pages.
 
-use std::collections::BTreeMap;
 use std::time::Duration;
 
 use super::env::{Env, GetPolicy, Redirects};
-use super::models::SourceList;
+use super::models::{ListPrice, SourceList};
 use super::version::valid_model_id;
 
 /// The catalogs fetched when the config names none.
@@ -236,13 +235,9 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
         let Some(body) = keyless_get(env, url) else {
             continue;
         };
-        let (ids, created) = parse_catalog(&body);
-        if !ids.is_empty() {
-            out.push(SourceList {
-                source,
-                ids,
-                created,
-            });
+        let list = parse_catalog(&body);
+        if !list.ids.is_empty() {
+            out.push(SourceList { source, ..list });
         }
     }
     for p in pages {
@@ -258,7 +253,7 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
             out.push(SourceList {
                 source,
                 ids,
-                created: BTreeMap::new(),
+                ..Default::default()
             });
         }
     }
@@ -325,23 +320,25 @@ fn get_via_env(env: &dyn Env, url: &str) -> Option<String> {
     }
 }
 
-/// Parse a catalog body (`{"data":[{"id":"<vendor>/<model>","created":<unix secs>}, ...]}`) into
-/// its ids and their `created` stamps. An id with a `:variant` suffix (`:free`, `:batch`) is
-/// skipped; the vendor part must be a lower-case slug and the model part must pass
-/// [`valid_model_id`] (with no further `/`); a plain id without a vendor is kept when it passes.
-/// At most [`MAX_IDS`] ids, de-duplicated, in catalog order.
-pub fn parse_catalog(body: &str) -> (Vec<String>, BTreeMap<String, i64>) {
-    let mut ids: Vec<String> = Vec::new();
-    let mut created: BTreeMap<String, i64> = BTreeMap::new();
+/// Parse a catalog body (`{"data":[{"id":"<vendor>/<model>","created":<unix secs>,"pricing":
+/// {"prompt":"<usd>","completion":"<usd>"}}, ...]}`) into its ids, their `created` stamps and
+/// (0.2.5 D3) their list prices ([`list_price`]) - a [`SourceList`] whose `source` the caller sets.
+/// An id with a `:variant` suffix (`:free`, `:batch`) is skipped; the vendor part must be a
+/// lower-case slug and the model part must pass [`valid_model_id`] (with no further `/`); a plain id
+/// without a vendor is kept when it passes. At most [`MAX_IDS`] ids, de-duplicated, in catalog
+/// order.
+pub fn parse_catalog(body: &str) -> SourceList {
+    let mut out = SourceList::default();
     if body.len() > BODY_CAP {
-        return (ids, created);
+        return out;
     }
     let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
-        return (ids, created);
+        return out;
     };
     let Some(arr) = v.get("data").and_then(|d| d.as_array()) else {
-        return (ids, created);
+        return out;
     };
+    let (ids, created, prices) = (&mut out.ids, &mut out.created, &mut out.prices);
     let mut seen = std::collections::HashSet::new();
     for m in arr {
         if ids.len() >= MAX_IDS {
@@ -359,9 +356,33 @@ pub fn parse_catalog(body: &str) -> (Vec<String>, BTreeMap<String, i64>) {
         if let Some(c) = m.get("created").and_then(|x| x.as_i64()) {
             created.insert(id.clone(), c);
         }
+        if let Some(p) = list_price(m) {
+            prices.insert(id.clone(), p);
+        }
         ids.push(id);
     }
-    (ids, created)
+    out
+}
+
+/// (0.2.5 D3) The list price of one catalog entry: `pricing.prompt` and `pricing.completion`, each
+/// a decimal string (OpenRouter's form) or a number, kept only when it is a positive finite number
+/// (`"0"` - a free variant - and OpenRouter's `"-1"` - a router, no fixed price - are no price).
+/// `None` when neither field is.
+fn list_price(m: &serde_json::Value) -> Option<ListPrice> {
+    let pricing = m.get("pricing")?;
+    let field = |k: &str| -> Option<f64> {
+        let n = match pricing.get(k)? {
+            serde_json::Value::String(s) => s.trim().parse::<f64>().ok()?,
+            serde_json::Value::Number(n) => n.as_f64()?,
+            _ => return None,
+        };
+        (n.is_finite() && n > 0.0).then_some(n)
+    };
+    let p = ListPrice {
+        prompt: field("prompt"),
+        completion: field("completion"),
+    };
+    (p.prompt.is_some() || p.completion.is_some()).then_some(p)
 }
 
 /// One catalog id through the shape rules, or `None`.
@@ -455,7 +476,7 @@ mod tests {
             {"id":"qwen/qwen4-max"},
             {"name":"no id"}
         ]}"#;
-        let (ids, created) = parse_catalog(body);
+        let SourceList { ids, created, .. } = parse_catalog(body);
         assert_eq!(
             ids,
             vec![
@@ -468,8 +489,46 @@ mod tests {
         assert!(!created.contains_key("plain-model-2"));
         assert_eq!(strip_vendor("qwen/qwen4-max"), "qwen4-max");
         assert_eq!(strip_vendor("plain-model-2"), "plain-model-2");
-        assert!(parse_catalog("not json").0.is_empty());
-        assert!(parse_catalog(r#"{"data":"x"}"#).0.is_empty());
+        assert!(parse_catalog("not json").ids.is_empty());
+        assert!(parse_catalog(r#"{"data":"x"}"#).ids.is_empty());
+    }
+
+    /// (0.2.5 D3) A catalog entry's `pricing.prompt` / `pricing.completion` are kept per id when
+    /// they are positive numbers (a decimal string or a number); a free (`"0"`), router (`"-1"`) or
+    /// unparsable price is none, and an entry with neither field carries no price at all.
+    #[test]
+    fn the_catalog_parser_keeps_positive_list_prices_only() {
+        let body = r#"{"data":[
+            {"id":"qwen/qwen4-max","pricing":{"prompt":"0.000003","completion":"0.000012","image":"0.5"}},
+            {"id":"qwen/qwen3.8-max","pricing":{"prompt":0.000001,"completion":"x"}},
+            {"id":"openrouter/auto","pricing":{"prompt":"-1","completion":"-1"}},
+            {"id":"acme/free-1","pricing":{"prompt":"0","completion":"0"}},
+            {"id":"acme/none-1"}
+        ]}"#;
+        let s = parse_catalog(body);
+        assert_eq!(s.ids.len(), 5);
+        assert_eq!(
+            s.prices.get("qwen/qwen4-max"),
+            Some(&ListPrice {
+                prompt: Some(0.000003),
+                completion: Some(0.000012)
+            })
+        );
+        assert_eq!(
+            s.prices.get("qwen/qwen3.8-max"),
+            Some(&ListPrice {
+                prompt: Some(0.000001),
+                completion: None
+            })
+        );
+        assert_eq!(s.prices.len(), 2, "{:?}", s.prices);
+        // prices live for the pass only: the state file never holds them
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(
+            !json.contains("pricing") && !json.contains("prices"),
+            "{json}"
+        );
+        assert!(!json.contains("0.000003"), "{json}");
     }
 
     #[test]
@@ -479,11 +538,11 @@ mod tests {
             .map(|i| format!("{{\"id\":\"acme/m-{i}\"}}"))
             .collect();
         let body = format!("{{\"data\":[{}]}}", many.join(","));
-        assert_eq!(parse_catalog(&body).0.len(), MAX_IDS);
+        assert_eq!(parse_catalog(&body).ids.len(), MAX_IDS);
         // the size cap: a body past BODY_CAP is dropped whole
         let pad = " ".repeat(BODY_CAP + 1);
         let body = format!("{{\"data\":[{{\"id\":\"acme/m-1\"}}]}}{pad}");
-        assert!(parse_catalog(&body).0.is_empty());
+        assert!(parse_catalog(&body).ids.is_empty());
         let re = regex::Regex::new(r"(m-\d+)").unwrap();
         assert!(parse_page(&body, &re).is_empty());
     }

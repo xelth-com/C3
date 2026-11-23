@@ -198,7 +198,6 @@ struct PackSource {
 /// The plain inputs of [`pack_source_of`] (a [`Context`]'s, or a test's).
 struct PackSourceInputs<'a> {
     repo_root: &'a std::path::Path,
-    collab_root: &'a std::path::Path,
     brief_path: Option<&'a std::path::Path>,
     brief_ref: &'a str,
     isolation: Option<&'a crate::consult::reviewed::IsolationPlan>,
@@ -244,8 +243,8 @@ fn pack_source_of(i: &PackSourceInputs) -> Result<PackSource, String> {
             // works identically with no index).
             let conn = format!(
                 "surrealkv:{}",
-                i.collab_root
-                    .join(".c3")
+                crate::state_dir::read_path(i.repo_root)
+                    .unwrap_or_else(|| crate::state_dir::path(i.repo_root))
                     .join("index")
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -281,7 +280,6 @@ fn build_pack(
 ) -> Result<(ReviewerPack, Vec<reviewer::PeerPackStat>), String> {
     let src = pack_source_of(&PackSourceInputs {
         repo_root: &ctx.repo_root,
-        collab_root: &ctx.collab_root,
         brief_path: ctx.brief_path.as_deref(),
         brief_ref: &ctx.brief_ref,
         isolation: ctx.isolation.as_ref(),
@@ -1210,10 +1208,8 @@ mod tests {
             "HEAD~1..HEAD",
         );
         crate::consult::reviewed::write_patch(&mut diff, &repo, &repo.join(".collab")).unwrap();
-        let collab = repo.join(".collab");
         let base_inputs = PackSourceInputs {
             repo_root: &repo,
-            collab_root: &collab,
             brief_path: Some(&brief),
             brief_ref,
             isolation: Some(&plan),

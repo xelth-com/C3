@@ -36,7 +36,8 @@ switch ($role) {
       if ($argv -contains '--check') {
         # FAKE_GROK_EDIT_ROSTER: the update check also edits the roster file (FAKE_GROK_EDIT_FROM ->
         # FAKE_GROK_EDIT_TO), modelling a hand edit between the pass's roster read and its smoke.
-        if ($env:FAKE_GROK_EDIT_ROSTER) {
+        # (FAKE_GROK_EDIT_AT=update moves that edit to the forward update below.)
+        if ($env:FAKE_GROK_EDIT_ROSTER -and $env:FAKE_GROK_EDIT_AT -ne 'update') {
           $rp = [string]$env:FAKE_GROK_EDIT_ROSTER
           $t = [IO.File]::ReadAllText($rp).Replace([string]$env:FAKE_GROK_EDIT_FROM, [string]$env:FAKE_GROK_EDIT_TO)
           [IO.File]::WriteAllText($rp, $t, $u8)
@@ -52,6 +53,13 @@ switch ($role) {
         $isForward = ($to -eq [string]$env:FAKE_GROK_LATEST)
         # FAKE_GROK_UPDATE_NOOP: a forward update exits 0 without changing the version ("did not
         # take"); FAKE_GROK_ROLLBACK_NOOP: a rollback exits 0 without restoring ("rollback failed").
+        # FAKE_GROK_EDIT_AT=update: the forward update edits the roster file (FAKE_GROK_EDIT_FROM ->
+        # FAKE_GROK_EDIT_TO), modelling a hand edit between the two smokes of one engine update.
+        if ($isForward -and $env:FAKE_GROK_EDIT_ROSTER -and $env:FAKE_GROK_EDIT_AT -eq 'update') {
+          $rp = [string]$env:FAKE_GROK_EDIT_ROSTER
+          $t = [IO.File]::ReadAllText($rp).Replace([string]$env:FAKE_GROK_EDIT_FROM, [string]$env:FAKE_GROK_EDIT_TO)
+          [IO.File]::WriteAllText($rp, $t, $u8)
+        }
         if ($isForward -and $env:FAKE_GROK_UPDATE_NOOP) { exit 0 }
         if (-not $isForward -and $env:FAKE_GROK_ROLLBACK_NOOP) { exit 0 }
         # FAKE_GROK_ROLLBACK_TO: a rollback installs THIS version instead and exits non-zero (a failed

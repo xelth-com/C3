@@ -11,7 +11,7 @@
 //!   included): that is what the read-only check watches, while a change of the live tree during
 //!   the run is at most a warning.
 //! * `--diff <range>` ([`plan_diff`], [`write_patch`]): `git diff <range>` (ignored and
-//!   `.eckignore`d files left out, secret-shaped values redacted) written into the task's handoffs
+//!   `.c3ignore`d files left out, secret-shaped values redacted) written into the task's handoffs
 //!   as `<stem>.<sha8>.patch` - one file per content - next to the brief and named in the prompt.
 //! * The warnings: a brief that names a git range given to an engine without a shell and without
 //!   `--diff` ([`named_ranges`]); `--rev` resuming a thread recorded on another revision
@@ -701,14 +701,28 @@ pub fn plan_diff(
     }
 }
 
-/// The paths a patch leaves out: `.collab`, `.eck` and the collab directory (when it lies in the
-/// repository under another name).
+/// The exclude pathspecs of a patch: `.collab`, C3's folder `.c3` and its legacy name `.eck` (both
+/// compared the way the file system compares names - case-insensitively on Windows and macOS, so
+/// with git's `icase` magic there), and the collab directory (when it lies in the repository under
+/// another name).
 pub fn diff_excludes(repo_root: &Path, collab_root: &Path) -> Vec<String> {
-    let mut v = vec![".collab".to_string(), ".eck".to_string()];
+    let magic = if cfg!(any(windows, target_os = "macos")) {
+        "exclude,icase"
+    } else {
+        "exclude"
+    };
+    let mut paths = vec![".collab".to_string()];
     if let Some(r) = c3_core::paths::repo_relative(repo_root, collab_root) {
-        if !r.is_empty() && !v.contains(&r) {
-            v.push(r);
+        if !r.is_empty() && !paths.contains(&r) {
+            paths.push(r);
         }
+    }
+    let mut v: Vec<String> = paths.iter().map(|p| format!(":(exclude){p}")).collect();
+    for state in [
+        crate::state_dir::STATE_DIR,
+        crate::state_dir::LEGACY_STATE_DIR,
+    ] {
+        v.push(format!(":({magic}){state}"));
     }
     v
 }
@@ -759,7 +773,7 @@ const PATCH_HIDDEN_MAX: usize = 500;
 
 /// (R5, F19-2) The paths of `paths` (repo-relative, `/`) the repository excludes from what may leave
 /// the machine: matched by its ignore rules (`git check-ignore --no-index`: `.gitignore` files,
-/// `.git/info/exclude` and the global excludes - a TRACKED file included) or by a `.eckignore` file
+/// `.git/info/exclude` and the global excludes - a TRACKED file included) or by a `.c3ignore` file
 /// in its directory or any directory above it (gitignore syntax, the deeper file deciding - as
 /// `c3 pack` reads it).
 fn ignore_excluded(
@@ -804,40 +818,14 @@ fn ignore_excluded(
             out.insert(p.to_string());
         }
     }
-    // `.eckignore`: per directory, from the repository root down (a deeper file decides)
-    let mut cache: HashMap<PathBuf, Option<ignore::gitignore::Gitignore>> = HashMap::new();
+    // `.c3ignore` (or `.eckignore` in a directory without one): per directory, from the
+    // repository root down (a deeper file decides) - the reader discovery uses too
+    let mut context_ignore = crate::state_dir::ContextIgnore::new(repo);
     for p in paths {
         if out.contains(p) {
             continue;
         }
-        let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
-        let mut full = repo.to_path_buf();
-        for part in &parts {
-            full.push(part);
-        }
-        let mut dir = repo.to_path_buf();
-        let mut hit = false;
-        for (i, part) in parts.iter().enumerate() {
-            let gi = cache.entry(dir.clone()).or_insert_with(|| {
-                let f = dir.join(".eckignore");
-                f.is_file().then(|| {
-                    let mut b = ignore::gitignore::GitignoreBuilder::new(&dir);
-                    let _ = b.add(&f);
-                    b.build().ok()
-                })?
-            });
-            if let Some(g) = gi {
-                match g.matched_path_or_any_parents(&full, false) {
-                    ignore::Match::Ignore(_) => hit = true,
-                    ignore::Match::Whitelist(_) => hit = false,
-                    ignore::Match::None => {}
-                }
-            }
-            if i + 1 < parts.len() {
-                dir.push(part);
-            }
-        }
-        if hit {
+        if context_ignore.excluded(p, false) {
             out.insert(p.clone());
         }
     }
@@ -856,13 +844,13 @@ fn nul_list(bytes: &[u8]) -> Vec<String> {
 /// The patch bytes of `spec` in `repo`, the `excludes` left out. A range is `git diff <range>`; one
 /// revision is diffed against the working tree with the untracked (not ignored) files marked
 /// intent-to-add in a TEMPORARY copy of the index, so new files are in the patch and the real index
-/// is never touched. (R5, F19-2) A file the repository's ignore rules or a `.eckignore` exclude
+/// is never touched. (R5, F19-2) A file the repository's ignore rules or a `.c3ignore` exclude
 /// ([`ignore_excluded`]) never enters the patch - an untracked one is not marked, a tracked one is
 /// left out by an `:(exclude,literal)` pathspec. (R5, F19-5) The revision or range is passed after
 /// `--end-of-options`, so git never reads it as an option.
 pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result<Vec<u8>, String> {
     let mut pathspec: Vec<String> = vec!["--".into(), ".".into()];
-    pathspec.extend(excludes.iter().map(|e| format!(":(exclude){e}")));
+    pathspec.extend(excludes.iter().cloned());
     let args_of = |head: &[&str], what: &str, hidden: &[String]| -> Vec<String> {
         let mut v: Vec<String> = ["-c", "core.quotepath=false", "diff"]
             .iter()
@@ -884,7 +872,7 @@ pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result
         hidden.sort();
         if hidden.len() > PATCH_HIDDEN_MAX {
             return Err(format!(
-                "the range changes {} files the repository's ignore rules or .eckignore exclude (at most {PATCH_HIDDEN_MAX} can be left out of one patch); narrow the range",
+                "the range changes {} files the repository's ignore rules or .c3ignore exclude (at most {PATCH_HIDDEN_MAX} can be left out of one patch); narrow the range",
                 hidden.len()
             ));
         }
@@ -930,7 +918,7 @@ pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result
                 ls.extend(pathspec.iter().cloned());
                 let ls_refs: Vec<&str> = ls.iter().map(|s| s.as_str()).collect();
                 let untracked = nul_list(&git_out(repo, &ls_refs, Some(&tmp), None)?);
-                // (R5, F19-2) an untracked file is the change - unless a `.eckignore` excludes it
+                // (R5, F19-2) an untracked file is the change - unless a `.c3ignore` excludes it
                 // (`--exclude-standard` already left the git-ignored ones out)
                 let hidden = ignore_excluded(repo, &untracked)?;
                 let mut marked: Vec<u8> = Vec::new();
@@ -1074,7 +1062,7 @@ pub fn write_patch(
 /// values were redacted.
 pub fn diff_prompt_line(plan: &DiffPlan) -> String {
     let mut l = format!(
-        "The change under review is the patch at `{}` (`git diff {}`; `.collab/`, `.eck/` and files the repository's ignore rules or `.eckignore` exclude left out): read it first and review that change. The patch is for reading, not for applying",
+        "The change under review is the patch at `{}` (`git diff {}`; `.collab/`, `.c3/` and files the repository's ignore rules or `.c3ignore` exclude left out): read it first and review that change. The patch is for reading, not for applying",
         plan.rel, plan.range
     );
     if plan.redactions > 0 {
@@ -1307,6 +1295,51 @@ mod tests {
         // a second write of the same bytes reuses the file
         write_patch(&mut plan, &r, &r.join(".collab")).unwrap();
         assert_eq!(plan.rel, rel);
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5, S1) C3's folder `.c3/` and the legacy `.eck/` are both left out of a patch - tracked
+    // (a range) or untracked (the working tree); `.c3ignore` wins over `.eckignore` in the same
+    // directory, and a directory with only `.eckignore` is still honoured.
+    #[test]
+    fn a_patch_leaves_out_the_c3_and_legacy_folders_and_honours_c3ignore() {
+        let r = repo("statedirs");
+        let base = git_capture(&r, &["rev-parse", "HEAD"]).unwrap();
+        for dir in [".c3", ".eck"] {
+            std::fs::create_dir_all(r.join(dir)).unwrap();
+            std::fs::write(r.join(dir).join("CONTEXT.md"), "STATE-FOLDER-TEXT\n").unwrap();
+        }
+        std::fs::write(r.join(".c3ignore"), "c3-hidden.txt\n").unwrap();
+        std::fs::write(r.join(".eckignore"), "eck-only.txt\n").unwrap();
+        std::fs::create_dir_all(r.join("sub")).unwrap();
+        std::fs::write(r.join("sub").join(".eckignore"), "deep.txt\n").unwrap();
+        for f in ["c3-hidden.txt", "eck-only.txt", "sub/deep.txt", "kept.txt"] {
+            std::fs::write(r.join(f), format!("BODY-OF-{f}\n")).unwrap();
+        }
+        git_capture(&r, &["add", "-A", "-f"]).unwrap();
+        git_capture(&r, &["commit", "-q", "-m", "state"]).unwrap();
+        let head = git_capture(&r, &["rev-parse", "HEAD"]).unwrap();
+        let ex = diff_excludes(&r, &r.join(".collab"));
+        let spec = check_diff_spec(&r, &format!("{}..{}", &base[..8], &head[..8])).unwrap();
+        let p = String::from_utf8(render_patch(&r, &spec, &ex).unwrap()).unwrap();
+        assert!(!p.contains("STATE-FOLDER-TEXT"), "{p}");
+        assert!(!p.contains("BODY-OF-c3-hidden.txt"), "{p}");
+        assert!(
+            p.contains("BODY-OF-eck-only.txt"),
+            ".eckignore beside a .c3ignore is not read: {p}"
+        );
+        assert!(!p.contains("BODY-OF-sub/deep.txt"), "{p}");
+        assert!(p.contains("BODY-OF-kept.txt"), "{p}");
+
+        // the working tree: untracked files under both folders stay out
+        for dir in [".c3", ".eck"] {
+            std::fs::write(r.join(dir).join("NEW.md"), "UNTRACKED-STATE\n").unwrap();
+        }
+        std::fs::write(r.join("fresh.txt"), "FRESH\n").unwrap();
+        let wt = render_patch(&r, &parse_diff_spec("HEAD").unwrap(), &ex).unwrap();
+        let wt = String::from_utf8(wt).unwrap();
+        assert!(!wt.contains("UNTRACKED-STATE"), "{wt}");
+        assert!(wt.contains("+FRESH"), "{wt}");
         let _ = std::fs::remove_dir_all(r.parent().unwrap());
     }
 

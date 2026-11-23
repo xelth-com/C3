@@ -186,6 +186,8 @@ pub fn prepare_paths(o: &Options) -> Result<(PathBuf, PathBuf, PathBuf), String>
     } else {
         repo_root.join(given)
     };
+    // (0.2.5, S1) a collab path inside C3's project folder follows its move from `.eck/` to `.c3/`
+    let collab_root = crate::state_dir::collab_dir(&repo_root, collab_root);
     let task_dir = collab_root.join(task);
     Ok((repo_root, collab_root, task_dir))
 }

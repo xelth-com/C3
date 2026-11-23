@@ -1,4 +1,4 @@
-//! `c3 manifest`: atomic edits to a `.eck/<NAME>.md` manifest. The name check and the
+//! `c3 manifest`: atomic edits to a `.c3/<NAME>.md` manifest. The name check and the
 //! `append_to_section` text surgery are pure functions so they are tested without disk.
 //! No git, no snapshot.
 
@@ -24,7 +24,7 @@ impl Action {
 }
 
 /// Whether `name` is an acceptable manifest file name: a plain name ending `.md` directly
-/// under `.eck/` — no path separator, no `..`, and a non-empty stem (`.md` alone refused).
+/// under `.c3/` — no path separator, no `..`, and a non-empty stem (`.md` alone refused).
 pub fn manifest_name_ok(name: &str) -> bool {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return false;
@@ -121,10 +121,10 @@ pub fn apply(
     }
 }
 
-/// The on-disk path of a manifest `name` under `<repo>/.eck/`. The name must already have
+/// The on-disk path of a manifest `name` under `<repo>/.c3/`. The name must already have
 /// passed [`manifest_name_ok`].
 pub fn manifest_path(repo_root: &Path, name: &str) -> std::path::PathBuf {
-    repo_root.join(".eck").join(name)
+    crate::state_dir::path(repo_root).join(name)
 }
 
 #[cfg(test)]

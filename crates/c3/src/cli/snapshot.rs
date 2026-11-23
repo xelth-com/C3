@@ -12,9 +12,14 @@ use crate::providers;
 /// Arguments of `c3 snapshot`.
 #[derive(Args, Debug, Default)]
 pub struct SnapshotArgs {
-    /// Output path. Default: `<collab>/.c3/snapshots/<repo>_<ts>_<rev7>[_upN]_<sizeKB>kb.md`.
+    /// Output path. Default: `.c3/snapshots/<repo>_<ts>_<rev7>[_upN]_<sizeKB>kb.md`.
     #[arg(long)]
     pub out: Option<String>,
+    /// The hand-off snapshot for a web reviewer that has no bridge: written into
+    /// `.c3/snapshots/` (overriding `--out`) and copied into `.c3/lastsnapshot/`, carrying the
+    /// `.c3/*.md` manifests and no hidden or never-commit path.
+    #[arg(long, alias = "eck")]
+    pub state: bool,
     /// Snapshot only what changed since C3's anchor (the last full snapshot's commit).
     #[arg(long)]
     pub delta: bool,
@@ -34,7 +39,7 @@ pub struct SnapshotArgs {
     /// whose header records its anchor. Diffs that commit against HEAD plus the dirty tree.
     #[arg(long)]
     pub base: Option<String>,
-    /// Profile selection `a,b,-c,<glob>` read from `.eck/profiles.json`: named profiles union
+    /// Profile selection `a,b,-c,<glob>` read from `.c3/profiles.json`: named profiles union
     /// their includes, a leading `-` subtracts a profile, a glob token is an ad-hoc include.
     #[arg(long)]
     pub profile: Option<String>,
@@ -49,7 +54,27 @@ pub fn run(args: SnapshotArgs) -> i32 {
     let repo_root = providers::resolve_repo_root(&cwd);
     let collab_root = providers::resolve_collab_root(&repo_root, &args.collab_dir);
 
+    // The run writes into C3's folder unless it only writes `--out` and changes no state (a
+    // `--base` query): the anchor (full), the sequence (delta), the default output, the hand-off.
+    // (Otherwise nothing of the folder is read or written.)
+    let state_dir = if args.state || args.out.is_none() || args.base.is_none() {
+        match crate::state_dir::ensure(&repo_root, Some(&collab_root)) {
+            Ok(e) => {
+                crate::state_dir::print_notes("c3 snapshot", &e.notes(), true);
+                e.dir
+            }
+            Err(e) => {
+                eprintln!("c3 snapshot: {e}");
+                return 1;
+            }
+        }
+    } else {
+        crate::state_dir::path(&repo_root)
+    };
+    let collab_root = crate::state_dir::moved_with_folder(&repo_root, &collab_root);
+
     let opts = SnapshotOpts {
+        state_dir,
         repo_root,
         collab_root,
         out: args.out.map(PathBuf::from),
@@ -60,7 +85,7 @@ pub fn run(args: SnapshotArgs) -> i32 {
         tree: !args.no_tree,
         max_file_size: 2 * 1024 * 1024,
         fail: false,
-        eck: false,
+        state: args.state,
         keep: 0,
         embed_report: None,
         base: args.base,

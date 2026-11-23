@@ -1,7 +1,7 @@
 //! `c3 index` — build or query the derived context index (milestone 8).
 //!
 //! The pipeline lives in [`crate::index`]; this owns the clap surface, the embedded
-//! single-writer lock (`<collab>/.c3/index.lock`, the same exclusive share-mode open as
+//! single-writer lock (`<repo>/.c3/index.lock`, the same exclusive share-mode open as
 //! `c3-core`'s `TaskLock`) and the one-line verdict. Any open failure — the lock is held or
 //! the embedded store returns the surrealkv lock violation (os error 33) — is reported as
 //! `index: none (<reason>)` with no retry loop, exiting 0 for a query and 1 for a build
@@ -45,7 +45,7 @@ pub struct BuildArgs {
     #[arg(long, default_value = ".collab")]
     pub collab_dir: String,
     /// Connection string: `none` | `surrealkv:<path>` | `ws://host`. Default: an embedded
-    /// store at `<collab>/.c3/index/`.
+    /// store at `<repo>/.c3/index/`.
     #[arg(long)]
     pub conn: Option<String>,
 }
@@ -118,21 +118,58 @@ struct Ctx {
     #[cfg_attr(not(feature = "index-surreal"), allow(dead_code))]
     collab_root: PathBuf,
     conn: String,
+    /// C3's project folder: where the embedded store lives by default and the writer's lock is.
+    #[cfg_attr(not(feature = "index-surreal"), allow(dead_code))]
+    state_dir: PathBuf,
 }
 
+/// The default connection: the embedded store at `<state dir>/index`.
+fn default_conn(state_dir: &Path) -> String {
+    let dir = state_dir.join("index");
+    format!("surrealkv:{}", dir.to_string_lossy().replace('\\', "/"))
+}
+
+/// The context of a READER (query, stats): the folder is only read - `.c3/`, or the legacy one
+/// until a writing command moved it.
 fn resolve(collab_dir: &str, conn: Option<String>) -> Ctx {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
     let collab_root = providers::resolve_collab_root(&repo_root, collab_dir);
-    let conn = conn.unwrap_or_else(|| {
-        let dir = collab_root.join(".c3").join("index");
-        format!("surrealkv:{}", dir.to_string_lossy().replace('\\', "/"))
-    });
+    let state_dir = crate::state_dir::read_path(&repo_root)
+        .unwrap_or_else(|| crate::state_dir::path(&repo_root));
+    let conn = conn.unwrap_or_else(|| default_conn(&state_dir));
     Ctx {
         repo_root,
         collab_root,
         conn,
+        state_dir,
     }
+}
+
+/// The context of a WRITER of the embedded store (build, rebuild, embed): C3's folder is made sure
+/// of first ([`crate::state_dir::ensure`]) when the store is local, and the default store and the
+/// lock live in the folder it settled on.
+fn resolve_writer(collab_dir: &str, conn: Option<String>) -> Result<Ctx, String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let repo_root = providers::resolve_repo_root(&cwd);
+    let collab_root = providers::resolve_collab_root(&repo_root, collab_dir);
+    let local = conn
+        .as_deref()
+        .is_none_or(|c| c.trim().starts_with("surrealkv:"));
+    let state_dir = if local {
+        let ensured = crate::state_dir::ensure(&repo_root, Some(&collab_root))?;
+        crate::state_dir::print_notes("c3 index", &ensured.notes(), true);
+        ensured.dir
+    } else {
+        crate::state_dir::path(&repo_root)
+    };
+    let conn = conn.unwrap_or_else(|| default_conn(&state_dir));
+    Ok(Ctx {
+        collab_root: crate::state_dir::moved_with_folder(&repo_root, &collab_root),
+        repo_root,
+        conn,
+        state_dir,
+    })
 }
 
 /// A stable-ish database name from the repository directory basename.
@@ -192,7 +229,13 @@ fn peer_selection(peer: &[String], peers: &Option<String>) -> Result<index::Peer
 }
 
 fn build(args: BuildArgs, rebuild: bool) -> i32 {
-    let ctx = resolve(&args.collab_dir, args.conn);
+    let ctx = match resolve_writer(&args.collab_dir, args.conn) {
+        Ok(c) => c,
+        Err(reason) => {
+            println!("{} {}", index::PREFIX, IndexStats::none(reason).verdict());
+            return 1;
+        }
+    };
     let backend = match index::parse_conn(&ctx.conn) {
         Ok(b) => b,
         Err(e) => {
@@ -229,7 +272,7 @@ fn build_backend(ctx: &Ctx, backend: index::Backend, rebuild: bool) -> i32 {
     // server handles its own concurrency, so it needs no local lock.
     let _lock;
     if let index::Backend::SurrealKv(_) = &backend {
-        match take_index_lock(&ctx.collab_root) {
+        match lock_in_state_dir(ctx) {
             Ok(l) => _lock = l,
             Err(reason) => {
                 println!("{} {}", index::PREFIX, IndexStats::none(reason).verdict());
@@ -665,7 +708,13 @@ fn peers(args: PeersArgs) -> i32 {
 // --------------------------------------------------------------------------- embed (M11)
 
 fn embed(args: EmbedArgs) -> i32 {
-    let ctx = resolve(&args.collab_dir, args.conn);
+    let ctx = match resolve_writer(&args.collab_dir, args.conn) {
+        Ok(c) => c,
+        Err(reason) => {
+            println!("{} {}", index::PREFIX, IndexStats::none(reason).verdict());
+            return 1;
+        }
+    };
     let backend = match index::parse_conn(&ctx.conn) {
         Ok(b) => b,
         Err(e) => {
@@ -718,7 +767,7 @@ fn embed_backend(ctx: &Ctx, backend: index::Backend, limit: Option<usize>) -> i3
     // Embedding writes vectors, so it takes the single-writer lock like a build (RC1).
     let _lock;
     if let index::Backend::SurrealKv(_) = &backend {
-        match take_index_lock(&ctx.collab_root) {
+        match lock_in_state_dir(ctx) {
             Ok(l) => _lock = l,
             Err(reason) => {
                 println!("{} {}", index::PREFIX, IndexStats::none(reason).verdict());
@@ -762,12 +811,20 @@ fn embed_backend(ctx: &Ctx, backend: index::Backend, limit: Option<usize>) -> i3
 
 // --------------------------------------------------------------------------- index lock
 
-/// Take the embedded index lock exclusively, the same way `c3-core`'s `TaskLock` does.
-/// `Ok(guard)` holds it until dropped; `Err(reason)` means another handle holds it.
+/// A writer of the embedded store (build, rebuild, embed): the lock in the project folder
+/// [`resolve_writer`] made sure of.
 #[cfg(feature = "index-surreal")]
-fn take_index_lock(collab_root: &Path) -> Result<IndexLock, String> {
-    let dir = collab_root.join(".c3");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("index.lock dir: {e}"))?;
+fn lock_in_state_dir(ctx: &Ctx) -> Result<IndexLock, String> {
+    take_index_lock(&ctx.state_dir)
+}
+
+/// Take the embedded index lock (`<state_dir>/index.lock`) exclusively, the same way
+/// `c3-core`'s `TaskLock` does. `Ok(guard)` holds it until dropped; `Err(reason)` means another
+/// handle holds it.
+#[cfg(feature = "index-surreal")]
+fn take_index_lock(state_dir: &Path) -> Result<IndexLock, String> {
+    let dir = state_dir;
+    std::fs::create_dir_all(dir).map_err(|e| format!("index.lock dir: {e}"))?;
     let path = dir.join("index.lock");
     match try_open_exclusive(&path) {
         Ok(Some(file)) => Ok(IndexLock { _file: file }),

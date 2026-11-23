@@ -689,6 +689,9 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
             v.push(req_str(args, "message")?);
             v.push("--status".into());
             v.push(req_str(args, "status")?);
+            if opt_bool(args, "snapshot") {
+                v.push("--snapshot".into());
+            }
             push_collab(&mut v, args)?;
             Ok((v, DEFAULT_TIMEOUT))
         }
@@ -696,6 +699,9 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
             v.push("fail".into());
             v.push("--status".into());
             v.push(req_str(args, "status")?);
+            if opt_bool(args, "snapshot") {
+                v.push("--snapshot".into());
+            }
             push_collab(&mut v, args)?;
             Ok((v, DEFAULT_TIMEOUT))
         }
@@ -1118,7 +1124,7 @@ fn tool_defs() -> Value {
                     "focus": { "type": "array", "items": { "type": "string" }, "description": "Focus file(s): path or glob, in full with line numbers (repeatable)." },
                     "budget": { "type": "integer", "description": "Token budget for the periphery (0 = none)." },
                     "audience": { "type": "string", "description": "Who the explanation is for (free text)." },
-                    "out": { "type": "string", "description": "Output path. Default: <collab>/.c3/explains/<repo>_<ts>.md." },
+                    "out": { "type": "string", "description": "Output path. Default: .c3/explains/<repo>_<ts>.md." },
                     "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
                 },
                 "required": ["claim"]
@@ -1126,11 +1132,11 @@ fn tool_defs() -> Value {
         },
         {
             "name": "c3_snapshot",
-            "description": "Take a repository snapshot (a single markdown context file), optionally as a git delta since C3's last full-snapshot anchor. Depth 0-9 controls truncation (0 tree only, 5-6 skeleton, 7-9 full); a token budget trims the periphery while focus globs are kept whole. Reads the repo and writes the snapshot file; a full (non-delta) snapshot also updates C3's anchor and sequence state under <collab>/.c3/. No commit.",
+            "description": "Take a repository snapshot (a single markdown context file), optionally as a git delta since C3's last full-snapshot anchor. Depth 0-9 controls truncation (0 tree only, 5-6 skeleton, 7-9 full); a token budget trims the periphery while focus globs are kept whole. Reads the repo and writes the snapshot file; a full (non-delta) snapshot also updates C3's anchor and sequence state under .c3/ (C3's project folder, created with stub manifests when missing). No commit.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "out": { "type": "string", "description": "Output path. Default under <collab>/.c3/snapshots/." },
+                    "out": { "type": "string", "description": "Output path. Default under .c3/snapshots/." },
                     "delta": { "type": "boolean", "description": "Snapshot only what changed since C3's anchor." },
                     "depth": { "type": "integer", "description": "0 tree only, 1-4 truncate, 5-6 skeleton, 7-9 full (default 9)." },
                     "budget": { "type": "integer", "description": "Token budget; periphery is trimmed to fit (0 = none)." },
@@ -1150,8 +1156,8 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "collab_dir": { "type": "string", "description": "Where the index lives (<collab>/.c3/index by default); inside the working directory." },
-                    "conn": { "type": "string", "description": "Connection string: none | surrealkv:<path> | ws://host. Default: an embedded store at <collab>/.c3/index/." }
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored (the index itself lives in .c3/index); inside the working directory." },
+                    "conn": { "type": "string", "description": "Connection string: none | surrealkv:<path> | ws://host. Default: an embedded store at .c3/index/." }
                 }
             }
         },
@@ -1164,20 +1170,21 @@ fn tool_defs() -> Value {
                     "query": { "type": "string", "description": "The search text." },
                     "budget": { "type": "integer", "description": "Token budget for the returned hits (0 = no cap)." },
                     "json": { "type": "boolean", "description": "Return hit objects instead of the rendered text." },
-                    "collab_dir": { "type": "string", "description": "Where the index lives (<collab>/.c3/index by default); inside the working directory." },
-                    "conn": { "type": "string", "description": "Connection string: none | surrealkv:<path> | ws://host. Default: an embedded store at <collab>/.c3/index/." }
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored (the index itself lives in .c3/index); inside the working directory." },
+                    "conn": { "type": "string", "description": "Connection string: none | surrealkv:<path> | ws://host. Default: an embedded store at .c3/index/." }
                 },
                 "required": ["query"]
             }
         },
         {
             "name": "c3_finish_task",
-            "description": "Supervisor-only: workers never call it. Finish the current task: write the agent report to .eck/lastsnapshot/AnswerToSA.md and prepend a journal entry, `git add -A` then unstage the machine-local never-commit set (consult/work event streams, lock files, a work run's .log/.stderr), gate on secrets in the STAGED content (a secret-shaped value refuses the commit, naming the file and KIND, never the value), commit with the message verbatim, then write a delta snapshot into .eck/snapshots/ and copy it into .eck/lastsnapshot/. Use ONLY once, when the task is complete and tested.",
+            "description": "Supervisor-only: workers never call it. Finish the current task: make sure C3's project folder .c3/ is in place (created with stub manifests when missing), write the agent report to .c3/last-report.md and prepend a journal entry to .c3/JOURNAL.md, `git add -A` then unstage the machine-local never-commit set (consult/work event streams, lock files, a work run's .log/.stderr), gate on secrets in the STAGED content (a secret-shaped value refuses the commit, naming the file and KIND, never the value), and commit with the message verbatim. No snapshot unless `snapshot` is true (then a delta snapshot goes into .c3/snapshots/ and .c3/lastsnapshot/ - for a web reviewer that has no bridge). Use ONLY once, when the task is complete and tested.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "status": { "type": "string", "description": "The agent report (written to AnswerToSA.md and the journal)." },
+                    "status": { "type": "string", "description": "The agent report (written to .c3/last-report.md and the journal)." },
                     "message": { "type": "string", "description": "The commit message (verbatim; the coordinator adds its own trailers)." },
+                    "snapshot": { "type": "boolean", "description": "Also write the hand-off snapshot into .c3/snapshots/ (default false)." },
                     "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
                 },
                 "required": ["status", "message"]
@@ -1185,11 +1192,12 @@ fn tool_defs() -> Value {
         },
         {
             "name": "c3_fail_task",
-            "description": "Mark the current task BLOCKED/FAILED: write a '# Agent Report (BLOCKED/FAILED)' AnswerToSA.md, prepend a journal entry, and write an emergency delta snapshot of the working tree into .eck/snapshots/ (and .eck/lastsnapshot/). No staging, no commit. When nothing changed since the anchor it still writes the report and reports no snapshot.",
+            "description": "Mark the current task BLOCKED/FAILED: make sure C3's project folder .c3/ is in place, write a '# Agent Report (BLOCKED/FAILED)' report to .c3/last-report.md and prepend a journal entry. No staging, no commit, and no snapshot unless `snapshot` is true (then an emergency delta snapshot of the working tree goes into .c3/snapshots/ and .c3/lastsnapshot/; when nothing changed since the anchor it reports no snapshot).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "status": { "type": "string", "description": "The agent report (written to AnswerToSA.md and the journal)." },
+                    "status": { "type": "string", "description": "The agent report (written to .c3/last-report.md and the journal)." },
+                    "snapshot": { "type": "boolean", "description": "Also write the emergency snapshot into .c3/snapshots/ (default false)." },
                     "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
                 },
                 "required": ["status"]
@@ -1197,11 +1205,11 @@ fn tool_defs() -> Value {
         },
         {
             "name": "c3_manifest_edit",
-            "description": "Atomically edit a project manifest under .eck/ (ROADMAP.md, TECH_DEBT.md, CONTEXT.md, ...). The file must be a plain NAME.md directly under .eck/ (no path separator, no '..'); a missing file starts as '# NAME'. action replace_text replaces the first occurrence of target_text; append_to_section inserts content at the END of the section headed by section_header (before the next header of the same or higher level); replace_file writes the whole content. No git, no snapshot.",
+            "description": "Atomically edit a project manifest under .c3/ (ROADMAP.md, TECH_DEBT.md, CONTEXT.md, ...), C3's project folder (created with stub manifests when missing). The file must be a plain NAME.md directly under .c3/ (no path separator, no '..'); a missing file starts as '# NAME'. action replace_text replaces the first occurrence of target_text; append_to_section inserts content at the END of the section headed by section_header (before the next header of the same or higher level); replace_file writes the whole content. No git, no snapshot.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "file": { "type": "string", "description": "A plain NAME.md directly under .eck/." },
+                    "file": { "type": "string", "description": "A plain NAME.md directly under .c3/." },
                     "action": { "type": "string", "description": "replace_text | append_to_section | replace_file." },
                     "content": { "type": "string", "description": "The text to write / append / substitute." },
                     "section_header": { "type": "string", "description": "The section header line (required by append_to_section)." },
@@ -1716,6 +1724,17 @@ mod tests {
         assert!(argv
             .windows(2)
             .any(|w| w[0] == "--status" && w[1] == "done"));
+        // (0.2.5, S1) no snapshot unless asked
+        assert!(!argv.iter().any(|a| a == "--snapshot"), "{argv:?}");
+        let (argv, _t) = build_argv(
+            "c3_finish_task",
+            &json!({ "status": "done", "message": "feat: x", "snapshot": true }),
+        )
+        .unwrap();
+        assert!(argv.iter().any(|a| a == "--snapshot"), "{argv:?}");
+        let (argv, _t) =
+            build_argv("c3_fail_task", &json!({ "status": "b", "snapshot": true })).unwrap();
+        assert!(argv.iter().any(|a| a == "--snapshot"), "{argv:?}");
     }
 
     #[test]

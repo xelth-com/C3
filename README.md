@@ -598,7 +598,8 @@ its one-line report.
   through the vendor installer; agy is report-only; muse and claude update themselves and are only
   recorded. An engine with a live run or process is skipped and retried the next day. A smoke of a
   roster seat runs through exactly that entry (a one-entry roster), never whatever its provider
-  label would resolve to. An interrupted update whose new version keeps failing its smoke, with no
+  label would resolve to, and is not run when that entry was edited in any field since it was
+  chosen. An interrupted update whose new version keeps failing its smoke, with no
   working rollback, is not left frozen: a newer vendor release is tried, the original previous
   version kept as the rollback target.
 - **Models.** The ids come from the engines' own lists (`grok models`, `agy models`), from each
@@ -612,13 +613,22 @@ its one-line report.
   the snapshot the smoke was judged on immediately before the rename, and the swap is abandoned
   when it differs (passes are serialised by the pass lock; an edit landing between that re-read and
   the rename itself is not seen). A protected or on-request roster entry is
-  never smoked or edited: its successor is only announced.
+  never smoked or edited: its successor is only announced. So is a successor of a higher major that
+  the public catalog lists at more than twice the seated id's list price (prompt or completion):
+  "list price N times higher - seat it by hand" - a list price is a signal of what the model costs
+  elsewhere, not the plan's own price. A roster id that the catalog spells without a leading token
+  naming its maker or its plan's vendor (`kimi-k3.1-pro` on the roster, `moonshotai/k3.1-pro` in
+  the catalog) is matched once more without that token, and its successor is written in the plan's
+  spelling (`kimi-k3.2-pro`).
 - **Public catalogs.** Once a week (inside the pass) or on request (`--models`), C3 reads
   `https://openrouter.ai/api/v1/models` with a plain GET that carries **no key** (https only; never
-  an IP address or `localhost`, never a name that resolves to - or an answer that comes from - a
-  loopback, private, link-local, unspecified or multicast address; at most 3 redirects, each to the
-  same host and port and without credentials; one 15 s deadline over all of it - name lookup,
-  connect and the body read included; the read stopped at 4 MB; at most 5000 ids). Ids are
+  an IP address or `localhost`, never a name that resolves to - or an answer that comes from - an
+  address that is not global unicast (loopback, private, CGNAT, link-local, documentation,
+  benchmarking, reserved, multicast, broadcast; an IPv4-mapped address judged as its IPv4); never
+  through a proxy the environment names; at most 3 redirects, each to the same host and port and
+  without credentials; one 15 s deadline over all of it - name lookup, connect and the body read
+  included, the connect getting only what the lookup left; the read stopped at 4 MB; at most 5000
+  ids). Ids are
   `<vendor>/<model>`; a `:variant` (`:free`, `:batch`) is skipped and every id must have the strict
   model-id shape. A catalog id is only a candidate: for any active, unprotected entry — also one
   whose endpoint gives no list, like Alibaba, Xiaomi MiMo or BytePlus — the model part
@@ -642,7 +652,9 @@ its one-line report.
   url>", "pattern": "<regex with one capture group>"[, "public": true]}]` adds vendor pages whose
   every capture is a candidate id. Every source feeds successor candidates, but only the built-in
   catalog and a source declared `"public": true` make its ids published names telemetry may send
-  (bound to their vendor - see "The classes" under Telemetry); an endpoint's own list never does.
+  (bound to their vendor - see "The classes" under Telemetry; a Claude id such a source spells with
+  dots, `anthropic/claude-opus-4.5`, counts in the claude engine's dash form `claude-opus-4-5` as
+  well); an endpoint's own list never does.
   A catalog is identified by its full URL (scheme, host, port, path, query): every configured URL
   is fetched and recorded on its own, and trust is per URL, never per host.
 - **By hand.** `c3 maintain` prints the report; `c3 maintain --run [--engine <name>] [--dry-run]
@@ -659,6 +671,52 @@ its one-line report.
   `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model` names the smoke reviewer of an engine. State lives
   in `<codex home>/c3/maintain/`.
 
+## The project folder `.c3/`
+
+Each repository C3 works in has one folder of C3's own: a lowercase `.c3/` at the repository root,
+git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`, `ROADMAP.md`,
+`TECH_DEBT.md`, `JOURNAL.md`, `OPERATIONS.md`, `ENVIRONMENT.md`, `RUNTIME_STATE.md`,
+`DEPLOY_CHECKLIST.md`) and `profiles.json`; `last-report.md`, the report of the last `c3 finish` /
+`c3 fail`; `scouts/`; the hand-off `snapshots/` and `lastsnapshot/`; and C3's cache (`anchor`,
+`snapshot_seq`, `index/`, `explains/`) - one per repository.
+
+- **Created when needed.** Every command that writes into the folder (`c3 init`, `c3 finish`,
+  `c3 fail`, `c3 manifest` and their MCP tools, `c3 scout`, `c3 fetch`, `c3 snapshot`, `c3 index
+  build`, `c3 explain` without `--out`) creates it when it is missing, writes each missing manifest
+  with a `[STUB: ...]` marker (`c3 doctor` lists them) and adds `.c3/` to `.gitignore` when no line
+  ignores it. The SessionStart hook never does, nor does a reviewer or worker C3 started
+  (`C3_CHILD`): there a missing folder is a refusal. `c3 doctor` without `--fix` only reports
+  "no `.c3/` folder - `c3 init` creates it".
+- **An older `.eck/` folder moves once.** When `.c3` does not exist and `.eck/` is a real directory,
+  the first writing command (or `c3 doctor --fix`) renames it to `.c3/` - one rename; if it fails,
+  nothing else is tried, the command says why and uses `.eck/` for that run (`c3 doctor --fix`
+  reports "not moved"). The old tool's files C3 never reads (`anchor`,
+  `update_seq`, `telemetry_queue.json`) go to `.c3/legacy/`, `lastsnapshot/AnswerToSA.md` becomes
+  `last-report.md`, and `.c3/` is added to `.gitignore` (the `.eck/` line stays). A `.eck` that is a
+  symlink or junction is never moved through; when both folders exist nothing is merged, C3 uses
+  `.c3/` and `c3 doctor` says so. A cache an earlier C3 kept under `<collab>/.c3/` moves into
+  `.c3/` entry by entry (an existing entry wins). Until the move, the read-only commands
+  (`c3 doctor`, the manifest digest of `c3 explain`) read `.eck/`. Switch (default ON):
+  `C3_STATE_MIGRATE=off`, or `"state_migrate": false` in `<codex home>/c3/config.json` - then C3
+  never touches `.eck/` and creates a fresh `.c3/`.
+- **A collab directory inside the folder follows the move.** With `--collab-dir .eck/collab` (or the
+  MCP `collab_dir`) on a repository whose folder already moved, the records are read and written at
+  `.c3/collab` (one line on stderr says so; a collab path never creates a new `.eck/`); with
+  `.c3/collab` on a repository that still has `.eck/`, the command moves the folder first. The move
+  is never attempted while a detached consultation or work run is live under `.eck/`; when it cannot
+  be made now (a live run, a failed rename) the command uses the legacy folder for that run and says
+  so - one rename or nothing, never a half-moved folder. The SessionStart hook never moves.
+- **No snapshot by default.** `c3 finish` / `c3 fail` write the report, the journal entry and (finish)
+  the commit. `--snapshot` (MCP: `"snapshot": true`) adds the hand-off snapshot for a web reviewer
+  that has no bridge; `c3 snapshot --state` writes one on its own.
+- **Kept out of what leaves the machine.** Reviewer packs, snapshots, `c3 fetch` and `--diff`
+  patches leave out `.c3/` and `.eck/` (compared case-insensitively on Windows and macOS). The
+  project's "never put in AI context" list is `.c3ignore` (gitignore syntax, per directory); a
+  directory without one still has its `.eckignore` read.
+- **Old rule text.** `c3 doctor` reports a C3-written rules file that still has an old template
+  sentence naming `.eck/`, and `c3 doctor --fix` replaces exactly that line with the current one;
+  a sentence the user rewrote is reported and left alone.
+
 ## Keeping a repository's model settings current
 
 A project's own agent files can pin an old model and so quietly run a worker on a stale one. C3
@@ -667,7 +725,7 @@ both reports this (`c3 doctor`) and repairs it in place.
 - **What is refreshed.** A `.claude/agents/*.md` whose frontmatter `model:` pins a concrete Claude
   id (`claude-opus-4-8`) is rewritten to the floating alias (`opus`) so the worker follows the
   newest model; a pin that names no known family is reported but left for a human. The
-  repository-root `AGENTS.md` (the OpenCode agent file eckSnapshot writes) follows the roster: when
+  repository-root `AGENTS.md` (the OpenCode agent file) follows the roster: when
   one of the active roster entries is the successor of its `model:` (same family and suffix, a
   higher version), its line is rewritten to that id (keeping the original casing, `GLM-5.3` ->
   `GLM-5.4`, `Qwen3.8-Max` -> `Qwen4-Max`), never to an id the maintain state's catalog dates as

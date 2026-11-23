@@ -112,6 +112,25 @@ pub fn model_lab(model: &str) -> String {
     String::new()
 }
 
+/// (0.2.5 D3) The lab ONE token of a model id or a plan slug names, by the same table: the lab of
+/// its vendor prefix ([`model_lab`]: `kimi`, `kimi-code` -> moonshot), else the token itself when it
+/// is a lab of the table (`moonshot`, `alibaba`); `""` for anything else. `c3 maintain` asks it
+/// whether a roster id's leading token names its maker or its plan's vendor.
+pub fn lab_named_by(token: &str) -> String {
+    let lab = model_lab(token);
+    if !lab.is_empty() {
+        return lab;
+    }
+    let t = token.trim().to_lowercase();
+    let is_lab =
+        LAB_VENDORS.iter().any(|(_, l)| *l == t) || LAB_ALIASES.iter().any(|(_, l)| *l == t);
+    if is_lab && !t.is_empty() {
+        t
+    } else {
+        String::new()
+    }
+}
+
 /// `roster` | `vendor` | `singleton`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LabSource {
@@ -2203,6 +2222,20 @@ mod tests {
             member_lab(&ep, "MiniMax-M2", "minimax-claude :: MiniMax-M2").0,
             lab("", "minimax-m2")
         );
+    }
+
+    // (0.2.5 D3) A token names a lab by its vendor prefix (at a boundary) or by being a lab of the
+    // table; anything else names none.
+    #[test]
+    fn a_token_names_a_lab_by_its_prefix_or_as_the_lab_itself() {
+        assert_eq!(lab_named_by("kimi"), "moonshot");
+        assert_eq!(lab_named_by("kimi-code"), "moonshot");
+        assert_eq!(lab_named_by("Moonshot"), "moonshot");
+        assert_eq!(lab_named_by("alibaba"), "alibaba");
+        assert_eq!(lab_named_by("qwen"), "alibaba");
+        assert_eq!(lab_named_by("supergrok"), "");
+        assert_eq!(lab_named_by("zai"), "");
+        assert_eq!(lab_named_by(""), "");
     }
 
     // (R4, F16-7) `lab_of_host` and the prefix table name the same lab for every host the function

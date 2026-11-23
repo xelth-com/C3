@@ -56,6 +56,10 @@ pub struct C3Config {
     pub model_catalogs: Option<Vec<ModelCatalogConfig>>,
     /// `"model_pages"`: extra public pages, each read with a one-group regex.
     pub model_pages: Vec<ModelPageConfig>,
+    /// (0.2.5, S1) The one-time move of a repository's `.eck/` to `.c3/` by a writing command
+    /// ([`crate::state_dir::migrate_legacy`]); default ON, `"state_migrate": false` off (C3 then
+    /// never touches `.eck/` and creates a fresh `.c3/`).
+    pub state_migrate: bool,
 }
 
 /// One validated `"model_catalogs"` entry: an https URL (written as a bare string or as
@@ -98,6 +102,7 @@ impl Default for C3Config {
             model_web: true,
             model_catalogs: None,
             model_pages: Vec::new(),
+            state_migrate: true,
         }
     }
 }
@@ -260,6 +265,7 @@ fn validate(root: &Value) -> Result<C3Config, String> {
             "model_web",
             "model_catalogs",
             "model_pages",
+            "state_migrate",
         ],
         "config",
     )?;
@@ -317,6 +323,11 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         None => Vec::new(),
         Some(v) => validate_model_pages(v)?,
     };
+    let state_migrate = match obj.get("state_migrate") {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("c3 config: state_migrate must be true or false".to_string()),
+    };
 
     let mut cfg = C3Config {
         update_check,
@@ -328,6 +339,7 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         model_web,
         model_catalogs,
         model_pages,
+        state_migrate,
         ..Default::default()
     };
     let Some(index) = obj.get("index") else {

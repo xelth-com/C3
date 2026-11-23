@@ -84,8 +84,8 @@ fn repo_with_rule(name: &str, rule: &str) -> PathBuf {
     std::fs::write(repo.join("README.md"), "# scratch\n").unwrap();
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-qm", "init"]);
-    std::fs::create_dir_all(repo.join(".eck")).unwrap();
-    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
+    std::fs::create_dir_all(repo.join(".c3")).unwrap();
+    std::fs::write(repo.join(".c3/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
     std::fs::write(
         repo.join(".mcp.json"),
         "{\"mcpServers\":{\"c3\":{\"command\":\"/abs/c3\",\"args\":[\"mcp\"]}}}",
@@ -271,5 +271,59 @@ fn doctor_fix_on_a_title_line_file_only_appends_and_keeps_every_byte() {
     );
     // in the file's own line ending
     assert!(!added.replace("\r\n", "").contains('\n'), "{added:?}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5, S1) A rules file C3 wrote that still has the old template sentence naming `.eck/` is a
+// finding, and `c3 doctor --fix` replaces exactly that line with the current one (the file then
+// equals the template); a rules file whose text about `.eck/` the user wrote is reported and left
+// alone; inside a C3 child nothing is replaced.
+#[test]
+fn doctor_fix_replaces_the_old_eck_sentence_and_leaves_a_rewritten_file_alone() {
+    const OLD: &str = "(in a C3-managed repository `.eck/` is ignored, so there is no commit).";
+    const NEW: &str = "(in a C3-managed repository `.c3/` is ignored, so there is no commit).";
+    assert!(
+        DELEGATION_TEMPLATE.contains(NEW),
+        "the template has the new sentence"
+    );
+    let old_rule = DELEGATION_TEMPLATE.replace(NEW, OLD);
+    let repo = repo_with_rule("eck-sentence", &old_rule);
+    let rule = repo.join(".claude/rules/02-delegation.md");
+    let mine = "# My protocol\n\nOur notes live in `.eck/` and stay there.\n";
+    let proto = repo.join(".claude/rules/01-c3-protocol.md");
+    std::fs::write(&proto, mine).unwrap();
+
+    let (code, out, err) = run_c3(&repo, &["doctor"], NO_CONFIG);
+    assert_eq!(code, 1, "an old sentence is a finding: {out}\n{err}");
+    assert!(
+        out.contains("[!] .claude/rules/02-delegation.md: an old C3 template sentence names .eck/ - c3 doctor --fix replaces it"),
+        "{out}"
+    );
+    assert!(
+        out.contains("[warn] .claude/rules/01-c3-protocol.md: names .eck/ in text that is not C3's template - left as it is"),
+        "{out}"
+    );
+
+    // a C3 child replaces nothing
+    let child = &[("C3_CONFIG", "none"), ("C3_CHILD", "1")];
+    let (_c, _out, _e) = run_c3(&repo, &["doctor", "--fix"], child);
+    assert_eq!(std::fs::read_to_string(&rule).unwrap(), old_rule);
+
+    let (code, out, err) = run_c3(&repo, &["doctor", "--fix"], NO_CONFIG);
+    assert_eq!(code, 0, "only the warning is left: {out}\n{err}");
+    assert!(
+        out.contains("[fixed] .claude/rules/02-delegation.md: the template sentence naming .eck/ now names .c3/"),
+        "{out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&rule).unwrap(),
+        DELEGATION_TEMPLATE,
+        "exactly the old line was replaced"
+    );
+    assert_eq!(std::fs::read_to_string(&proto).unwrap(), mine);
+    assert!(
+        out.contains("[warn] .claude/rules/01-c3-protocol.md"),
+        "{out}"
+    );
     let _ = std::fs::remove_dir_all(&repo);
 }

@@ -29,8 +29,21 @@ pub fn run(args: ScoutArgs) -> i32 {
         cwd.join(target)
     };
 
+    // The scout file goes into C3's folder: make sure it is in place first.
+    let state_dir = match crate::state_dir::ensure(&repo_root, None) {
+        Ok(e) => {
+            crate::state_dir::print_notes("c3 scout", &e.notes(), true);
+            e.dir
+        }
+        Err(e) => {
+            eprintln!("c3 scout: {e}");
+            return 1;
+        }
+    };
+
     let opts = ScoutOpts {
         repo_root,
+        state_dir,
         target,
         depth: args.depth,
     };

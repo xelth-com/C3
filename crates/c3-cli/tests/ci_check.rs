@@ -51,7 +51,7 @@ fn scratch_repo(name: &str, github: bool) -> PathBuf {
     git(&d, &["config", "user.email", "t@example.com"]);
     git(&d, &["config", "user.name", "Test"]);
     git(&d, &["config", "commit.gpgsign", "false"]);
-    std::fs::write(d.join(".gitignore"), ".eck/\n").unwrap();
+    std::fs::write(d.join(".gitignore"), ".c3/\n").unwrap();
     std::fs::write(d.join("README.md"), "# scratch\n").unwrap();
     git(&d, &["add", "-A"]);
     git(&d, &["commit", "-qm", "init"]);

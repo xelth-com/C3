@@ -87,25 +87,27 @@ pub fn directory_tree(paths: &[String]) -> String {
     out
 }
 
-/// The `.eck/` manifest digest: the three narrative manifests, read as input only, in a
-/// fixed order. `JOURNAL.md` is never read (project rule and DESIGN D6). Returns the
-/// rendered (redacted) Markdown section and its redaction count, or `None` when no manifest
+/// The manifest digest of C3's project folder (`.c3/`, or the legacy `.eck/` until a writing
+/// command moved it - [`crate::state_dir::read_path`]): the three narrative manifests, read as
+/// input only, in a fixed order. `JOURNAL.md` is never read (project rule and DESIGN D6). Returns
+/// the rendered (redacted) Markdown section and its redaction count, or `None` when no manifest
 /// exists.
-pub fn eck_manifest_digest(repo_root: &Path) -> Option<(String, usize)> {
-    let eck = repo_root.join(".eck");
-    if !eck.is_dir() {
-        return None;
-    }
+pub fn manifest_digest(repo_root: &Path) -> Option<(String, usize)> {
+    let dir = crate::state_dir::read_path(repo_root)?;
     let mut section = String::new();
     let mut redactions = 0usize;
     let mut any = false;
     for name in ["CONTEXT.md", "ARCHITECTURE.md", "ROADMAP.md"] {
-        let p = eck.join(name);
+        let p = dir.join(name);
         if let Some(text) = read_text(&p) {
             any = true;
             let (red, n) = redact::redact(&text);
             redactions += n;
-            section.push_str(&format!("### .eck/{name}\n\n{}\n\n", red.trim_end()));
+            section.push_str(&format!(
+                "### {}\n\n{}\n\n",
+                crate::state_dir::label(&dir, name),
+                red.trim_end()
+            ));
         }
     }
     if any {

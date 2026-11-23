@@ -8,11 +8,11 @@ disable-model-invocation: false
 
 # Scout (c3)
 
-The C3 port of eck's `eck-scout`: a thin layer over the `c3` binary. `c3 scout` takes a
+A thin layer over the `c3` binary. `c3 scout` takes a
 snapshot of **another** directory (it may live outside this repository) and writes it into
-this repository's `.eck/scouts/scout_tree_<dirname>_<ts>.md`, through the same discovery
-(gitignore, `.eckignore`, the hard-ignore and never-commit filters) and the same secret
-redactor the normal snapshot uses. A path **inside** this repository is refused — use
+this repository's `.c3/scouts/scout_tree_<dirname>_<ts>.md` (C3's project folder, created when
+missing), through the same discovery (gitignore, `.c3ignore`, the hard-ignore and never-commit
+filters) and the same secret redactor the normal snapshot uses. A path **inside** this repository is refused — use
 `c3-fetch` for files of the current repo.
 
 Run it from this repository:

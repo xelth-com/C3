@@ -70,4 +70,4 @@ stays a **supervisor-only** action — workers never call it.
    triaged (the tech-debt file), so a new report is matched against it.
 
 Tech-debt notes are written by the owning repository's own session into its own file
-(in a C3-managed repository `.eck/` is ignored, so there is no commit).
+(in a C3-managed repository `.c3/` is ignored, so there is no commit).

@@ -11,7 +11,7 @@ use crate::setup::init::{self, InitOpts};
 /// Arguments of `c3 init`.
 #[derive(Args, Debug, Default)]
 pub struct InitArgs {
-    /// Overwrite the `.eck/*.md` manifests with a fresh `[STUB]` even when they exist.
+    /// Overwrite the `.c3/*.md` manifests with a fresh `[STUB]` even when they exist.
     #[arg(long)]
     pub force_stubs: bool,
     /// Emit a JSON object instead of the text summary.
@@ -33,9 +33,11 @@ fn c3_exe() -> String {
 pub fn run(args: InitArgs) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
+    let collab_root = providers::resolve_collab_root(&repo_root, ".collab");
 
     let opts = InitOpts {
         repo_root,
+        collab_root: Some(collab_root),
         force_stubs: args.force_stubs,
         c3_exe: c3_exe(),
     };
@@ -48,9 +50,13 @@ pub fn run(args: InitArgs) -> i32 {
                     "skipped": r.skipped,
                     "gitignore": r.gitignore,
                     "mcp": r.mcp,
+                    "moved": r.moved,
                 });
                 println!("{obj}");
             } else {
+                for m in &r.moved {
+                    println!("{m}");
+                }
                 if r.created.is_empty() {
                     println!("Created nothing (everything already present).");
                 } else {

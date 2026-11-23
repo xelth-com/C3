@@ -32,7 +32,7 @@ pub struct PackArgs {
     #[arg(long, default_value = ".collab")]
     pub collab_dir: String,
     /// Index connection for the periphery: `none` | `surrealkv:<path>` | `ws://host`. Default:
-    /// the embedded store at `<collab>/.c3/index/` if it exists, else the lexical neighbourhood.
+    /// the embedded store at `<repo>/.c3/index/` if it exists, else the lexical neighbourhood.
     /// The index is never required — any miss falls back to lexical.
     #[arg(long)]
     pub conn: Option<String>,
@@ -59,7 +59,9 @@ pub fn run(args: PackArgs) -> i32 {
     // index automatically when one is present; `--conn none` opts out. reviewer::build treats an
     // absent store, a held lock or an empty index as a lexical fallback.
     let conn = args.conn.or_else(|| {
-        let dir = collab_root.join(".c3").join("index");
+        let dir = crate::state_dir::read_path(&repo_root)
+            .unwrap_or_else(|| crate::state_dir::path(&repo_root))
+            .join("index");
         Some(format!(
             "surrealkv:{}",
             dir.to_string_lossy().replace('\\', "/")

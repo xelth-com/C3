@@ -1,14 +1,18 @@
 //! `c3 doctor` — report what still needs doing in a C3 workspace (port spec, Part C).
 //!
-//! It reports: `[STUB` markers left in `.eck/*.md`; whether `c3 mcp` is registered in
-//! `.mcp.json`; eck leftovers (an `eck-core` server in `.mcp.json` / `.codex/config.toml` /
-//! `opencode.json`, and any `.claude/rules/*.md` that still names an `eck_*` tool); any
+//! It reports: C3's project folder (`.c3/` missing, only the legacy `.eck/`, or both -
+//! [`crate::state_dir::Layout`]); `[STUB` markers left in `.c3/*.md` (or in `.eck/*.md` until a
+//! writing command moved it); whether `c3 mcp` is registered in `.mcp.json`; leftovers of the old
+//! tool (an `eck-core` server in `.mcp.json` / `.codex/config.toml` / `opencode.json`, which C3
+//! does not need, and any `.claude/rules/*.md` that still names an `eck_*` tool); a C3-written
+//! rules file that still carries an old template sentence naming `.eck/`
+//! ([`crate::setup::rules::scan_state_sentences`]); any
 //! `.claude/agents/*.md` whose frontmatter pins a concrete model id instead of a floating
 //! alias; branches not merged and without a recorded state, worktrees without one, an unknown
 //! default branch and a kimi review's stale throwaway worktree ([`crate::setup::branches`]); and
-//! the size and file count of `.eck/snapshots/`. Exit 0 when
-//! there is nothing to fix, 1 otherwise. The snapshot-folder size and the start folder's branch /
-//! uncommitted changes are diagnostic context only and never force exit 1.
+//! the size and file count of `.c3/snapshots/`. Exit 0 when
+//! there is nothing to fix, 1 otherwise. The folder notes, the snapshot-folder size and the start
+//! folder's branch / uncommitted changes are diagnostic context only and never force exit 1.
 
 use std::path::{Path, PathBuf};
 
@@ -42,7 +46,12 @@ pub struct PinnedAgent {
 /// Everything `c3 doctor` found.
 #[derive(Debug, Clone, Default)]
 pub struct DoctorReport {
-    /// `.eck/*.md` files that still carry a `[STUB` marker (repo-relative).
+    /// Which of `.c3/` and the legacy `.eck/` the repository has.
+    pub state_layout: crate::state_dir::Layout,
+    /// The folder the scan read the manifests from (`.c3`, or `.eck` until a writing command moved
+    /// it); empty when neither exists.
+    pub state_read: String,
+    /// `.c3/*.md` (or `.eck/*.md`) files that still carry a `[STUB` marker (repo-relative).
     pub stub_files: Vec<String>,
     /// Whether a `c3 mcp` server is registered in `.mcp.json`.
     pub mcp_registered: bool,
@@ -52,7 +61,7 @@ pub struct DoctorReport {
     pub eck_rule_files: Vec<String>,
     /// `.claude/agents/*.md` files whose `model:` pins a concrete id instead of an alias.
     pub pinned_agents: Vec<PinnedAgent>,
-    /// Number of `*.md` files in `.eck/snapshots/`.
+    /// Number of `*.md` files in `.c3/snapshots/`.
     pub snapshot_count: usize,
     /// Total bytes of those snapshot files.
     pub snapshot_bytes: u64,
@@ -61,6 +70,9 @@ pub struct DoctorReport {
     /// `.claude/rules/02-delegation.md` against the current template's "BRANCHES AND WORKTREES"
     /// section ([`crate::setup::rules`]).
     pub delegation_rule: crate::setup::rules::RuleStatus,
+    /// The rules files that still name `.eck/`: an old template sentence (`--fix` replaces it) or
+    /// text the user wrote (reported only) - [`crate::setup::rules::scan_state_sentences`].
+    pub state_sentences: Vec<crate::setup::rules::StateSentenceFinding>,
 }
 
 impl DoctorReport {
@@ -76,6 +88,7 @@ impl DoctorReport {
             && self.eck_rule_files.is_empty()
             && self.pinned_agents.is_empty()
             && !self.delegation_rule.is_finding()
+            && !self.state_sentences.iter().any(|s| s.is_finding())
             && self
                 .branches
                 .as_ref()
@@ -237,13 +250,14 @@ pub fn pinned_agent_model(content: &str) -> Option<(String, String)> {
     Some((model.clone(), concrete_claude_alias(m).unwrap_or_default()))
 }
 
-/// Whether a `.eck/*.md` body still carries a stub marker: a LINE that starts with `[STUB:` (the
-/// form `c3 init` and eck write). Prose that merely mentions `[STUB]` - a journal entry, the
-/// description of this very check - is not a stub.
+/// Whether a `.c3/*.md` body still carries a stub marker: a LINE that starts with `[STUB:` (the
+/// form C3 writes) or with `[STUB]` (the form the rules name). Prose that merely mentions
+/// `[STUB]` inside a line - a journal entry, the description of this very check - is not a stub.
 pub fn has_stub_marker(content: &str) -> bool {
-    content
-        .lines()
-        .any(|l| l.trim_start().starts_with("[STUB:"))
+    content.lines().any(|l| {
+        let l = l.trim_start();
+        l.starts_with("[STUB:") || l.starts_with("[STUB]")
+    })
 }
 
 /// Whether a `.claude/rules/*.md` body names any `eck_*` MCP tool.
@@ -306,11 +320,20 @@ pub fn config_mentions_eck_core(content: &str) -> bool {
 
 /// Scan `repo_root` and build the report (the only I/O in this module).
 pub fn scan(repo_root: &Path) -> DoctorReport {
-    let mut report = DoctorReport::default();
-
-    // `.eck/*.md` stub markers (direct children of `.eck/`).
-    let eck = repo_root.join(".eck");
-    if let Ok(rd) = std::fs::read_dir(&eck) {
+    // C3's project folder, and the stub markers of its manifests (direct children; the legacy
+    // `.eck/` is read until a writing command moved it).
+    let mut report = DoctorReport {
+        state_layout: crate::state_dir::layout(repo_root),
+        ..DoctorReport::default()
+    };
+    let state = crate::state_dir::read_path(repo_root);
+    if let Some(dir) = &state {
+        report.state_read = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+    }
+    if let Some(Ok(rd)) = state.as_ref().map(std::fs::read_dir) {
         let mut names: Vec<String> = Vec::new();
         for e in rd.flatten() {
             let name = e.file_name();
@@ -322,7 +345,7 @@ pub fn scan(repo_root: &Path) -> DoctorReport {
                 .map(|c| has_stub_marker(&c))
                 .unwrap_or(false)
             {
-                names.push(format!(".eck/{name}"));
+                names.push(format!("{}/{name}", report.state_read));
             }
         }
         names.sort();
@@ -393,12 +416,13 @@ pub fn scan(repo_root: &Path) -> DoctorReport {
         report.pinned_agents = pins;
     }
 
-    // The delegation rule against the template's current sections.
+    // The delegation rule against the template's current sections, and the rules files that still
+    // name the legacy folder.
     report.delegation_rule = crate::setup::rules::scan(repo_root);
+    report.state_sentences = crate::setup::rules::scan_state_sentences(repo_root);
 
-    // `.eck/snapshots/` size and count.
-    let snaps = eck.join("snapshots");
-    if let Ok(rd) = std::fs::read_dir(&snaps) {
+    // `.c3/snapshots/` size and count.
+    if let Some(Ok(rd)) = state.map(|d| std::fs::read_dir(d.join("snapshots"))) {
         for e in rd.flatten() {
             if e.file_type().map(|t| t.is_file()).unwrap_or(false) {
                 report.snapshot_count += 1;
@@ -413,9 +437,9 @@ pub fn scan(repo_root: &Path) -> DoctorReport {
     report
 }
 
-/// Resolve the `.eck/snapshots` path (for messages/tests).
+/// Resolve the `.c3/snapshots` path (for messages/tests).
 pub fn snapshots_dir(repo_root: &Path) -> PathBuf {
-    repo_root.join(".eck").join("snapshots")
+    crate::state_dir::path(repo_root).join("snapshots")
 }
 
 #[cfg(test)]
@@ -425,6 +449,9 @@ mod tests {
     #[test]
     fn stub_and_rule_detectors() {
         assert!(has_stub_marker("# X\n\n[STUB: fill me]\n"));
+        // (0.2.5, S1) the form the templates and rules name counts too, at the start of a line
+        assert!(has_stub_marker("# X\n\n[STUB]\n"));
+        assert!(has_stub_marker("# X\n\n[STUB] describe the deploy\n"));
         assert!(!has_stub_marker("# X\n\nresolved\n"));
         // prose that mentions the marker is not a stub (a journal entry, a command description)
         assert!(!has_stub_marker(
@@ -477,7 +504,7 @@ mod tests {
             ..DoctorReport::default()
         };
         assert!(r.is_clean(), "snapshots alone must not make it dirty");
-        r.stub_files.push(".eck/ROADMAP.md".into());
+        r.stub_files.push(".c3/ROADMAP.md".into());
         assert!(!r.is_clean());
         r.stub_files.clear();
         r.mcp_registered = false;

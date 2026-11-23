@@ -61,6 +61,77 @@ pub struct Target {
     /// smoke is not run when the position no longer holds that provider AND this model. Empty for
     /// the other bindings.
     pub seated: String,
+    /// (0.2.5 D3, F15-3) For a [`Bind::Entry`] target: the fingerprint of the WHOLE roster entry as
+    /// it was when the target was chosen ([`entry_fingerprint`]). The smoke is not run when the
+    /// entry at that position no longer has it - an edited endpoint, plan, key variable or `ext`
+    /// included. Empty for the other bindings (and for an entry whose roster text could not be
+    /// read when it was chosen: such a smoke is never run).
+    pub fingerprint: String,
+}
+
+/// (0.2.5 D3, F15-3) The fingerprint of `reviewers[position]` (1-based) in a roster text: the
+/// SHA-256 (hex) of the entry's canonical JSON - every object's keys sorted, recursively, no white
+/// space - so a reformatted file keeps it and any edited value changes it. `""` when the text does
+/// not parse or has no such entry.
+pub fn entry_fingerprint(roster_text: &str, position: usize) -> String {
+    use sha2::{Digest, Sha256};
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(roster_text) else {
+        return String::new();
+    };
+    let Some(entry) = position
+        .checked_sub(1)
+        .and_then(|i| v.get("reviewers")?.as_array()?.get(i))
+    else {
+        return String::new();
+    };
+    let mut canonical = String::new();
+    canonical_json(entry, &mut canonical);
+    Sha256::digest(canonical.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// A JSON value written with every object's keys in sorted order (recursively) and no white space.
+fn canonical_json(v: &serde_json::Value, out: &mut String) {
+    match v {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::Value::String(k.clone()).to_string());
+                out.push(':');
+                canonical_json(&map[k], out);
+            }
+            out.push('}');
+        }
+        serde_json::Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                canonical_json(item, out);
+            }
+            out.push(']');
+        }
+        other => out.push_str(&other.to_string()),
+    }
+}
+
+/// The fingerprint of the roster entry at `position` in the roster FILE as it is now (`""` when
+/// the roster has no file or it cannot be read) - what a target picked from it is bound to.
+fn fingerprint_now(roster: &Roster, position: usize) -> String {
+    if roster.path.is_empty() {
+        return String::new();
+    }
+    std::fs::read_to_string(&roster.path)
+        .map(|text| entry_fingerprint(&text, position))
+        .unwrap_or_default()
 }
 
 /// (F02-16) What a smoke's two `c3 consult` turns resolve the reviewer against. A roster seat is
@@ -101,6 +172,7 @@ pub fn pick_target(
                     model: m.trim().to_string(),
                     bind: Bind::Label,
                     seated: String::new(),
+                    fingerprint: String::new(),
                 });
             }
         }
@@ -134,6 +206,7 @@ pub fn pick_target(
                 model: e.model.clone(),
                 bind: Bind::Entry(e.position),
                 seated: e.model.clone(),
+                fingerprint: String::new(), // taken below, for the chosen seat only
             },
             rank,
             headroom,
@@ -156,7 +229,13 @@ pub fn pick_target(
         a.1.cmp(&b.1)
             .then(b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
     });
-    cands.into_iter().next().map(|(t, _, _)| t)
+    // (0.2.5 D3, F15-3) the chosen seat is bound to its whole entry as the roster file holds it now
+    cands.into_iter().next().map(|(mut t, _, _)| {
+        if let Bind::Entry(position) = t.bind {
+            t.fingerprint = fingerprint_now(roster, position);
+        }
+        t
+    })
 }
 
 /// The codex-config custom providers (`[model_providers.*]`) as smoke targets: for each provider
@@ -192,6 +271,7 @@ pub fn codex_custom_targets() -> Vec<Target> {
                         model,
                         bind: Bind::CodexConfig,
                         seated: String::new(),
+                        fingerprint: String::new(),
                     });
                 }
             }
@@ -276,6 +356,7 @@ pub fn run_smoke(
                 &target.provider,
                 &target.seated,
                 &target.model,
+                &target.fingerprint,
             ) {
                 Ok(one) => Some(one),
                 Err(why) => return Smoke::Fail(format!("not run: {why}")),
@@ -304,13 +385,17 @@ pub fn run_smoke(
 /// (F15-3) when the position no longer holds `provider` AND `seated` (the model the target was
 /// chosen with - "the roster entry changed"), when the entry is protected or on-request - such an
 /// entry is never smoked, not even indirectly - or inactive (its plan or label on
-/// `ext.c3.inactive`, or an engine the loader does not know).
+/// `ext.c3.inactive`, or an engine the loader does not know). (0.2.5 D3, F15-3) Refused as well
+/// when the entry is no longer the one the target was chosen with: its [`entry_fingerprint`] is not
+/// `fingerprint` (an edited endpoint, plan, key variable or `ext`; an empty `fingerprint` never
+/// matches).
 pub fn bound_roster(
     roster_text: &str,
     position: usize,
     provider: &str,
     seated: &str,
     model: &str,
+    fingerprint: &str,
 ) -> Result<String, String> {
     let home = std::env::var("USERPROFILE")
         .ok()
@@ -334,6 +419,11 @@ pub fn bound_roster(
         .ok_or_else(changed)?;
     if entry.provider != provider || entry.model != seated {
         return Err(changed());
+    }
+    if fingerprint.is_empty() || entry_fingerprint(roster_text, position) != fingerprint {
+        return Err(format!(
+            "the roster entry changed: reviewers entry {position} is not the entry the smoke was chosen with (edited since)"
+        ));
     }
     if entry.on_request {
         return Err(format!(
@@ -661,7 +751,10 @@ fn rollout_surface_of(
 /// found or read after a few tries, names another session than the thread it was looked up for,
 /// holds an unreadable record, has no terminal record for its turn (`task_complete` after its last
 /// `task_started`; a thread two consults share needs one per consult), or names neither a
-/// `multi_agent_version` nor a tool list. The budget watch's sub-agent guard - the defence behind
+/// `multi_agent_version` nor a tool list. (0.2.5 D3, F32-2) The proof is per TURN: every turn of a
+/// thread's rollout must record its own evidence (a `multi_agent_version` in its `turn_context`, or
+/// a tool list) between its own `task_started` and `task_complete`, and a rollout whose turn
+/// boundaries do not pair up is unproven too. The budget watch's sub-agent guard - the defence behind
 /// the switch - reads the same rollouts, so a CLI whose rollouts C3 cannot read runs with a blind
 /// guard: holding such an update costs one held update, letting it through risks the incident
 /// again. A shown surface (a version other than `disabled`, a multi-agent tool offered or called)
@@ -744,6 +837,14 @@ pub(crate) fn subagent_switch_check(
                 s.malformed
             ));
         }
+        // (0.2.5 D3, F32-2) evidence is bound to the turn it was recorded in: turn boundaries that
+        // do not pair up leave it unbound
+        if s.boundary_errors > 0 {
+            return unproven(format!(
+                "the rollout of thread {t} has turn boundaries that cannot be told apart ({} task_started / task_complete record(s) without their pair)",
+                s.boundary_errors
+            ));
+        }
         if s.terminals == 0 || s.completed < *k {
             return unproven(format!(
                 "the rollout of thread {t} holds no terminal record for its turn ({} task_complete for {k} consult(s))",
@@ -753,6 +854,15 @@ pub(crate) fn subagent_switch_check(
         if !s.has_evidence() {
             return unproven(format!(
                 "the rollout of thread {t} names no multi_agent_version and no tool list"
+            ));
+        }
+        // (0.2.5 D3, F32-2) EACH turn - a thread two consults share holds one per consult - needs
+        // switch evidence of its own, between its own task_started and task_complete
+        if let Some(i) = s.turns.iter().position(|x| !x.evidence) {
+            return unproven(format!(
+                "turn {} of {} in the rollout of thread {t} records no switch evidence of its own (no multi_agent_version, no tool list between its task_started and task_complete)",
+                i + 1,
+                s.turns.len()
             ));
         }
     }
@@ -844,6 +954,25 @@ mod tests {
             entries,
             ..Default::default()
         }
+    }
+
+    /// [`bound_roster`] bound to the fingerprint of the entry in the same text (the entry as it
+    /// was chosen is the entry the smoke reads).
+    fn bound(
+        text: &str,
+        position: usize,
+        provider: &str,
+        seated: &str,
+        model: &str,
+    ) -> Result<String, String> {
+        bound_roster(
+            text,
+            position,
+            provider,
+            seated,
+            model,
+            &entry_fingerprint(text, position),
+        )
     }
 
     fn now() -> DateTime<Utc> {
@@ -1160,6 +1289,69 @@ mod tests {
         assert_eq!(Smoke::Pass.hold(), None);
     }
 
+    /// (0.2.5 D3, F32-2) The switch is proven for EACH turn: two consults sharing a thread whose
+    /// rollout holds two completed turns pass only when both turns carry switch evidence between
+    /// their own boundaries; evidence in the first turn alone is unproven, and so is a rollout whose
+    /// turn boundaries do not pair up.
+    #[test]
+    fn the_codex_smoke_proves_the_switch_for_each_turn_of_a_shared_rollout() {
+        let one = smoke_rollout(T1, "disabled", false);
+        // [session_meta, task_started, tool list, turn_context, task_complete]
+        let (started, complete) = (one[1].clone(), one[4].clone());
+        let mut both = one.clone();
+        both.extend(one[1..].iter().cloned());
+        let (root, work, home) = switch_fixture(
+            "shared-both",
+            &[(T1, Some(false)), (T1, Some(false))],
+            &[(T1, both)],
+        );
+        let got = subagent_switch_check(&work, &home, SMOKE_TURNS);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(got, Smoke::Pass);
+
+        // the reviewer's recipe: recognized evidence in the first turn only
+        let mut first_only = one.clone();
+        first_only.extend([started.clone(), complete.clone()]);
+        let (root, work, home) = switch_fixture(
+            "shared-first",
+            &[(T1, Some(false)), (T1, Some(false))],
+            &[(T1, first_only)],
+        );
+        let why = unproven_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            why,
+            format!("the sub-agent switch is unproven: turn 2 of 2 in the rollout of thread {T1} records no switch evidence of its own (no multi_agent_version, no tool list between its task_started and task_complete)")
+        );
+
+        // evidence recorded after a turn's terminal record belongs to no turn
+        let mut late = one.clone();
+        late.extend([started.clone(), complete.clone(), one[3].clone()]);
+        let (root, work, home) = switch_fixture(
+            "shared-late",
+            &[(T1, Some(false)), (T1, Some(false))],
+            &[(T1, late)],
+        );
+        let why = unproven_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(why.contains("turn 2 of 2"), "{why}");
+
+        // boundaries that cannot be told apart: a terminal record with no turn open
+        let mut unpaired = one.clone();
+        unpaired.push(complete.clone());
+        let (root, work, home) = switch_fixture(
+            "shared-unpaired",
+            &[(T1, Some(false)), (T1, Some(false))],
+            &[(T1, unpaired)],
+        );
+        let why = unproven_reason(subagent_switch_check(&work, &home, SMOKE_TURNS));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            why.contains("turn boundaries that cannot be told apart (1 task_started / task_complete record(s) without their pair)"),
+            "{why}"
+        );
+    }
+
     /// (F11-8) A relative Codex home is resolved once to an absolute path (the consult children run
     /// from the scratch repo).
     #[test]
@@ -1177,6 +1369,7 @@ mod tests {
             model: "grok-4.7".into(),
             bind: Bind::Entry(1),
             seated: "grok-4.7".into(),
+            fingerprint: String::new(),
         };
         assert_eq!(scripted("grok::grok-4.7=pass", &t), Smoke::Pass);
         assert!(matches!(
@@ -1190,6 +1383,7 @@ mod tests {
             model: "m-1".into(),
             bind: Bind::Label,
             seated: String::new(),
+            fingerprint: String::new(),
         };
         assert!(matches!(
             scripted("unit-ftp::m-1=fail-then-pass", &u),
@@ -1216,6 +1410,37 @@ mod tests {
         );
         let t = pick_target("alibaba::qwen3.7-max", &r, "claude", now()).unwrap();
         assert_eq!(t.bind, Bind::Label);
+        assert_eq!(t.fingerprint, "", "a label target binds no entry");
+    }
+
+    /// (0.2.5 D3, F15-3) A seat picked from the roster carries the fingerprint of its whole entry as
+    /// the roster file holds it when it is picked; a roster without a file gives none (and such a
+    /// smoke is never run).
+    #[test]
+    fn a_picked_seat_carries_the_fingerprint_of_its_whole_entry() {
+        let text = r#"{"roster_version":1,"reviewers":[{"provider":"grok","engine":"grok","model":"grok-4.7","plan":"unit-nobudget"}]}"#;
+        let path = std::env::temp_dir().join(format!(
+            "c3-smoke-fp-{}-{}.json",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::write(&path, text).unwrap();
+        let r = c3_core::roster::validate_roster(&path.to_string_lossy(), text, None);
+        assert!(r.error.is_empty(), "{}", r.error);
+        let t = pick_target("", &r, "grok", now()).unwrap();
+        assert_eq!(t.bind, Bind::Entry(1));
+        assert_eq!(t.fingerprint, entry_fingerprint(text, 1));
+        assert!(!t.fingerprint.is_empty());
+        let _ = std::fs::remove_file(&path);
+        let r = roster(vec![entry(
+            1,
+            "grok",
+            "grok",
+            "grok-4.7",
+            "",
+            "unit-nobudget",
+        )]);
+        assert_eq!(pick_target("", &r, "grok", now()).unwrap().fingerprint, "");
     }
 
     /// (F02-16) The bound roster holds exactly the entry at that position - the operator's own JSON
@@ -1228,7 +1453,7 @@ mod tests {
             {"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://b.example/v1","env_key":"KEY_B"},"plan":"alibaba","panel":"weighty"},
             {"provider":"grok","engine":"grok","model":"grok-4.7","ext":{"reserve_percent":15}}
         ],"ext":{"c3":{"inactive":["dormant"],"reviewers":[]}}}"##;
-        let one = bound_roster(text, 2, "alibaba", "qwen3.8-max", "qwen4-max").unwrap();
+        let one = bound(text, 2, "alibaba", "qwen3.8-max", "qwen4-max").unwrap();
         let v: serde_json::Value = serde_json::from_str(&one).unwrap();
         let mut expected: serde_json::Value = serde_json::from_str(text).unwrap();
         let mut e = expected["reviewers"][1].take();
@@ -1246,21 +1471,19 @@ mod tests {
             r.entries[0].endpoint.as_ref().unwrap().base_url,
             "https://b.example/v1"
         );
-        assert!(bound_roster(text, 1, "alibaba", "qwen3.7-max", "qwen4-max")
+        assert!(bound(text, 1, "alibaba", "qwen3.7-max", "qwen4-max")
             .unwrap_err()
             .contains("on request"));
-        assert!(bound_roster(text, 3, "grok", "grok-4.7", "grok-4.8")
+        assert!(bound(text, 3, "grok", "grok-4.7", "grok-4.8")
             .unwrap_err()
             .contains("protected"));
-        assert!(bound_roster(text, 2, "grok", "qwen3.8-max", "qwen4-max").is_err());
-        assert!(bound_roster(text, 4, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
-        assert!(bound_roster(text, 0, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
+        assert!(bound(text, 2, "grok", "qwen3.8-max", "qwen4-max").is_err());
+        assert!(bound(text, 4, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
+        assert!(bound(text, 0, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
         let dormant = text.replace("\"plan\":\"alibaba\"", "\"plan\":\"dormant\"");
-        assert!(
-            bound_roster(&dormant, 2, "alibaba", "qwen3.8-max", "qwen4-max")
-                .unwrap_err()
-                .contains("inactive")
-        );
+        assert!(bound(&dormant, 2, "alibaba", "qwen3.8-max", "qwen4-max")
+            .unwrap_err()
+            .contains("inactive"));
     }
 
     /// (F15-3) The entry-bound smoke checks that the position still holds the provider AND the
@@ -1272,19 +1495,19 @@ mod tests {
         let chosen = r#"{"roster_version":1,"reviewers":[
             {"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://seat.example/v1","env_key":"KEY_SEAT"},"plan":"cheap"}
         ]}"#;
-        assert!(bound_roster(chosen, 1, "alibaba", "qwen3.8-max", "qwen3.8-max").is_ok());
+        assert!(bound(chosen, 1, "alibaba", "qwen3.8-max", "qwen3.8-max").is_ok());
         // the same position, the same provider - another model, endpoint and plan
         let replaced = r#"{"roster_version":1,"reviewers":[
             {"provider":"alibaba","engine":"claude","model":"qwen3.9-max","auth":"endpoint","endpoint":{"base_url":"https://other.example/v1","env_key":"KEY_OTHER"},"plan":"expensive"}
         ]}"#;
-        let why = bound_roster(replaced, 1, "alibaba", "qwen3.8-max", "qwen3.8-max").unwrap_err();
+        let why = bound(replaced, 1, "alibaba", "qwen3.8-max", "qwen3.8-max").unwrap_err();
         assert_eq!(
             why,
             "the roster entry changed: reviewers entry 1 no longer holds alibaba :: qwen3.8-max"
         );
         // a model swap's smoke: the seat must still hold the OLD id, the turns use the new one
-        assert!(bound_roster(chosen, 1, "alibaba", "qwen3.8-max", "qwen4-max").is_ok());
-        assert!(bound_roster(replaced, 1, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
+        assert!(bound(chosen, 1, "alibaba", "qwen3.8-max", "qwen4-max").is_ok());
+        assert!(bound(replaced, 1, "alibaba", "qwen3.8-max", "qwen4-max").is_err());
 
         // through run_smoke: refused before anything is created or run (in test mode too)
         struct NoRun(std::cell::Cell<usize>);
@@ -1319,11 +1542,103 @@ mod tests {
             model: "qwen3.8-max".into(),
             bind: Bind::Entry(1),
             seated: "qwen3.8-max".into(),
+            fingerprint: entry_fingerprint(chosen, 1),
         };
         let got = run_smoke(&env, "c3", &t, "claude", &work, "tok", Some(replaced));
         assert_eq!(
             fail_reason(got),
             "not run: the roster entry changed: reviewers entry 1 no longer holds alibaba :: qwen3.8-max"
+        );
+        assert_eq!(env.0.get(), 0, "no command ran");
+        assert!(!work.exists(), "nothing was created");
+    }
+
+    /// (0.2.5 D3, F15-3) The entry-bound smoke refuses ANY change of the chosen entry, not only of
+    /// its provider and model: the same provider and model with an edited endpoint, plan, key
+    /// variable or `ext` is "the roster entry changed"; a file only reformatted (white space, key
+    /// order) is the same entry; an empty fingerprint never matches.
+    #[test]
+    fn a_bound_smoke_refuses_an_entry_edited_in_any_field_since_it_was_chosen() {
+        let chosen = r#"{"roster_version":1,"reviewers":[{"provider":"alibaba","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{"base_url":"https://seat.example/v1","env_key":"KEY_SEAT"},"plan":"cheap"}]}"#;
+        let fp = entry_fingerprint(chosen, 1);
+        assert_eq!(fp.len(), 64, "{fp}");
+        assert!(bound_roster(chosen, 1, "alibaba", "qwen3.8-max", "qwen4-max", &fp).is_ok());
+        let reformatted = r#"{
+            "reviewers": [ { "plan": "cheap", "model": "qwen3.8-max", "provider": "alibaba",
+              "endpoint": { "env_key": "KEY_SEAT", "base_url": "https://seat.example/v1" },
+              "auth": "endpoint", "engine": "claude" } ],
+            "roster_version": 1
+        }"#;
+        assert_eq!(entry_fingerprint(reformatted, 1), fp);
+        assert!(bound_roster(reformatted, 1, "alibaba", "qwen3.8-max", "qwen4-max", &fp).is_ok());
+        for (what, edited) in [
+            (
+                "endpoint",
+                chosen.replace("https://seat.example/v1", "https://other.example/v1"),
+            ),
+            ("plan", chosen.replace("\"cheap\"", "\"expensive\"")),
+            ("key variable", chosen.replace("KEY_SEAT", "KEY_OTHER")),
+            (
+                "ext",
+                chosen.replace(
+                    "\"plan\":\"cheap\"",
+                    "\"plan\":\"cheap\",\"ext\":{\"c3\":{\"plan_caps\":[\"weekly\"]}}",
+                ),
+            ),
+        ] {
+            assert_ne!(entry_fingerprint(&edited, 1), fp, "{what}");
+            let why =
+                bound_roster(&edited, 1, "alibaba", "qwen3.8-max", "qwen4-max", &fp).unwrap_err();
+            assert_eq!(
+                why,
+                "the roster entry changed: reviewers entry 1 is not the entry the smoke was chosen with (edited since)",
+                "{what}"
+            );
+        }
+        assert!(bound_roster(chosen, 1, "alibaba", "qwen3.8-max", "qwen4-max", "").is_err());
+        assert_eq!(entry_fingerprint(chosen, 2), "");
+        assert_eq!(entry_fingerprint("not json", 1), "");
+
+        // through run_smoke: refused before anything is created or run (in test mode too)
+        struct NoRun(std::cell::Cell<usize>);
+        impl Env for NoRun {
+            fn run(
+                &self,
+                _p: &str,
+                _a: &[&str],
+                _e: &[(&str, &str)],
+                _c: Option<&std::path::Path>,
+            ) -> super::super::env::RunResult {
+                self.0.set(self.0.get() + 1);
+                super::super::env::RunResult::default()
+            }
+            fn http_get(
+                &self,
+                _u: &str,
+                _h: &[(&str, &str)],
+                _p: super::super::env::GetPolicy,
+            ) -> Result<(u16, String), String> {
+                Err("no network".into())
+            }
+        }
+        let env = NoRun(std::cell::Cell::new(0));
+        let work = std::env::temp_dir().join(format!(
+            "c3-smoke-edited-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let t = Target {
+            provider: "alibaba".into(),
+            model: "qwen3.8-max".into(),
+            bind: Bind::Entry(1),
+            seated: "qwen3.8-max".into(),
+            fingerprint: fp.clone(),
+        };
+        let edited = chosen.replace("https://seat.example/v1", "https://other.example/v1");
+        let got = run_smoke(&env, "c3", &t, "claude", &work, "tok", Some(&edited));
+        assert!(
+            fail_reason(got).starts_with("not run: the roster entry changed: reviewers entry 1"),
+            "refused"
         );
         assert_eq!(env.0.get(), 0, "no command ran");
         assert!(!work.exists(), "nothing was created");
@@ -1346,14 +1661,14 @@ mod tests {
             r#"{"on_request":"true"}"#,
             r#"{"on_request":1}"#,
         ] {
-            let why = bound_roster(&with_ext(ext), 1, "grok", "grok-4.7", "grok-4.8").unwrap_err();
+            let why = bound(&with_ext(ext), 1, "grok", "grok-4.7", "grok-4.8").unwrap_err();
             assert!(
                 why.starts_with("the roster does not load as the router reads it (entry 1: ext."),
                 "{ext}: {why}"
             );
             assert!(!why.contains("Fix it or move it aside"), "{why}");
         }
-        assert!(bound_roster(
+        assert!(bound(
             &with_ext(r#"{"reserve_percent":15}"#),
             1,
             "grok",
@@ -1362,7 +1677,7 @@ mod tests {
         )
         .unwrap_err()
         .contains("protected"));
-        assert!(bound_roster(
+        assert!(bound(
             &with_ext(r#"{"on_request":true}"#),
             1,
             "grok",
@@ -1371,14 +1686,14 @@ mod tests {
         )
         .unwrap_err()
         .contains("on request"));
-        assert!(bound_roster(&with_ext("{}"), 1, "grok", "grok-4.7", "grok-4.8").is_ok());
+        assert!(bound(&with_ext("{}"), 1, "grok", "grok-4.7", "grok-4.8").is_ok());
         // the inactive list: matched by the loader (a padded item counts), a malformed one refuses
         let inactive = |list: &str| {
             format!(
                 r#"{{"roster_version":1,"reviewers":[{{"provider":"grok","engine":"grok","model":"grok-4.7","plan":"supergrok"}}],"ext":{{"c3":{{"inactive":{list}}}}}}}"#
             )
         };
-        assert!(bound_roster(
+        assert!(bound(
             &inactive(r#"[" supergrok "]"#),
             1,
             "grok",
@@ -1388,14 +1703,14 @@ mod tests {
         .unwrap_err()
         .contains("inactive"));
         assert!(
-            bound_roster(&inactive(r#"["grok"]"#), 1, "grok", "grok-4.7", "g-1")
+            bound(&inactive(r#"["grok"]"#), 1, "grok", "grok-4.7", "g-1")
                 .unwrap_err()
                 .contains("inactive")
         );
-        assert!(bound_roster(&inactive("[7]"), 1, "grok", "grok-4.7", "g-1")
+        assert!(bound(&inactive("[7]"), 1, "grok", "grok-4.7", "g-1")
             .unwrap_err()
             .contains("does not load"));
-        assert!(bound_roster(&inactive(r#"["other"]"#), 1, "grok", "grok-4.7", "g-1").is_ok());
+        assert!(bound(&inactive(r#"["other"]"#), 1, "grok", "grok-4.7", "g-1").is_ok());
     }
 
     /// (F14-3) The smoke's one-entry roster is created with an exclusive create inside the smoke's
@@ -1447,6 +1762,7 @@ mod tests {
             model: "grok-4.8".into(),
             bind: Bind::Entry(1),
             seated: "grok-4.7".into(),
+            fingerprint: entry_fingerprint(text, 1),
         };
         let base = std::env::temp_dir().join(format!(
             "c3-smoke-scratch-{}-{}",

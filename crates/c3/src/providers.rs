@@ -2531,6 +2531,8 @@ pub fn resolve_collab_root(repo_root: &Path, collab_dir: &str) -> PathBuf {
     } else {
         repo_root.join(p)
     };
+    // (0.2.5, S1) a collab path inside C3's project folder follows its move from `.eck/` to `.c3/`
+    let joined = crate::state_dir::collab_dir(repo_root, joined);
     // GetFullPath-like normalisation
     std::fs::canonicalize(&joined)
         .map(dunce_simplify)

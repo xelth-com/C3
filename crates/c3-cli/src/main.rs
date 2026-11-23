@@ -68,21 +68,21 @@ enum Commands {
     Mcp,
     /// Run a roster model as an ordinary coding worker (docs/work-mode.md).
     Work(c3::cli::work::WorkArgs),
-    /// Commit and hand off (supervisor-only: workers never call it).
+    /// Commit the task with its report (supervisor-only: workers never call it).
     Finish(c3::cli::finish::FinishArgs),
-    /// Mark a task BLOCKED/FAILED with an emergency snapshot; no commit.
+    /// Mark a task BLOCKED/FAILED (report and journal); no commit.
     Fail(c3::cli::fail::FailArgs),
-    /// Edit a `.eck/<NAME>.md` manifest; no git, no snapshot.
+    /// Edit a `.c3/<NAME>.md` manifest; no git, no snapshot.
     Manifest(c3::cli::manifest::ManifestArgs),
-    /// Provision this repository for the C3 workflow (manifests, rules, agents, .mcp.json).
+    /// Provision this repository for the C3 workflow (.c3/ manifests, rules, agents, .mcp.json).
     Init(c3::cli::init::InitArgs),
-    /// Report stubs, c3 mcp registration, eck leftovers and the snapshot folder size.
+    /// Report the .c3/ folder, stubs, c3 mcp registration, old leftovers and the snapshot size.
     Doctor(c3::cli::doctor::DoctorArgs),
     /// List branches and worktrees with their recorded state; `--set` / `--clear` a state.
     Branches(c3::cli::branches::BranchesArgs),
-    /// Snapshot an EXTERNAL directory into `.eck/scouts/` for context.
+    /// Snapshot an EXTERNAL directory into `.c3/scouts/` for context.
     Scout(c3::cli::scout::ScoutArgs),
-    /// Write the full contents of matching files of THIS repo into `.eck/scouts/`.
+    /// Write the full contents of matching files of THIS repo into `.c3/scouts/`.
     Fetch(c3::cli::fetch::FetchArgs),
     /// Check for a newer C3 release and, only with `--apply`, install it (wave 11).
     Update(c3::cli::update::UpdateArgs),

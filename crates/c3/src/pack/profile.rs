@@ -1,6 +1,6 @@
 //! `--profile` resolution for `c3 snapshot` (Part B).
 //!
-//! `--profile a,b,-c,<glob>` reads `.eck/profiles.json`
+//! `--profile a,b,-c,<glob>` reads `.c3/profiles.json`
 //! (`{"name": {"include": [globs], "exclude": [globs]}}`) and resolves the comma-separated
 //! tokens into one include set and one exclude set:
 //! * a named profile unions its `include` globs into the includes and its `exclude` globs
@@ -10,7 +10,7 @@
 //! * an unknown profile name is refused, listing the known names.
 //!
 //! The resolution ([`resolve`]) and the match test ([`ProfileFilter::keep`]) are pure; the
-//! only I/O is [`load_profiles`], which reads `.eck/profiles.json`. Applied after discovery,
+//! only I/O is [`load_profiles`], which reads `.c3/profiles.json`. Applied after discovery,
 //! before the budget/depth pass: a path is kept when it matches an include (or no include
 //! glob was given at all) and does not match an exclude.
 
@@ -20,7 +20,7 @@ use std::path::Path;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
-/// One named profile in `.eck/profiles.json`.
+/// One named profile in `.c3/profiles.json`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Profile {
     #[serde(default)]
@@ -29,7 +29,7 @@ pub struct Profile {
     pub exclude: Vec<String>,
 }
 
-/// The whole `.eck/profiles.json` map (profile name → profile).
+/// The whole `.c3/profiles.json` map (profile name → profile).
 pub type Profiles = BTreeMap<String, Profile>;
 
 /// A resolved profile selection: the union of include globs and exclude globs.
@@ -58,7 +58,7 @@ fn is_glob_token(tok: &str) -> bool {
 fn unknown(name: &str, profiles: &Profiles) -> String {
     let known: Vec<&str> = profiles.keys().map(|s| s.as_str()).collect();
     if known.is_empty() {
-        format!("unknown profile '{name}' (.eck/profiles.json defines no profiles)")
+        format!("unknown profile '{name}' (.c3/profiles.json defines no profiles)")
     } else {
         format!("unknown profile '{name}' (known: {})", known.join(", "))
     }
@@ -124,10 +124,13 @@ impl ProfileFilter {
     }
 }
 
-/// Load `.eck/profiles.json`. Returns an error when `--profile` was requested but the file is
+/// Load `.c3/profiles.json`. Returns an error when `--profile` was requested but the file is
 /// missing or malformed (the caller only calls this when tokens were given).
 pub fn load_profiles(repo_root: &Path) -> Result<Profiles, String> {
-    let path = repo_root.join(".eck").join("profiles.json");
+    // `.c3/`, or the legacy folder until a writing command moved it
+    let path = crate::state_dir::read_path(repo_root)
+        .unwrap_or_else(|| crate::state_dir::path(repo_root))
+        .join("profiles.json");
     let text = std::fs::read_to_string(&path).map_err(|e| {
         format!(
             "--profile needs {}, which could not be read: {e}",

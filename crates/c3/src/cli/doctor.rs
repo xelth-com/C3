@@ -9,6 +9,7 @@ use crate::providers;
 use crate::setup::branches::{self, BranchReport, SET_HINT};
 use crate::setup::doctor;
 use crate::setup::rules::{RuleStatus, BRANCHES_HEADING, DELEGATION_RULE};
+use crate::state_dir::Layout;
 
 /// Arguments of `c3 doctor`.
 #[derive(Args, Debug, Default)]
@@ -16,11 +17,13 @@ pub struct DoctorArgs {
     /// Emit a JSON object instead of the text report.
     #[arg(long)]
     pub json: bool,
-    /// Repair what can be repaired automatically (stale agent model pins -> the alias; AGENTS.md
+    /// Repair what can be repaired automatically (an existing `.eck/` -> moved to `.c3/` once, and a
+    /// legacy `<collab>/.c3/` cache into it; stale agent model pins -> the alias; AGENTS.md
     /// -> the roster's successor; a kimi review's stale throwaway worktree -> removed; the
-    /// "BRANCHES AND WORKTREES" section appended to a C3-written `02-delegation.md` that lacks it), then report
+    /// "BRANCHES AND WORKTREES" section appended to a C3-written `02-delegation.md` that lacks it;
+    /// an old template sentence naming `.eck/` in a rules file -> the current one), then report
     /// what is left. The edits are left uncommitted; a repair that cannot be made safely is
-    /// reported; inside a C3 child nothing is repaired or removed.
+    /// reported; inside a C3 child nothing is repaired, moved or removed.
     #[arg(long)]
     pub fix: bool,
 }
@@ -114,6 +117,24 @@ pub fn run(args: DoctorArgs) -> i32 {
     // the remaining findings reflect the post-fix state). Inside a child C3 started (`C3_CHILD`)
     // the repair does nothing and says so (F04-4): a reviewer is read-only, a worker's patch holds
     // only its own change.
+    let in_child = crate::engines::in_c3_child();
+    // (0.2.5, S1) First the project folder: an existing `.eck/` moves to `.c3/` once, a legacy
+    // `<collab>/.c3/` cache moves into it (no stubs - doctor reports, `c3 init` provisions).
+    let (state_moves, state_problem) = if args.fix && !in_child {
+        let collab_root = providers::resolve_collab_root(&repo_root, ".collab");
+        match crate::state_dir::migrate(&repo_root, &collab_root) {
+            Ok(v) => (v, None),
+            Err(e) => (Vec::new(), Some(e)),
+        }
+    } else {
+        (Vec::new(), None)
+    };
+    // ...and the old template sentences naming `.eck/` in a rules file C3 wrote.
+    let sentence_repair = if args.fix && !in_child {
+        crate::setup::rules::repair_state_sentences(&repo_root)
+    } else {
+        crate::setup::rules::StateSentenceRepair::default()
+    };
     let repair = if args.fix {
         let models = providers::read_reviewer_roster()
             .map(|r| crate::setup::repo_models::roster_models(&r))
@@ -126,14 +147,14 @@ pub fn run(args: DoctorArgs) -> i32 {
     // `--fix` also appends the template's "BRANCHES AND WORKTREES" section to a delegation rule file
     // C3 wrote before the section existed (only that, only when the file still carries C3's title
     // line; a rewritten file is reported by the scan, never edited) - never inside a C3 child.
-    let rule_repair = if args.fix && !crate::engines::in_c3_child() {
+    let rule_repair = if args.fix && !in_child {
         crate::setup::rules::repair_delegation_rule(&repo_root)
     } else {
         crate::setup::rules::RuleRepair::default()
     };
     // `--fix` also removes a kimi review's throwaway worktree no live run owns (the kimi engine's
     // own link-safe removal) - never inside a C3 child (F04-4: a reviewer is read-only).
-    let removed_worktrees = if args.fix && !crate::engines::in_c3_child() {
+    let removed_worktrees = if args.fix && !in_child {
         branches::remove_stale_worktrees(&repo_root)
     } else {
         Vec::new()
@@ -141,11 +162,41 @@ pub fn run(args: DoctorArgs) -> i32 {
 
     let report = doctor::scan(&repo_root);
     // a repair that could not be made is a finding of its own (an AGENTS.md one has no scan line)
-    let clean = report.is_clean() && repair.problems.is_empty() && rule_repair.problem.is_none();
+    let clean = report.is_clean()
+        && repair.problems.is_empty()
+        && rule_repair.problem.is_none()
+        && state_problem.is_none()
+        && sentence_repair.problems.is_empty();
+    let state_read = if report.state_read.is_empty() {
+        crate::state_dir::STATE_DIR.to_string()
+    } else {
+        report.state_read.clone()
+    };
 
     if args.json {
         let obj = serde_json::json!({
             "clean": clean,
+            "state_folder": {
+                "layout": match report.state_layout {
+                    Layout::Absent => "absent",
+                    Layout::Current => "current",
+                    Layout::LegacyOnly => "legacy_only",
+                    Layout::Both => "both",
+                },
+                "read": report.state_read,
+            },
+            "state_moves": state_moves,
+            "state_move_problem": state_problem,
+            "state_sentences": report.state_sentences.iter().map(|s| serde_json::json!({
+                "file": s.file,
+                "old_sentence": s.old_sentence,
+                "rewritten": s.rewritten,
+            })).collect::<Vec<_>>(),
+            "fixed_state_sentences": sentence_repair.fixed,
+            "state_sentence_problems": sentence_repair.problems.iter().map(|(file, why)| serde_json::json!({
+                "file": file,
+                "why": why,
+            })).collect::<Vec<_>>(),
             "fixed": fixes.iter().map(|f| serde_json::json!({
                 "file": f.file,
                 "old": f.old,
@@ -208,6 +259,29 @@ pub fn run(args: DoctorArgs) -> i32 {
                 crate::setup::repo_models::SKIPPED_IN_CHILD
             );
         }
+        for m in &state_moves {
+            if m.starts_with("moved ") || m.starts_with("added ") {
+                println!("[fixed] {m}");
+            } else {
+                println!("[warn] {m}");
+            }
+        }
+        if let Some(e) = &state_problem {
+            println!("[!] {e}");
+        }
+        for f in &sentence_repair.fixed {
+            println!(
+                "[fixed] {f}: the template sentence naming {}/ now names {}/",
+                crate::state_dir::LEGACY_STATE_DIR,
+                crate::state_dir::STATE_DIR
+            );
+        }
+        for (f, why) in &sentence_repair.problems {
+            println!(
+                "[!] {f}: the template sentence naming {}/ not replaced - {why}",
+                crate::state_dir::LEGACY_STATE_DIR
+            );
+        }
         for f in fixes {
             println!("[fixed] {}: model {} -> {}", f.file, f.old, f.new);
         }
@@ -232,8 +306,34 @@ pub fn run(args: DoctorArgs) -> i32 {
                 println!("[!] could not remove the stale c3 worktree {}", r.path);
             }
         }
+        match report.state_layout {
+            Layout::Absent => println!(
+                "[i] no {}/ folder - `c3 init` creates it",
+                crate::state_dir::STATE_DIR
+            ),
+            Layout::LegacyOnly if crate::state_dir::migration_enabled() => println!(
+                "[i] no {}/ folder yet - {}/ is read until a writing command (c3 init, c3 finish, c3 fail, c3 manifest, c3 doctor --fix) moves it",
+                crate::state_dir::STATE_DIR,
+                crate::state_dir::LEGACY_STATE_DIR
+            ),
+            Layout::LegacyOnly => println!(
+                "[i] no {}/ folder - {}/ is read and left as it is ({}=off or \"state_migrate\": false); a writing command creates a fresh {}/",
+                crate::state_dir::STATE_DIR,
+                crate::state_dir::LEGACY_STATE_DIR,
+                crate::state_dir::MIGRATE_ENV,
+                crate::state_dir::STATE_DIR
+            ),
+            Layout::Both => println!(
+                "[warn] both {}/ and {}/ exist - C3 uses {}/; merge or remove {}/ by hand",
+                crate::state_dir::STATE_DIR,
+                crate::state_dir::LEGACY_STATE_DIR,
+                crate::state_dir::STATE_DIR,
+                crate::state_dir::LEGACY_STATE_DIR
+            ),
+            Layout::Current => {}
+        }
         if report.stub_files.is_empty() {
-            println!("[ok] no [STUB] markers left in .eck/*.md");
+            println!("[ok] no [STUB] markers left in {state_read}/*.md");
         } else {
             println!(
                 "[!] {} manifest(s) still carry a [STUB] marker:",
@@ -251,13 +351,33 @@ pub fn run(args: DoctorArgs) -> i32 {
         }
 
         if report.eck_core_in.is_empty() && report.eck_rule_files.is_empty() {
-            println!("[ok] no eck leftovers");
+            println!("[ok] no leftovers of the old eck tooling");
         } else {
             for loc in &report.eck_core_in {
-                println!("[!] eck-core server still referenced in {loc}");
+                println!(
+                    "[!] eck-core server still referenced in {loc} - C3 does not need that server (`c3 mcp` has the finish, fail and manifest tools); remove the entry"
+                );
             }
             for f in &report.eck_rule_files {
                 println!("[!] rule still names an eck_* tool: {f}");
+            }
+        }
+
+        for s in &report.state_sentences {
+            if s.old_sentence {
+                println!(
+                    "[!] {}: an old C3 template sentence names {}/ - c3 doctor --fix replaces it with the current one",
+                    s.file,
+                    crate::state_dir::LEGACY_STATE_DIR
+                );
+            }
+            if s.rewritten {
+                println!(
+                    "[warn] {}: names {}/ in text that is not C3's template - left as it is (C3's folder is {}/)",
+                    s.file,
+                    crate::state_dir::LEGACY_STATE_DIR,
+                    crate::state_dir::STATE_DIR
+                );
             }
         }
 
@@ -297,7 +417,7 @@ pub fn run(args: DoctorArgs) -> i32 {
         }
 
         println!(
-            "[i] .eck/snapshots/: {} file(s), {}",
+            "[i] {state_read}/snapshots/: {} file(s), {}",
             report.snapshot_count,
             human_bytes(report.snapshot_bytes)
         );

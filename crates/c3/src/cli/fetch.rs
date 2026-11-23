@@ -21,8 +21,21 @@ pub fn run(args: FetchArgs) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
 
+    // The data file goes into C3's folder: make sure it is in place first.
+    let state_dir = match crate::state_dir::ensure(&repo_root, None) {
+        Ok(e) => {
+            crate::state_dir::print_notes("c3 fetch", &e.notes(), true);
+            e.dir
+        }
+        Err(e) => {
+            eprintln!("c3 fetch: {e}");
+            return 1;
+        }
+    };
+
     let opts = FetchOpts {
         repo_root,
+        state_dir,
         globs: args.glob.iter().map(|g| g.replace('\\', "/")).collect(),
     };
     match scout::run_fetch(&opts) {

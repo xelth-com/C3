@@ -11,6 +11,29 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Added
 
+- **A roster id spelled differently from the catalog is still matched.** A plan may write a model
+  with a leading token the public catalog leaves out (`kimi-code/k3.1-pro` or `kimi-k3.1-pro` on
+  the roster, `moonshotai/k3.1-pro` in OpenRouter's list), so the entry never matched and got an
+  announcement at best. When no public source lists a roster id as it is, `c3 maintain` tries it
+  once more without that token - only when the token names the maker of the rest or the plan's
+  vendor by the panel's lab table (or the endpoint host's lab), the rest is a known maker's id, and
+  the catalog lists exactly that rest under a vendor slug of that maker; nothing else is guessed. A
+  match found that way is used for the dates and the successors exactly like a direct one, and the
+  successor is written in the plan's own spelling (`kimi-code/k3.2-pro`: the token put back), then
+  smoked on the entry's plan as always. Tests: the unit test of the alias (both spellings, the
+  date gate, an unlisted seated id, a token naming nothing, the plan's vendor) and an end-to-end
+  pass that seats `kimi-k3.2-pro` from `moonshotai/k3.2-pro`.
+- **A new Claude model is known to telemetry without a release.** OpenRouter spells a Claude id
+  with dots (`anthropic/claude-opus-4.5`), the claude engine with dashes (`claude-opus-4-5`), so a
+  published Claude model stayed `other` until a release added it to the closed list. An id a
+  TRUSTED public source lists under the `anthropic/` slug is now published in its dash form too
+  (dots to dashes in the version part) when that form is of the Claude shape
+  (`claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]`), and is sent by name; the OpenRouter
+  route keeps sending the catalog's own form. An untrusted source, another slug or an id of another
+  shape (`claude-3.5-sonnet`) changes nothing. Tests: unit tests in `maintain/models.rs` and
+  `telemetry/classes.rs`, and `telemetry_parity`'s backfill of a claude reviewer on
+  `claude-opus-9-3`.
+
 - **`c3 consult --rev <rev>`: every reviewer reads the revision under review.** The bridge resolves
   `<rev>` to its full sha (a revision git does not know is refused before anything starts), makes a
   throwaway detached worktree of it under the temp directory, stages the brief and the task's
@@ -143,6 +166,62 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Changed
 
+- **C3's project folder is `.c3/`, and `c3 finish` writes no snapshot by default.** C3 inherited its
+  per-project folder `.eck/` from another tool; it now keeps everything in a lowercase `.c3/` at the
+  repository root, git-ignored as a whole: the manifests (same names) and `profiles.json`,
+  `last-report.md` (the report of the last `c3 finish` / `c3 fail`, formerly
+  `lastsnapshot/AnswerToSA.md`), `scouts/`, the hand-off `snapshots/` / `lastsnapshot/`, and the
+  cache that used to live under `<collab>/.c3/` (`anchor`, `snapshot_seq`, `index/`, `explains/`) -
+  now one per repository. Every command that writes into the folder (`c3 init`, `c3 finish`,
+  `c3 fail`, `c3 manifest` and their MCP tools, `c3 scout`, `c3 fetch`, `c3 snapshot`, `c3 index
+  build`, `c3 explain` without `--out`) creates it when missing, with a `[STUB: ...]` stub for each
+  missing manifest and a `.c3/` line in `.gitignore` when no line ignores it; the SessionStart hook,
+  a read-only `c3 doctor` and a reviewer or worker C3 started (`C3_CHILD`) never do. **Upgrading:**
+  the first writing command (or `c3 doctor --fix`) renames an existing `.eck/` to `.c3/` with one
+  rename - if that fails nothing else is tried, the command says why and goes on with `.eck/` for
+  that run - moves the old tool's
+  `anchor`, `update_seq` and `telemetry_queue.json` into `.c3/legacy/`, the old report to
+  `last-report.md`, and a `<collab>/.c3/` cache into `.c3/` entry by entry (an existing entry wins).
+  A `.eck` that is a symlink or junction is never moved; when both folders exist nothing is merged
+  and `c3 doctor` says so; until the move, `c3 doctor` and the manifest digest of `c3 explain` read
+  `.eck/`. `C3_STATE_MIGRATE=off` (or `"state_migrate": false` in the C3 config) keeps C3's hands
+  off `.eck/` for a repository where the old tool is still used - C3 then creates a fresh `.c3/`.
+  `c3 finish` / `c3 fail` (and `c3_finish_task` / `c3_fail_task`) now write the report, the journal
+  entry and (finish) the commit, and no snapshot: `--snapshot` (MCP `"snapshot": true`) asks for the
+  hand-off snapshot, `--keep` applies to it, `--no-snapshot` is still accepted and does nothing;
+  `c3 snapshot --state` (old name `--eck`, kept as a hidden alias) writes one on its own. The
+  "never put in AI context" list is now `.c3ignore`; a directory without one still has its
+  `.eckignore` read. Reviewer packs, snapshots, `c3 fetch` and `--diff` patches leave out both
+  `.c3/` and `.eck/` (case-insensitively on Windows and macOS). `c3 doctor` reports a C3-written
+  rules file that still carries an old template sentence naming `.eck/`, and `c3 doctor --fix`
+  replaces exactly that line (the same link-safe replace as the delegation-rule repair); text the
+  user wrote is reported and left alone. The stub detector accepts `[STUB]` as well as `[STUB:` at
+  the start of a line. The root `AGENTS.md` is a short C3-only worker instruction file now. A collab
+  directory kept inside the folder (`--collab-dir .eck/collab`, as some skills pass it) follows the
+  move: once `.c3/` exists, a `.eck/...` path that no longer exists is read as the same path under
+  `.c3/` (said in one line, and no new `.eck/` is ever created for it), and a `.c3/...` path on a
+  repository that still has `.eck/` moves the folder first; the move is never attempted while a
+  detached consultation or work run is live under `.eck/`, and when it cannot be made now (a live
+  run, a failed rename) the command goes on with the legacy folder for that run and says so - one
+  rename or nothing.
+- **A swap across a major is held when the catalog lists it at more than twice the price.** A
+  successor of a higher major (`qwen3.8-max` -> `qwen4-max`) used to be seated after its smoke with
+  nothing weighing that it may cost more on the same plan. OpenRouter's catalog carries a list price
+  per model (`pricing.prompt`, `pricing.completion`); when it prices both the seated id and the
+  candidate and the candidate's is more than twice the seated one's in either field, the swap is
+  announced only: "not seated (list price N times higher - seat it by hand)". Within one major, or
+  without prices for both ids, nothing changes. A list price is a signal of what the model costs
+  elsewhere, not the plan's own price - a plan may charge the same for both - which is why the swap
+  is left to the operator rather than refused. Only the two numbers per id are read, for the pass
+  that fetched them; nothing of the pricing is written to the state file. Tests: the catalog parser
+  (positive prices only, never serialised), the unit test of the price rule (prompt or completion
+  over twice, exactly twice, a missing price, within a major, an own-list id) and an end-to-end
+  `--models` pass.
+- **CI names the crate a hung or cancelled test run was in.** The test step of both runners and of
+  the index-surreal job is split into one step per crate (`c3-core`, `c3`, `c3-cli`), each with
+  `--no-fail-fast` and `if: success() || failure()`, so all three always run and the run's API shows
+  the step that was running - twice on 2026-11-22/23 the Windows job was cancelled or hung without
+  a usable log. The same tests run as before; the job timeouts stay.
 - **A claude-engine reviewer on a diff-review or acceptance reads a frozen tree of HEAD.** Without
   `--rev`, the claude engine's stand-ins (GLM, Kimi, Qwen, DeepSeek through Anthropic-compatible
   endpoints) now run in a throwaway worktree of HEAD on those two purposes, like the kimi engine,
@@ -265,6 +344,59 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **The `c3 maintain` tests no longer read the machine's process table.** A pass skips an engine
+  whose CLI is running ("grok skipped: in use"), and the integration tests drove that probe against
+  the real machine: on 2026-11-23 six to nine of them failed whenever another session's real
+  `grok.exe` was running. Under `CODEX_CONSULT_TEST_MODE` the probe is now answered by the test
+  hook `CODEX_CONSULT_TEST_MAINTAIN_IN_USE` (the engine names to report as in use; none by
+  default) and the process table is never read. Tests: a pass with a stand-in engine process
+  running updates its engine, and the hook drives the "in use - skipped" path (nothing installed,
+  due again the next day).
+- **A public model source is read only from a global unicast address (F27-1, F15-1).** The address
+  check let through `0.0.0.0/8` (a local route on Linux), the CGNAT range `100.64.0.0/10` (also
+  overlays such as Tailscale), benchmarking `198.18.0.0/15`, the documentation ranges and IPv6
+  site-local `fec0::/10`. It is now one table of every non-global range - IPv4 `0/8`, `10/8`,
+  `100.64/10`, `127/8`, `169.254/16`, `172.16/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.88.99.0/24`,
+  `192.168/16`, `198.18/15`, `198.51.100.0/24`, `203.0.113.0/24`, `224/4`, `240/4` and the broadcast
+  address; IPv6 `::`, `::1`, `64:ff9b:1::/48`, `100::/64`, `2001:db8::/32`, `fc00::/7`,
+  `fe80::/10`, `fec0::/10`, `ff00::/8` - with an IPv4-mapped address (and one of the NAT64 prefix
+  `64:ff9b::/96`) judged as the IPv4 address it carries, at the name lookup and at the peer of every
+  hop. Test: one row per range, the neighbours just outside them, the lookup and the peer check.
+- **A `c3 maintain` fetch never goes through a proxy it did not check (F29-1).** ureq 2.12 takes a
+  proxy from `ALL_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY` only with its `proxy-from-env` feature
+  (off in C3's build) or when asked (the http engine asks, on purpose, for its own requests); the
+  maintain client relied on that default. It now refuses the environment's proxy explicitly, so a
+  dependency that turns the feature on through cargo's feature unification cannot route a public
+  fetch through a proxy - through which the peer check would see the proxy, never the origin. C3
+  has no proxy setting for `c3 maintain`. Test: with `HTTPS_PROXY`, `HTTP_PROXY` and `ALL_PROXY` on
+  a dead local port, a maintain GET still connects to its origin. (A name lookup that stalls past
+  the deadline still leaves its thread to finish on its own: a recorded boundary.)
+- **The connect gets the time left after the name lookup (F14-1).** Each hop of a maintain GET now
+  resolves its name first, under the fetch's one deadline, and only then builds its client: the
+  connect and the request get the time that remains AFTER the lookup, never the budget computed
+  before it, and they connect to the very addresses the lookup vetted (no second lookup). Test: a
+  lookup that takes 800 ms of a 1 s deadline leaves the connect at most 200 ms; one that outlasts
+  the deadline never reaches a connect.
+- **An engine smoke bound to a roster entry refuses any edit of it (F15-3).** The bound smoke
+  checked only that the position still held the provider and the model it was chosen with, so an
+  edit of the endpoint, plan, key variable or `ext` that kept both was smoked on the new entry. A
+  target now carries the fingerprint of the whole entry as it was chosen (SHA-256 of its canonical
+  JSON: keys sorted, no white space - a reformatted file keeps it) and the smoke is "not run: the
+  roster entry changed" when the entry at that position no longer has it. Tests: the unit tests of
+  the fingerprint and of `bound_roster` (each field edited, a reformatted file, an empty
+  fingerprint) and an end-to-end engine update whose seat's plan is edited between its two smokes:
+  the post-update smoke is not run and the update is rolled back.
+- **The codex smoke proves the sub-agent switch for each of its turns (F32-2, supersedes F11-8).**
+  The check grouped the smoke's consults by thread, counted the terminal records and tested ONE
+  rollout-wide evidence flag, so two turns on a shared rollout counted as proven when recognized
+  switch evidence existed for the first turn only. The rollout reader now binds the evidence (a
+  `multi_agent_version` in a `turn_context`, or a tool list) to the turn it was recorded in - the
+  `task_started` / `task_complete` pair around it - and the smoke passes only when every turn has
+  its own evidence between its own boundaries; a turn without it, or a rollout whose boundaries do
+  not pair up (a terminal record with no turn open, a turn started inside another), is unproven,
+  which holds an update like a failure. Tests: the rollout reader's per-turn evidence, and the
+  reviewer's shared-rollout fixture - evidence in the first turn only is unproven, in both is a
+  pass.
 - **`--rev` and `--diff` reach the http reviewer (F19-1, F20-1).** Under `--rev` the http engine
   got no worktree, printed a warning and sent a pack of the LIVE tree - uncommitted files included -
   to a remote model while the operator asked for a frozen revision; with `--diff` its prompt said

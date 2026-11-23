@@ -570,3 +570,31 @@ swap -> xelth.com/C3 page after the tag.
   D1 brief: items 12 and 14 moved into D4; 22 items. D2 brief: 15 items. Order after S1 lands:
   D4 and D2 in parallel, then D1 (it shares `consult/reviewed.rs` and `engines/worktree.rs` with
   D4). D3 is running.
+- 2026-11-23 ~09:40 CET, wave S1 reported (11 points, all done) and APPLIED to main (clean apply,
+  `patches/s1.patch`): new `crates/c3/src/state_dir.rs` owns the folder names, the ignore-file
+  names, `ensure`, the one-time move and `collab_dir`; `.c3/` holds the manifests, `last-report.md`,
+  scouts, snapshots and the cache that was in `<collab>/.c3/`; EVERY writing command moves an
+  `.eck/` once (not only the five named - else `c3 scout` would create a fresh `.c3/` beside it);
+  no snapshot by default (`--snapshot`); `--state` / `.c3ignore` with the old names as fallbacks;
+  the stub detector takes `[STUB]` and `[STUB:`; doctor reports and `--fix` replaces the old
+  template sentence; `AGENTS.md` rewritten. Point 11: a collab path inside the folder follows the
+  move in both spellings, the move waits while a run is live under `.eck/`, a failed rename falls
+  back to the legacy path for that run. Accepted: 'both folders exist' is a warning; inside a C3
+  child a writing command refuses when `.c3/` is missing; plain `c3 snapshot` output goes to
+  `.c3/snapshots/`.
+- 2026-11-23 ~09:45 CET, wave D3 reported (11 items, all done) and APPLIED on top (CHANGELOG
+  conflict, both sides kept): the maintain tests' in-use probe is a test hook; a swap across a
+  major is announced only when the catalog's list price more than doubles; a roster id with a
+  lab / plan token is matched through the vendor slug and written back in the plan's spelling; a
+  dotted `anthropic/` id is also published in dash form; CI test step per crate; global-unicast
+  table for public sources (lookup and peer, every hop); no proxy from the environment; the
+  connect gets the time left after the lookup; the entry fingerprint (canonical JSON, sha256) in
+  `Target`; the smoke proves the switch per turn (F32-2). Decisions (b), (e), (g) written for the
+  tech-debt file. Worker's note for the operator: `openai :: gpt-6.2-sol` is neither protected nor
+  on request, so in swap mode a catalog successor of Sol would be smoked on the ChatGPT account
+  and seated (Astra is protected) - left as it is, to tell the operator.
+  Verification on main with S1 + D3: fmt, clippy clean; c3-core 252, c3 lib 852, every other c3
+  binary green; c3-cli finish 18, init_doctor 19, snapshot_partb 7, delegation_rule 7,
+  mcp_integration 2, maintain 44 (no real grok needed any more), telemetry_parity 12. The other
+  c3-cli binaries: the S1 worker ran branches, ci_check, update, claude_engine, kimi_engine, work
+  on its tree; CI runs all.

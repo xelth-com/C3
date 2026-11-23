@@ -3,14 +3,15 @@
 //!
 //! The rule "C3 never commits" becomes "C3 commits only via `c3 finish`": [`run_finish`] is
 //! the only code path in C3 that writes a git ref/commit (`c3 work` also writes loose objects
-//! with `git hash-object -w` for its `patch.diff` baseline, but no ref or commit). It writes the
-//! agent report
-//! (`.eck/lastsnapshot/AnswerToSA.md`), prepends a journal entry, stages everything with
+//! with `git hash-object -w` for its `patch.diff` baseline, but no ref or commit). Each of the
+//! three first makes sure C3's project folder `.c3/` is in place ([`crate::state_dir::ensure`]:
+//! an existing `.eck/` is moved once). [`run_finish`] writes the agent report
+//! (`.c3/last-report.md`), prepends a journal entry, stages everything with
 //! `git add -A`, unstages the machine-local never-commit set ([`never_commit`]), runs the
-//! secret gate over the staged content ([`secret_gate`]), commits, and writes a delta
-//! snapshot into the architect's hand-off folder. [`run_fail`] does the same minus the
-//! staging and commit, as an emergency snapshot. [`run_manifest`] edits a `.eck/*.md`
-//! manifest with no git and no snapshot.
+//! secret gate over the staged content ([`secret_gate`]), commits, and - only when asked
+//! (`--snapshot`, 0.2.5) - writes a delta snapshot into the hand-off folder. [`run_fail`] does
+//! the same minus the staging and commit (its snapshot, when asked, is an emergency one).
+//! [`run_manifest`] edits a `.c3/*.md` manifest with no git and no snapshot.
 
 pub mod git;
 pub mod journal;
@@ -21,6 +22,7 @@ pub mod secret_gate;
 use std::path::{Path, PathBuf};
 
 use crate::pack::snapshot::{self, SnapshotOpts};
+use crate::state_dir;
 use secret_gate::SecretHit;
 
 /// Options for [`run_finish`].
@@ -31,7 +33,7 @@ pub struct FinishOpts {
     pub message: String,
     pub status: String,
     pub keep: usize,
-    /// Take the hand-off snapshot (false = `--no-snapshot`).
+    /// Take the hand-off snapshot (`--snapshot`; off by default since 0.2.5).
     pub snapshot: bool,
     /// Commit even when nothing is staged (`--allow-empty`).
     pub allow_empty: bool,
@@ -60,6 +62,8 @@ pub struct FinishResult {
     pub snapshot_path: Option<PathBuf>,
     pub snapshot_note: Option<String>,
     pub pruned: usize,
+    /// What was done to bring the project folder into place ([`crate::state_dir::Ensured::notes`]).
+    pub folder_notes: Vec<String>,
 }
 
 /// The outcome of a successful [`run_fail`].
@@ -68,6 +72,8 @@ pub struct FailResult {
     pub snapshot_path: Option<PathBuf>,
     pub snapshot_note: Option<String>,
     pub pruned: usize,
+    /// What was done to bring the project folder into place ([`crate::state_dir::Ensured::notes`]).
+    pub folder_notes: Vec<String>,
 }
 
 /// Why `c3 finish` refused or failed.
@@ -129,21 +135,17 @@ fn now_stamp() -> String {
     chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()
 }
 
-fn eck_dir(repo_root: &Path) -> PathBuf {
-    repo_root.join(".eck")
+/// Write the report to `<state dir>/last-report.md` (`.c3/`, or the legacy folder for a run whose
+/// move had to wait).
+fn write_answer(dir: &Path, body: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    std::fs::write(dir.join(state_dir::LAST_REPORT), body)
+        .map_err(|e| format!("write {}: {e}", state_dir::LAST_REPORT))
 }
 
-/// Write `.eck/lastsnapshot/AnswerToSA.md`.
-fn write_answer(repo_root: &Path, body: &str) -> Result<(), String> {
-    let dir = eck_dir(repo_root).join("lastsnapshot");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    std::fs::write(dir.join("AnswerToSA.md"), body).map_err(|e| format!("write AnswerToSA.md: {e}"))
-}
-
-/// Prepend a journal entry to `.eck/JOURNAL.md` (create it when missing).
-fn write_journal(repo_root: &Path, title: &str, body: &str) -> Result<(), String> {
-    let dir = eck_dir(repo_root);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+/// Prepend a journal entry to `<state dir>/JOURNAL.md` (create it when missing).
+fn write_journal(dir: &Path, title: &str, body: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let path = dir.join("JOURNAL.md");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let updated = journal::insert_journal_entry(&existing, &now_stamp(), title, body);
@@ -155,11 +157,13 @@ fn write_journal(repo_root: &Path, title: &str, body: &str) -> Result<(), String
 fn hand_off_snapshot(
     repo_root: &Path,
     collab_root: &Path,
+    state: &Path,
     keep: usize,
     report: &str,
     fail: bool,
 ) -> (Option<PathBuf>, Option<String>, usize) {
-    let has_anchor = snapshot::anchor_exists(collab_root);
+    let state = state.to_path_buf();
+    let has_anchor = snapshot::anchor_exists(&state);
     // finish: a delta when an anchor exists, else a full snapshot (which establishes it).
     // fail: a `--fail` working-tree delta when an anchor exists, else a FULL emergency
     //       snapshot (no baseline to diff against — and an emergency is exactly when the
@@ -167,6 +171,7 @@ fn hand_off_snapshot(
     let opts = SnapshotOpts {
         repo_root: repo_root.to_path_buf(),
         collab_root: collab_root.to_path_buf(),
+        state_dir: state,
         out: None,
         delta: !fail && has_anchor,
         depth: 9,
@@ -176,7 +181,7 @@ fn hand_off_snapshot(
         max_file_size: 2 * 1024 * 1024,
         // A `--fail` snapshot needs an anchor; without one fall back to a full snapshot.
         fail: fail && has_anchor,
-        eck: true,
+        state: true,
         keep,
         embed_report: Some(report.to_string()),
         base: None,
@@ -189,8 +194,9 @@ fn hand_off_snapshot(
     }
 }
 
-/// `c3 finish`: write the report and journal, stage, unstage the never-commit set, gate on
-/// secrets, commit, and write the hand-off snapshot.
+/// `c3 finish`: make sure the project folder is in place, write the report and journal, stage,
+/// unstage the never-commit set, gate on secrets, commit, and - when asked - write the hand-off
+/// snapshot.
 pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
     let repo = &opts.repo_root;
 
@@ -201,10 +207,16 @@ pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
         return Err(FinishError::MessageSecret(kinds));
     }
 
+    // 0b. The project folder (an existing `.eck/` moved once, stubs, the `.gitignore` line - before
+    //     the staging, so a `.gitignore` change is part of the commit).
+    let ensured = state_dir::ensure(repo, Some(&opts.collab_root)).map_err(FinishError::Other)?;
+
     // 1-2. Report + journal (before any git write, so they are part of the commit).
-    write_answer(repo, &journal::answer_finish(&opts.status)).map_err(FinishError::Other)?;
+    let state = ensured.dir.clone();
+    let collab = state_dir::moved_with_folder(repo, &opts.collab_root);
+    write_answer(&state, &journal::answer_finish(&opts.status)).map_err(FinishError::Other)?;
     let title = journal::first_line(&opts.message, "Agent Report").to_string();
-    write_journal(repo, &title, &opts.status).map_err(FinishError::Other)?;
+    write_journal(&state, &title, &opts.status).map_err(FinishError::Other)?;
 
     // 3. Stage everything (honours .gitignore).
     git::add_all(repo).map_err(FinishError::Other)?;
@@ -234,11 +246,11 @@ pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
     git::commit(repo, &opts.message, opts.allow_empty).map_err(FinishError::Other)?;
     let commit = git::head(repo).unwrap_or_default();
 
-    // 8. The hand-off snapshot.
+    // 8. The hand-off snapshot, only when asked (`--snapshot`).
     let (snapshot_path, snapshot_note, pruned) = if opts.snapshot {
-        hand_off_snapshot(repo, &opts.collab_root, opts.keep, &opts.status, false)
+        hand_off_snapshot(repo, &collab, &state, opts.keep, &opts.status, false)
     } else {
-        (None, Some("no snapshot: --no-snapshot".to_string()), 0)
+        (None, None, 0)
     };
 
     Ok(FinishResult {
@@ -248,44 +260,53 @@ pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
         snapshot_path,
         snapshot_note,
         pruned,
+        folder_notes: ensured.notes(),
     })
 }
 
-/// `c3 fail`: write the BLOCKED/FAILED report and journal and an emergency `--fail`
-/// snapshot. No staging, no commit.
+/// `c3 fail`: make sure the project folder is in place, write the BLOCKED/FAILED report and
+/// journal and - when asked - an emergency `--fail` snapshot. No staging, no commit.
 pub fn run_fail(opts: &FailOpts) -> Result<FailResult, FinishError> {
     let repo = &opts.repo_root;
-    write_answer(repo, &journal::answer_fail(&opts.status)).map_err(FinishError::Other)?;
-    write_journal(repo, "BLOCKED/FAILED", &opts.status).map_err(FinishError::Other)?;
+    let ensured = state_dir::ensure(repo, Some(&opts.collab_root)).map_err(FinishError::Other)?;
+    let state = ensured.dir.clone();
+    let collab = state_dir::moved_with_folder(repo, &opts.collab_root);
+    write_answer(&state, &journal::answer_fail(&opts.status)).map_err(FinishError::Other)?;
+    write_journal(&state, "BLOCKED/FAILED", &opts.status).map_err(FinishError::Other)?;
 
     let (snapshot_path, snapshot_note, pruned) = if opts.snapshot {
-        hand_off_snapshot(repo, &opts.collab_root, opts.keep, &opts.status, true)
+        hand_off_snapshot(repo, &collab, &state, opts.keep, &opts.status, true)
     } else {
-        (None, Some("no snapshot: --no-snapshot".to_string()), 0)
+        (None, None, 0)
     };
 
     Ok(FailResult {
         snapshot_path,
         snapshot_note,
         pruned,
+        folder_notes: ensured.notes(),
     })
 }
 
-/// `c3 manifest`: apply one action to a `.eck/<name>.md` manifest. No git, no snapshot.
+/// `c3 manifest`: apply one action to a `.c3/<name>.md` manifest (the project folder made sure of
+/// first). No git, no snapshot. Returns the edited path and the folder notes.
 pub fn run_manifest(
     repo_root: &Path,
+    collab_root: Option<&Path>,
     name: &str,
     action: manifest::Action,
     content: &str,
     section: Option<&str>,
     target: Option<&str>,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, Vec<String>), String> {
     if !manifest::manifest_name_ok(name) {
         return Err(format!(
-            "manifest name '{name}' is refused: it must be a plain NAME.md directly under .eck/ (no path separator, no '..')"
+            "manifest name '{name}' is refused: it must be a plain NAME.md directly under {}/ (no path separator, no '..')",
+            state_dir::STATE_DIR
         ));
     }
-    let path = manifest::manifest_path(repo_root, name);
+    let ensured = state_dir::ensure(repo_root, collab_root)?;
+    let path = ensured.dir.join(name);
     let current = match std::fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => manifest::initial_content(name),
@@ -296,7 +317,7 @@ pub fn run_manifest(
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     std::fs::write(&path, updated).map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(path)
+    Ok((path, ensured.notes()))
 }
 
 #[cfg(test)]

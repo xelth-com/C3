@@ -872,6 +872,23 @@ pub struct SubagentSurface {
     pub malformed: usize,
     /// (F11-8) Why the rollout could not be read (`""` when it was read).
     pub read_error: String,
+    /// (0.2.5 D3, F32-2) The rollout's turns in order: each from a `task_started` to its
+    /// `task_complete`, with whether switch evidence was recorded between those two boundaries.
+    pub turns: Vec<TurnEvidence>,
+    /// (0.2.5 D3, F32-2) How many turn boundaries cannot be told apart: a `task_complete` with no
+    /// turn open, or a `task_started` while the previous turn is still open. Evidence cannot be
+    /// bound to a turn then.
+    pub boundary_errors: usize,
+}
+
+/// (0.2.5 D3, F32-2) One turn of a rollout ([`SubagentSurface::turns`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TurnEvidence {
+    /// Its `task_complete` was seen.
+    pub complete: bool,
+    /// Recognized switch evidence inside its own boundaries: a `turn_context` naming a
+    /// `multi_agent_version`, or an `additional_tools` list with its `tools` array.
+    pub evidence: bool,
 }
 
 impl SubagentSurface {
@@ -949,7 +966,10 @@ fn collect_multi_agent_tools(node: &Value, namespace: &str, out: &mut Vec<String
 /// multi-agent tools it called. The shape is codex-cli 0.169.0's (2026-11-22: `gpt-6.2-astra` with
 /// the bridge's off switches - `"multi_agent_version":"disabled"`, no `collaboration` namespace;
 /// 2026-11-15: a forced-v2 model - `v2` and `collaboration.spawn_agent` ...). A missing file reads
-/// `found: false`.
+/// `found: false`. (0.2.5 D3, F32-2) The evidence is also bound to the turn it was recorded in -
+/// the `task_started` / `task_complete` pair around it ([`SubagentSurface::turns`]) - so a check can
+/// ask for each turn's own evidence; boundaries that do not pair up are counted
+/// ([`SubagentSurface::boundary_errors`]).
 pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
     let mut s = SubagentSurface::default();
     if path.as_os_str().is_empty() || !path.is_file() {
@@ -978,6 +998,12 @@ pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
         let Some(p) = v.get("payload") else {
             continue;
         };
+        // (F32-2) evidence counts for the turn open at its line, if any
+        let mark_turn = |s: &mut SubagentSurface| {
+            if let Some(t) = s.turns.last_mut().filter(|t| !t.complete) {
+                t.evidence = true;
+            }
+        };
         if ty == "session_meta" || ty == "turn_context" {
             if ty == "session_meta" && s.session_id.is_empty() {
                 if let Some(id) = p.get("id").and_then(|i| i.as_str()) {
@@ -986,15 +1012,28 @@ pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
             }
             if let Some(mav) = p.get("multi_agent_version").and_then(|m| m.as_str()) {
                 push_unique(&mut s.versions, mav);
+                if ty == "turn_context" {
+                    mark_turn(&mut s);
+                }
             }
             continue;
         }
         if ty == "event_msg" {
             match p.get("type").and_then(|t| t.as_str()).unwrap_or("") {
-                "task_started" => s.terminals = 0,
+                "task_started" => {
+                    s.terminals = 0;
+                    if s.turns.last().is_some_and(|t| !t.complete) {
+                        s.boundary_errors += 1; // the previous turn never completed
+                    }
+                    s.turns.push(TurnEvidence::default());
+                }
                 "task_complete" => {
                     s.terminals += 1;
                     s.completed += 1;
+                    match s.turns.last_mut().filter(|t| !t.complete) {
+                        Some(t) => t.complete = true,
+                        None => s.boundary_errors += 1, // no turn open to complete
+                    }
                 }
                 _ => {}
             }
@@ -1005,6 +1044,7 @@ pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
             "additional_tools" => {
                 if let Some(tools) = p.get("tools").and_then(|t| t.as_array()) {
                     s.tool_lists += 1;
+                    mark_turn(&mut s);
                     for t in tools {
                         collect_multi_agent_tools(t, "", &mut s.offered);
                     }
@@ -4168,6 +4208,59 @@ mod tests {
             let s = rollout_subagent_surface(&p);
             assert_eq!((s.terminals, s.malformed), (0, 0), "{s:?}");
         }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// (0.2.5 D3, F32-2) The surface binds switch evidence to the turn it was recorded in: a
+    /// `turn_context` naming a `multi_agent_version` or a tool list between a turn's `task_started`
+    /// and `task_complete` counts for that turn only (the `session_meta` before the first turn and a
+    /// record after a terminal one count for none), and boundaries that do not pair up are counted.
+    #[test]
+    fn the_surface_binds_switch_evidence_to_its_turn() {
+        let home = scratch("surface-turns");
+        let now = Utc::now();
+        let id = v7(now, 27);
+        let at = stamp(now);
+        let meta = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"multi_agent_version\":\"disabled\"}}}}"
+        );
+        let tc = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"turn_context\",\"payload\":{{\"turn_id\":\"t\",\"multi_agent_version\":\"disabled\"}}}}"
+        );
+        let tc_bare = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"turn_context\",\"payload\":{{\"turn_id\":\"t\"}}}}"
+        );
+        let tools = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"additional_tools\",\"tools\":[]}}}}"
+        );
+        let started = event_line(now, "task_started");
+        let complete = event_line(now, "task_complete");
+        let turns = |lines: &[&String]| {
+            let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+            let p = write_rollout(&home, &id, &text, now);
+            rollout_subagent_surface(&p)
+        };
+        let full = |c: bool, e: bool| TurnEvidence {
+            complete: c,
+            evidence: e,
+        };
+        // turn 1 by its turn_context, turn 2 by its tool list
+        let s = turns(&[&meta, &started, &tc, &complete, &started, &tools, &complete]);
+        assert_eq!(s.turns, vec![full(true, true), full(true, true)], "{s:?}");
+        assert_eq!(s.boundary_errors, 0);
+        // evidence in the first turn only; the session_meta and a late record count for none
+        let s = turns(&[
+            &meta, &started, &tc, &complete, &started, &tc_bare, &complete, &tc,
+        ]);
+        assert_eq!(s.turns, vec![full(true, true), full(true, false)], "{s:?}");
+        // a turn still open; a terminal record with no turn open; a turn started inside another
+        let s = turns(&[&meta, &started, &tc]);
+        assert_eq!(s.turns, vec![full(false, true)], "{s:?}");
+        let s = turns(&[&meta, &complete, &started, &tc, &complete]);
+        assert_eq!(s.boundary_errors, 1, "{s:?}");
+        let s = turns(&[&meta, &started, &started, &tc, &complete]);
+        assert_eq!(s.boundary_errors, 1, "{s:?}");
+        assert_eq!(s.turns, vec![full(false, false), full(true, true)], "{s:?}");
         let _ = std::fs::remove_dir_all(&home);
     }
 

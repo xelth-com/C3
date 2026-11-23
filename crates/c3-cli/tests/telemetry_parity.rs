@@ -849,6 +849,11 @@ const PUBLISHED_REVIEWERS: [(&str, &str, &str); 11] = [
 /// Seed a ledger with one entry per [`PUBLISHED_REVIEWERS`] row and an unsent rating of each, run
 /// `c3 telemetry --backfill-ratings`, and return each rating event's `details.model`.
 fn backfilled_models(e: &Env) -> Vec<String> {
+    backfilled_models_of(e, &PUBLISHED_REVIEWERS)
+}
+
+/// [`backfilled_models`] over the given `(engine, base_url, model)` rows.
+fn backfilled_models_of(e: &Env, reviewers: &[(&str, &str, &str)]) -> Vec<String> {
     let tdir = e.repo.join(".collab").join("t");
     std::fs::create_dir_all(tdir.join("handoffs")).unwrap();
     let when = (chrono::Local::now() - chrono::Duration::hours(1))
@@ -856,7 +861,7 @@ fn backfilled_models(e: &Env) -> Vec<String> {
         .to_string();
     let mut consults = Vec::new();
     let mut ratings = Vec::new();
-    for (i, (engine, base_url, model)) in PUBLISHED_REVIEWERS.iter().enumerate() {
+    for (i, (engine, base_url, model)) in reviewers.iter().enumerate() {
         let n = i + 1;
         let cid = format!("00000000-0000-4000-8000-{n:012}");
         let pc = if base_url.is_empty() {
@@ -876,7 +881,7 @@ fn backfilled_models(e: &Env) -> Vec<String> {
     let bf = e.c3(&["telemetry", "--backfill-ratings"], &[]);
     assert_eq!(bf.status.code(), Some(0), "{}", text(&bf));
     let evs = e.spool_events();
-    assert_eq!(evs.len(), PUBLISHED_REVIEWERS.len(), "{evs:#?}");
+    assert_eq!(evs.len(), reviewers.len(), "{evs:#?}");
     evs.iter()
         .map(|ev| ev["details"]["model"].as_str().unwrap_or("?").to_string())
         .collect()
@@ -917,6 +922,38 @@ fn only_a_trusted_vendor_bound_published_id_is_sent_by_name() {
             "z-ai/glm-9-pub",  // OpenRouter's own form of the published name
             "opus",            // the closed list, `[1M]` stripped
         ]
+    );
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
+/// (0.2.5 D3) A Claude id the built-in catalog publishes with dots (`anthropic/claude-opus-9.3`) is
+/// known to telemetry in the claude engine's dash spelling without a release: a claude reviewer on
+/// `claude-opus-9-3` is sent by name, the OpenRouter route keeps the catalog's form, and an id the
+/// catalog does not list stays `other`.
+#[test]
+fn a_published_claude_id_spelled_with_dots_is_sent_by_its_dash_name() {
+    let e = setup("tel-published-claude-dots");
+    let mdir = e.home.join("c3").join("maintain");
+    std::fs::create_dir_all(&mdir).unwrap();
+    let state = serde_json::json!({"models": {"sources": [
+        {"source": "web:https://openrouter.ai:443/api/v1/models", "ids": ["anthropic/claude-opus-9.3"]}
+    ]}});
+    std::fs::write(mdir.join("state.json"), state.to_string()).unwrap();
+    let models = backfilled_models_of(
+        &e,
+        &[
+            ("claude", "", "claude-opus-9-3"),
+            ("claude", "", "claude-opus-9-4"),
+            (
+                "http",
+                "https://openrouter.ai/api/v1",
+                "anthropic/claude-opus-9.3",
+            ),
+        ],
+    );
+    assert_eq!(
+        models,
+        ["claude-opus-9-3", "other", "anthropic/claude-opus-9.3"]
     );
     let _ = std::fs::remove_dir_all(&e.work);
 }

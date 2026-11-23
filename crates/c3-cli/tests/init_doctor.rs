@@ -85,13 +85,13 @@ fn init_creates_everything_then_a_second_init_skips_everything() {
         "RUNTIME_STATE",
         "DEPLOY_CHECKLIST",
     ] {
-        let p = repo.join(format!(".eck/{name}.md"));
+        let p = repo.join(format!(".c3/{name}.md"));
         let body = std::fs::read_to_string(&p).unwrap_or_else(|_| panic!("missing {name}"));
         assert!(body.contains("[STUB"), "{name} missing marker: {body}");
     }
-    // .gitignore carries .eck/.
+    // .gitignore carries .c3/.
     let gi = std::fs::read_to_string(repo.join(".gitignore")).unwrap();
-    assert!(gi.contains(".eck/"), "gitignore: {gi}");
+    assert!(gi.contains(".c3/"), "gitignore: {gi}");
     // Project files.
     assert!(repo.join("CLAUDE.md").exists());
     assert!(repo.join(".claude/rules/01-c3-protocol.md").exists());
@@ -154,8 +154,8 @@ fn init_writes_agent_files_with_floating_aliases() {
 fn doctor_flags_a_pinned_agent_model_only() {
     let repo = scratch_repo("doctor-pin");
     // Otherwise-clean workspace (resolved manifest, c3 mcp, c3 rule, no eck-core).
-    std::fs::create_dir_all(repo.join(".eck")).unwrap();
-    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
+    std::fs::create_dir_all(repo.join(".c3")).unwrap();
+    std::fs::write(repo.join(".c3/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
     std::fs::write(
         repo.join(".mcp.json"),
         "{\"mcpServers\":{\"c3\":{\"command\":\"/abs/c3\",\"args\":[\"mcp\"]}}}",
@@ -228,8 +228,8 @@ fn doctor_flags_a_pinned_agent_model_only() {
 fn doctor_fix_rewrites_a_pin_then_exits_clean() {
     let repo = scratch_repo("doctor-fix");
     // Otherwise-clean workspace.
-    std::fs::create_dir_all(repo.join(".eck")).unwrap();
-    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
+    std::fs::create_dir_all(repo.join(".c3")).unwrap();
+    std::fs::write(repo.join(".c3/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
     std::fs::write(
         repo.join(".mcp.json"),
         "{\"mcpServers\":{\"c3\":{\"command\":\"/abs/c3\",\"args\":[\"mcp\"]}}}",
@@ -514,7 +514,187 @@ fn doctor_flags_stubs_missing_mcp_and_eck_core() {
     assert!(out.contains("ROADMAP.md"), "stub not reported: {out}");
     assert!(out.contains("NOT registered"), "mcp not reported: {out}");
     assert!(out.contains("eck-core"), "eck-core not reported: {out}");
+    assert!(
+        out.contains("C3 does not need that server"),
+        "the old server's line says C3 does not need it: {out}"
+    );
     assert!(out.contains("eck_* tool"), "eck rule not reported: {out}");
+    // (0.2.5, S1) before any writing command the legacy folder is read as the fallback - and not
+    // moved by a read-only doctor
+    assert!(out.contains(".eck/ROADMAP.md"), "fallback read: {out}");
+    assert!(out.contains("no .c3/ folder yet"), "{out}");
+    assert!(repo.join(".eck/ROADMAP.md").is_file());
+    assert!(!repo.join(".c3").exists());
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5, S1) A writing command creates `.c3/` with every stub manifest and the `.gitignore` line;
+// a second run adds nothing.
+#[test]
+fn a_writing_command_creates_the_c3_folder_with_every_stub_and_the_gitignore_line() {
+    let repo = scratch_repo("folder-create");
+    assert!(!repo.join(".gitignore").exists());
+    let (code, out, err) = run_c3_env(
+        &repo,
+        &[
+            "manifest",
+            "--file",
+            "TECH_DEBT.md",
+            "--action",
+            "append_to_section",
+            "--section",
+            "## Open",
+            "--content",
+            "- one",
+        ],
+        &[("C3_CONFIG", "none")],
+    );
+    assert_eq!(code, 0, "manifest failed: {out}\n{err}");
+    assert!(out.contains("created .c3/"), "{out}");
+    assert!(out.contains("added `.c3/` to .gitignore"), "{out}");
+    for name in [
+        "CONTEXT",
+        "ARCHITECTURE",
+        "ROADMAP",
+        "TECH_DEBT",
+        "JOURNAL",
+        "OPERATIONS",
+        "ENVIRONMENT",
+        "RUNTIME_STATE",
+        "DEPLOY_CHECKLIST",
+    ] {
+        let body = std::fs::read_to_string(repo.join(format!(".c3/{name}.md")))
+            .unwrap_or_else(|_| panic!("missing {name}"));
+        assert!(body.contains("[STUB:"), "{name}: {body}");
+    }
+    assert!(std::fs::read_to_string(repo.join(".c3/TECH_DEBT.md"))
+        .unwrap()
+        .contains("## Open\n- one"));
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".gitignore")).unwrap(),
+        ".c3/\n"
+    );
+    // a second writing command finds everything in place
+    let (code, out, _e) = run_c3_env(&repo, &["fetch", "README.md"], &[("C3_CONFIG", "none")]);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".gitignore")).unwrap(),
+        ".c3/\n"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5, S1) The SessionStart hook and a read-only `c3 doctor` never create the folder; doctor
+// says how it comes into being, as a note that does not count as a finding.
+#[test]
+fn the_hook_and_a_read_only_doctor_never_create_the_folder() {
+    let repo = scratch_repo("folder-readonly");
+    let envs = &[
+        ("C3_CONFIG", "none"),
+        ("C3_MAINTAIN", "off"),
+        ("C3_UPDATE_CHECK", "off"),
+        ("C3_BRANCH_CHECK", "off"),
+        ("C3_CI_CHECK", "off"),
+    ];
+    let (code, out, err) = run_c3_env(&repo, &["hook"], envs);
+    assert_eq!(code, 0, "hook must exit 0: {out}\n{err}");
+    assert!(!repo.join(".c3").exists(), "the hook created .c3/");
+    // otherwise clean: only the folder note
+    std::fs::write(
+        repo.join(".mcp.json"),
+        "{\"mcpServers\":{\"c3\":{\"command\":\"/abs/c3\",\"args\":[\"mcp\"]}}}",
+    )
+    .unwrap();
+    let (code, out, err) = run_c3_env(&repo, &["doctor"], &[("C3_CONFIG", "none")]);
+    assert!(
+        out.contains("[i] no .c3/ folder - `c3 init` creates it"),
+        "{out}"
+    );
+    assert_eq!(code, 0, "the folder note is no finding: {out}\n{err}");
+    assert!(!repo.join(".c3").exists(), "doctor created .c3/");
+    assert!(!repo.join(".gitignore").exists(), "doctor wrote .gitignore");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5, S1) Inside a C3 child nothing creates or moves the folder: a writing command refuses,
+// `.eck/` stays where it is.
+#[test]
+fn a_c3_child_never_creates_or_moves_the_folder() {
+    let repo = scratch_repo("folder-child");
+    let child = &[("C3_CONFIG", "none"), ("C3_CHILD", "1")];
+    let (code, out, err) = run_c3_env(
+        &repo,
+        &[
+            "manifest",
+            "--file",
+            "ROADMAP.md",
+            "--action",
+            "replace_file",
+            "--content",
+            "x",
+        ],
+        child,
+    );
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(err.contains("inside a C3 child"), "{err}");
+    assert!(!repo.join(".c3").exists());
+    std::fs::create_dir_all(repo.join(".eck")).unwrap();
+    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nOLD\n").unwrap();
+    for args in [
+        &["init"][..],
+        &["fail", "--status", "blocked"][..],
+        &["doctor", "--fix"][..],
+    ] {
+        let (_c, out, err) = run_c3_env(&repo, args, child);
+        assert!(!repo.join(".c3").exists(), "{args:?}: {out}\n{err}");
+        assert!(repo.join(".eck/ROADMAP.md").is_file(), "{args:?}");
+    }
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5, S1) `c3 doctor --fix` moves an `.eck/` it finds: the old report becomes
+// `last-report.md`, the leftovers go to `legacy/`; it writes no stubs (doctor reports, it does not
+// provision). With both folders present nothing moves and doctor says so.
+#[test]
+fn doctor_fix_moves_an_eck_folder_and_reports_both_folders() {
+    let repo = scratch_repo("doctor-migrate");
+    std::fs::create_dir_all(repo.join(".eck/lastsnapshot")).unwrap();
+    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
+    std::fs::write(repo.join(".eck/anchor"), "old-tool-anchor\n").unwrap();
+    std::fs::write(
+        repo.join(".eck/lastsnapshot/AnswerToSA.md"),
+        "# Agent Report\n\nOLD-REPORT\n",
+    )
+    .unwrap();
+    let (_c, out, err) = run_c3_env(&repo, &["doctor", "--fix"], &[("C3_CONFIG", "none")]);
+    assert!(out.contains("[fixed] moved .eck/ to .c3/"), "{out}\n{err}");
+    assert!(!repo.join(".eck").exists());
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".c3/last-report.md")).unwrap(),
+        "# Agent Report\n\nOLD-REPORT\n"
+    );
+    assert!(repo.join(".c3/legacy/anchor").is_file());
+    assert!(!repo.join(".c3/anchor").exists());
+    assert!(
+        !repo.join(".c3/CONTEXT.md").exists(),
+        "no stubs from doctor"
+    );
+    assert!(std::fs::read_to_string(repo.join(".gitignore"))
+        .unwrap()
+        .contains(".c3/"));
+
+    // both folders: nothing moves, doctor names it
+    std::fs::create_dir_all(repo.join(".eck")).unwrap();
+    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nSECOND\n").unwrap();
+    let (_c, out, _e) = run_c3_env(&repo, &["doctor", "--fix"], &[("C3_CONFIG", "none")]);
+    assert!(
+        out.contains("both .c3/ and .eck/ exist - C3 uses .c3/; merge or remove .eck/ by hand"),
+        "{out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".eck/ROADMAP.md")).unwrap(),
+        "# ROADMAP\n\nSECOND\n"
+    );
     let _ = std::fs::remove_dir_all(&repo);
 }
 
@@ -522,8 +702,8 @@ fn doctor_flags_stubs_missing_mcp_and_eck_core() {
 fn doctor_passes_on_a_clean_fixture() {
     let repo = scratch_repo("doctor-clean");
     // A resolved manifest (no [STUB), a c3 mcp registration, a c3-named rule, no eck-core.
-    std::fs::create_dir_all(repo.join(".eck")).unwrap();
-    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
+    std::fs::create_dir_all(repo.join(".c3")).unwrap();
+    std::fs::write(repo.join(".c3/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
     std::fs::write(
         repo.join(".mcp.json"),
         "{\"mcpServers\":{\"c3\":{\"command\":\"/abs/c3\",\"args\":[\"mcp\"]}}}",
@@ -550,7 +730,7 @@ fn doctor_passes_on_a_clean_fixture() {
 }
 
 #[test]
-fn scout_writes_a_tree_into_eck_scouts_and_refuses_inside_repo() {
+fn scout_writes_a_tree_into_c3_scouts_and_refuses_inside_repo() {
     let repo = scratch_repo("scout");
     // An external directory to scout.
     let ext = scratch_dir("scout-ext");
@@ -560,7 +740,7 @@ fn scout_writes_a_tree_into_eck_scouts_and_refuses_inside_repo() {
 
     let (code, out, err) = run_c3(&repo, &["scout", &ext.to_string_lossy()]);
     assert_eq!(code, 0, "scout failed: {out}\n{err}");
-    let scouts: Vec<_> = std::fs::read_dir(repo.join(".eck/scouts"))
+    let scouts: Vec<_> = std::fs::read_dir(repo.join(".c3/scouts"))
         .unwrap()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("scout_tree_"))
@@ -581,7 +761,7 @@ fn scout_writes_a_tree_into_eck_scouts_and_refuses_inside_repo() {
 }
 
 #[test]
-fn fetch_writes_matched_files_into_eck_scouts() {
+fn fetch_writes_matched_files_into_c3_scouts() {
     let repo = scratch_repo("fetch");
     std::fs::create_dir_all(repo.join("src")).unwrap();
     std::fs::write(repo.join("src/a.rs"), "fn a() {}\n").unwrap();
@@ -590,7 +770,7 @@ fn fetch_writes_matched_files_into_eck_scouts() {
 
     let (code, out, err) = run_c3(&repo, &["fetch", "src/*.rs"]);
     assert_eq!(code, 0, "fetch failed: {out}\n{err}");
-    let data: Vec<_> = std::fs::read_dir(repo.join(".eck/scouts"))
+    let data: Vec<_> = std::fs::read_dir(repo.join(".c3/scouts"))
         .unwrap()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().starts_with("scout_data_"))
@@ -607,8 +787,8 @@ fn fetch_writes_matched_files_into_eck_scouts() {
 fn gate_passes_an_old_fixture_line_but_catches_a_new_secret() {
     let repo = scratch_repo("gate");
     // Commit a fixture file that ALREADY contains a secret-shaped line (as a committed test
-    // fixture would). `.gitignore` keeps .eck/ out of staging.
-    std::fs::write(repo.join(".gitignore"), ".eck/\n").unwrap();
+    // fixture would). `.gitignore` keeps .c3/ out of staging.
+    std::fs::write(repo.join(".gitignore"), ".c3/\n").unwrap();
     std::fs::write(
         repo.join("fixtures.rs"),
         "const OLD: &str = \"sk-abcdefghijklmnopqrstuvwxyz0123456789\";\n",

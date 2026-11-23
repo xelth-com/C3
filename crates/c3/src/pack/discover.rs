@@ -36,16 +36,16 @@ pub struct DiscoverOpts {
     /// Keep binary files (they are dropped by default).
     pub include_binary: bool,
     /// Also drop files in the finish never-commit set (raw event streams, lock files, a
-    /// work run's `.log`/`.stderr`). Used by the `.eck` hand-off snapshot so those
+    /// work run's `.log`/`.stderr`). Used by the hand-off snapshot so those
     /// machine-local artifacts never reach the snapshot BODY either. Off by default, so a
     /// plain `c3 snapshot` is unaffected.
     pub never_commit: bool,
     /// The hand-off hidden-path policy: drop every path with a hidden component
-    /// (`.collab/`, `.claude/`, `.github/`, `.c3/`, a leading-dot file, ...) EXCEPT the
-    /// `.eck/<name>.md` manifests directly under `.eck/` ([`eck_hidden_drop`]). Used by the
-    /// `.eck` hand-off snapshot (operator decision, Part B). Off by default, so a plain
-    /// `c3 snapshot` keeps every dotted path it finds.
-    pub eck_hidden: bool,
+    /// (`.collab/`, `.claude/`, `.github/`, a leading-dot file, ...) EXCEPT the
+    /// `.c3/<name>.md` manifests directly under `.c3/` ([`handoff_hidden_drop`]). Used by the
+    /// hand-off snapshot (operator decision, Part B). Off by default, so a plain
+    /// `c3 snapshot` keeps every dotted path it finds (C3's own folder is never walked).
+    pub handoff_hidden: bool,
 }
 
 impl Default for DiscoverOpts {
@@ -54,22 +54,22 @@ impl Default for DiscoverOpts {
             max_file_size: 2 * 1024 * 1024,
             include_binary: false,
             never_commit: false,
-            eck_hidden: false,
+            handoff_hidden: false,
         }
     }
 }
 
 /// The hand-off hidden-path predicate (operator decision, Part B): whether a repo-relative
 /// POSIX path is dropped because it has a hidden component (any path component beginning
-/// with `.`, such as `.collab/`, `.claude/`, `.github/`, `.c3/`, or a leading-dot file like
-/// `.gitignore`), EXCEPT a `.eck/<name>.md` manifest directly under `.eck/` — never a file
-/// under `.eck/snapshots/`, `.eck/lastsnapshot/` or `.eck/scouts/`.
+/// with `.`, such as `.collab/`, `.claude/`, `.github/`, or a leading-dot file like
+/// `.gitignore`), EXCEPT a `.c3/<name>.md` manifest directly under `.c3/` — never a file
+/// under `.c3/snapshots/`, `.c3/lastsnapshot/` or `.c3/scouts/`, never one of the legacy folder.
 ///
 /// Decision on git-metadata dotfiles (`.gitignore`, `.gitattributes`, ...): they ARE dropped.
-/// The policy's one exception is deliberately the curated `.eck/*.md` manifests and nothing
+/// The policy's one exception is deliberately the curated `.c3/*.md` manifests and nothing
 /// else; those metadata files are tiny but carry no reasoning value for a hand-off reader and
 /// keeping the predicate a single rule is worth more than surfacing them.
-pub fn eck_hidden_drop(rel: &str) -> bool {
+pub fn handoff_hidden_drop(rel: &str) -> bool {
     let parts: Vec<&str> = rel.split('/').collect();
     let has_hidden = parts
         .iter()
@@ -77,15 +77,19 @@ pub fn eck_hidden_drop(rel: &str) -> bool {
     if !has_hidden {
         return false;
     }
-    // Exception: a manifest `.eck/<name>.md` directly under `.eck/` (exactly two components).
-    if parts.len() == 2 && parts[0] == ".eck" && parts[1].ends_with(".md") {
+    // Exception: a manifest `.c3/<name>.md` directly under `.c3/` (exactly two components).
+    if parts.len() == 2
+        && crate::state_dir::names_equal(parts[0], crate::state_dir::STATE_DIR)
+        && parts[1].ends_with(".md")
+    {
         return false;
     }
     true
 }
 
 /// Directory names hard-ignored regardless of `.gitignore` (eckSnapshot
-/// `GLOBAL_HARD_IGNORE_DIRS` plus C3's build/index dirs).
+/// `GLOBAL_HARD_IGNORE_DIRS` plus C3's build/index dirs). C3's own folder `.c3` and its legacy
+/// name are hard-ignored too, wherever they lie ([`crate::state_dir::is_state_component`]).
 const HARD_IGNORE_DIRS: &[&str] = &[
     ".git",
     "target",
@@ -95,7 +99,6 @@ const HARD_IGNORE_DIRS: &[&str] = &[
     ".gradle",
     "build",
     "__pycache__",
-    ".c3", // C3's own index / anchor / snapshot store under .collab or elsewhere
 ];
 
 /// Exact file names hard-ignored (lockfiles; eckSnapshot `GLOBAL_HARD_IGNORE_FILES`).
@@ -165,6 +168,7 @@ fn is_hard_ignored_dir(name: &str) -> bool {
     HARD_IGNORE_DIRS
         .iter()
         .any(|d| d.eq_ignore_ascii_case(name))
+        || crate::state_dir::is_state_component(name)
 }
 
 /// Walk `repo_root` and return every file that passes gitignore, the hard-ignore list, the
@@ -183,14 +187,29 @@ pub fn discover(repo_root: &Path, opts: &DiscoverOpts) -> Vec<FileEntry> {
         .require_git(false)
         .parents(true);
     // The project's explicit "never put in AI context" list, honoured next to `.gitignore`
-    // (gitignore syntax, searched in each directory incl. the repo root). Part B.
-    walker.add_custom_ignore_filename(".eckignore");
+    // (gitignore syntax, read in each directory from the repo root down: its `.c3ignore`, or its
+    // `.eckignore` when it has none - [`crate::state_dir::ContextIgnore`]). Part B.
+    let context_ignore = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::state_dir::ContextIgnore::new(repo_root),
+    ));
+    let root_for_filter = repo_root.to_path_buf();
+    let ci_for_filter = std::sync::Arc::clone(&context_ignore);
 
-    // Prune hard-ignored directories by name so we never descend into target/ etc.
-    walker.filter_entry(|entry| {
+    // Prune hard-ignored directories by name so we never descend into target/ etc., and the
+    // directories the context-ignore lists exclude.
+    walker.filter_entry(move |entry| {
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             if let Some(name) = entry.file_name().to_str() {
-                return !is_hard_ignored_dir(name);
+                if is_hard_ignored_dir(name) {
+                    return false;
+                }
+            }
+            if let Some(rel) = repo_relative(&root_for_filter, entry.path()) {
+                if !rel.is_empty() {
+                    if let Ok(mut ci) = ci_for_filter.lock() {
+                        return !ci.excluded(&rel, true);
+                    }
+                }
             }
         }
         true
@@ -224,13 +243,20 @@ pub fn discover(repo_root: &Path, opts: &DiscoverOpts) -> Vec<FileEntry> {
         if path_set.is_match(&rel) {
             continue;
         }
-        // The `.eck` hand-off snapshot also drops the finish never-commit set.
+        if context_ignore
+            .lock()
+            .map(|mut ci| ci.excluded(&rel, false))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        // The hand-off snapshot also drops the finish never-commit set.
         if opts.never_commit && crate::finish::never_commit::is_never_commit(&rel) {
             continue;
         }
-        // The `.eck` hand-off snapshot drops every hidden-component path except the
-        // `.eck/*.md` manifests (surfaced separately when `.eck` is gitignored).
-        if opts.eck_hidden && eck_hidden_drop(&rel) {
+        // The hand-off snapshot drops every hidden-component path except the
+        // `.c3/*.md` manifests (surfaced separately: discovery never walks C3's folder).
+        if opts.handoff_hidden && handoff_hidden_drop(&rel) {
             continue;
         }
 
@@ -411,50 +437,89 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
     }
 
+    // (0.2.5, S1) `.c3ignore` is read; in a directory without one `.eckignore` still is.
     #[test]
-    fn eck_hidden_drop_predicate() {
-        // Hidden-component paths are dropped...
-        assert!(eck_hidden_drop(".collab/wave/x.md"));
-        assert!(eck_hidden_drop(".claude/agents/a.md"));
-        assert!(eck_hidden_drop(".github/workflows/ci.yml"));
-        assert!(eck_hidden_drop(".gitignore"));
-        assert!(eck_hidden_drop(".gitattributes"));
-        assert!(eck_hidden_drop("src/.hidden/f.rs"));
-        // ...including deeper `.eck` paths...
-        assert!(eck_hidden_drop(".eck/snapshots/s.md"));
-        assert!(eck_hidden_drop(".eck/lastsnapshot/AnswerToSA.md"));
-        assert!(eck_hidden_drop(".eck/scouts/t.md"));
-        // ...except a manifest directly under `.eck/`.
-        assert!(!eck_hidden_drop(".eck/ROADMAP.md"));
-        assert!(!eck_hidden_drop(".eck/CONTEXT.md"));
-        // A non-.md direct child of `.eck/` is still dropped.
-        assert!(eck_hidden_drop(".eck/anchor"));
-        // Ordinary paths are kept.
-        assert!(!eck_hidden_drop("src/main.rs"));
-        assert!(!eck_hidden_drop("README.md"));
+    fn c3ignore_wins_over_eckignore_and_eckignore_is_the_fallback() {
+        let d = scratch("c3ignore");
+        fs::write(d.join("a.md"), "a").unwrap();
+        fs::write(d.join("b.md"), "b").unwrap();
+        fs::create_dir_all(d.join("sub")).unwrap();
+        fs::write(d.join("sub/c.md"), "c").unwrap();
+        fs::write(d.join(".c3ignore"), "a.md\n").unwrap();
+        fs::write(d.join(".eckignore"), "b.md\n").unwrap();
+        fs::write(d.join("sub/.eckignore"), "c.md\n").unwrap();
+        let files = discover(&d, &DiscoverOpts::default());
+        let rels: Vec<&str> = files.iter().map(|f| f.rel.as_str()).collect();
+        assert!(!rels.contains(&"a.md"), "got {rels:?}");
+        assert!(
+            rels.contains(&"b.md"),
+            ".eckignore beside a .c3ignore is not read: {rels:?}"
+        );
+        assert!(!rels.contains(&"sub/c.md"), "got {rels:?}");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    // (0.2.5, S1) C3's folder and its legacy name are never walked, in any case the file system
+    // treats as the same name.
+    #[test]
+    fn the_c3_and_legacy_folders_are_never_discovered() {
+        let d = scratch("statedirs");
+        fs::write(d.join("keep.rs"), "fn a() {}").unwrap();
+        for dir in [".c3", ".eck", "sub/.c3"] {
+            fs::create_dir_all(d.join(dir)).unwrap();
+            fs::write(d.join(dir).join("CONTEXT.md"), "ctx").unwrap();
+        }
+        let files = discover(&d, &DiscoverOpts::default());
+        let rels: Vec<&str> = files.iter().map(|f| f.rel.as_str()).collect();
+        assert_eq!(rels, vec!["keep.rs"], "got {rels:?}");
+        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]
-    fn eck_hidden_discovery_drops_dotpaths_but_keeps_eck_manifests() {
-        let d = scratch("eckhidden");
+    fn handoff_hidden_drop_predicate() {
+        // Hidden-component paths are dropped...
+        assert!(handoff_hidden_drop(".collab/wave/x.md"));
+        assert!(handoff_hidden_drop(".claude/agents/a.md"));
+        assert!(handoff_hidden_drop(".github/workflows/ci.yml"));
+        assert!(handoff_hidden_drop(".gitignore"));
+        assert!(handoff_hidden_drop(".gitattributes"));
+        assert!(handoff_hidden_drop("src/.hidden/f.rs"));
+        // ...including deeper `.c3` paths and anything of the legacy folder...
+        assert!(handoff_hidden_drop(".c3/snapshots/s.md"));
+        assert!(handoff_hidden_drop(".c3/lastsnapshot/x.md"));
+        assert!(handoff_hidden_drop(".c3/scouts/t.md"));
+        assert!(handoff_hidden_drop(".eck/ROADMAP.md"));
+        // ...except a manifest directly under `.c3/`.
+        assert!(!handoff_hidden_drop(".c3/ROADMAP.md"));
+        assert!(!handoff_hidden_drop(".c3/CONTEXT.md"));
+        // A non-.md direct child of `.c3/` is still dropped.
+        assert!(handoff_hidden_drop(".c3/anchor"));
+        // Ordinary paths are kept.
+        assert!(!handoff_hidden_drop("src/main.rs"));
+        assert!(!handoff_hidden_drop("README.md"));
+    }
+
+    #[test]
+    fn handoff_hidden_discovery_drops_dotpaths() {
+        let d = scratch("handoffhidden");
         fs::write(d.join("keep.rs"), "fn a() {}").unwrap();
         fs::create_dir_all(d.join(".collab/w")).unwrap();
         fs::write(d.join(".collab/w/brief.md"), "brief").unwrap();
-        fs::create_dir_all(d.join(".eck/snapshots")).unwrap();
-        fs::write(d.join(".eck/ROADMAP.md"), "# ROADMAP").unwrap();
-        fs::write(d.join(".eck/snapshots/old.md"), "old snap").unwrap();
+        fs::create_dir_all(d.join(".c3/snapshots")).unwrap();
+        fs::write(d.join(".c3/ROADMAP.md"), "# ROADMAP").unwrap();
+        fs::write(d.join(".c3/snapshots/old.md"), "old snap").unwrap();
         let files = discover(
             &d,
             &DiscoverOpts {
-                eck_hidden: true,
+                handoff_hidden: true,
                 ..DiscoverOpts::default()
             },
         );
         let rels: Vec<&str> = files.iter().map(|f| f.rel.as_str()).collect();
         assert!(rels.contains(&"keep.rs"), "got {rels:?}");
-        assert!(rels.contains(&".eck/ROADMAP.md"), "got {rels:?}");
+        // the manifests are surfaced by the snapshot itself, never by discovery
+        assert!(!rels.iter().any(|r| r.starts_with(".c3/")), "got {rels:?}");
         assert!(!rels.iter().any(|r| r.starts_with(".collab/")));
-        assert!(!rels.contains(&".eck/snapshots/old.md"));
         let _ = fs::remove_dir_all(&d);
     }
 

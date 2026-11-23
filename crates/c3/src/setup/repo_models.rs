@@ -388,7 +388,7 @@ fn write_then_rename(edit: &Edit<'_>, tmp: &Path) -> Result<(), String> {
 /// cloud-sync placeholder)` for any other Windows reparse point, which C3 refuses too since it
 /// cannot tell where it leads; otherwise both words (the entry is no link: missing, or another
 /// kind - the rest of the sentence says so).
-fn link_words(p: &Path) -> &'static str {
+pub(crate) fn link_words(p: &Path) -> &'static str {
     let m = std::fs::symlink_metadata(p).ok();
     let symlink = m.as_ref().is_some_and(|m| m.file_type().is_symlink());
     let reparse = m.as_ref().is_some_and(is_link);
@@ -409,7 +409,7 @@ fn reparse_words(symlink: bool, reparse: bool) -> &'static str {
 
 /// Whether the metadata (read without following a link) is a link: a symlink, or on Windows any
 /// reparse point (a junction included).
-fn is_link(m: &std::fs::Metadata) -> bool {
+pub(crate) fn is_link(m: &std::fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -424,7 +424,7 @@ fn is_link(m: &std::fs::Metadata) -> bool {
 
 /// A directory that is itself there, not a link to one (`symlink_metadata` does not follow a
 /// symlink; a Windows junction is a reparse point).
-fn is_real_dir(p: &Path) -> bool {
+pub(crate) fn is_real_dir(p: &Path) -> bool {
     std::fs::symlink_metadata(p)
         .map(|m| m.file_type().is_dir() && !is_link(&m))
         .unwrap_or(false)

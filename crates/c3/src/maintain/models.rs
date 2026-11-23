@@ -27,6 +27,20 @@ pub struct SourceList {
     /// before it existed loads with no dates.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub created: BTreeMap<String, i64>,
+    /// (0.2.5 D3) The catalog's list price per id, when it gives one ([`ListPrice`]) - for the
+    /// price check of a swap across a major ([`price_hold`]) in the pass that fetched it. Held in
+    /// memory only: never written to the state file.
+    #[serde(skip)]
+    pub prices: BTreeMap<String, ListPrice>,
+}
+
+/// (0.2.5 D3) A catalog's list price of one id: `pricing.prompt` and `pricing.completion` (OpenRouter
+/// gives USD per token), each kept only when it is a positive number. A list price is a signal of
+/// what a model costs elsewhere, not the price the entry's own plan charges.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ListPrice {
+    pub prompt: Option<f64>,
+    pub completion: Option<f64>,
 }
 
 /// The persisted model state: the last-seen id list per source, and the successors a public source
@@ -317,6 +331,10 @@ pub struct SwapCandidate {
     pub protected: bool,
     /// The entry runs only on request - announced only, never smoked or edited.
     pub on_request: bool,
+    /// (0.2.5 D3) A successor of a higher major whose catalog list price is more than
+    /// [`PRICE_RATIO_LIMIT`] times the seated id's: the reason it is announced only
+    /// ([`price_hold`]); `None` otherwise.
+    pub price_hold: Option<String>,
 }
 
 /// The ids of every public source in `current` with the vendor part stripped (`qwen/qwen4-max` ->
@@ -354,6 +372,8 @@ pub const UNANCHORED_MAX_AGE_DAYS: i64 = 180;
 /// One occurrence of a (vendor-stripped) id in a public source.
 struct PublicHit<'a> {
     source: &'a SourceList,
+    /// The id as the source lists it (`<vendor>/<model>`).
+    id: &'a str,
     vendor: &'a str,
     created: Option<i64>,
 }
@@ -367,6 +387,7 @@ fn public_hits<'a>(current: &'a [SourceList], model: &str) -> Vec<PublicHit<'a>>
             if strip_vendor(id).eq_ignore_ascii_case(model) {
                 out.push(PublicHit {
                     source: s,
+                    id,
                     vendor: id.split_once('/').map(|(v, _)| v).unwrap_or(""),
                     created: s.created.get(id).copied(),
                 });
@@ -376,20 +397,88 @@ fn public_hits<'a>(current: &'a [SourceList], model: &str) -> Vec<PublicHit<'a>>
     out
 }
 
-/// The catalog date of the seated id within ONE source: its entry under the same vendor slug as the
-/// candidate when it appears under several, else its first entry. `None` when the seated id is not
-/// in that source or carries no date there.
-fn seated_created(source: &SourceList, seated: &str, vendor: &str) -> Option<i64> {
+/// The seated id's entry within ONE source: the one under the same vendor slug as the candidate
+/// when it appears under several, else its first entry. `None` when the seated id is not in that
+/// source.
+fn seated_entry<'a>(source: &'a SourceList, seated: &str, vendor: &str) -> Option<&'a String> {
     let hits: Vec<&String> = source
         .ids
         .iter()
         .filter(|id| strip_vendor(id).eq_ignore_ascii_case(seated))
         .collect();
-    let pick = hits
-        .iter()
+    hits.iter()
         .find(|id| id.split_once('/').map(|(v, _)| v).unwrap_or("") == vendor)
-        .or_else(|| hits.first())?;
-    source.created.get(*pick).copied()
+        .or_else(|| hits.first())
+        .copied()
+}
+
+/// The catalog date of the seated id within ONE source ([`seated_entry`]). `None` when the seated id
+/// is not in that source or carries no date there.
+fn seated_created(source: &SourceList, seated: &str, vendor: &str) -> Option<i64> {
+    source
+        .created
+        .get(seated_entry(source, seated, vendor)?)
+        .copied()
+}
+
+/// (0.2.5 D3) A successor of a higher major is announced only when a public catalog lists it at
+/// more than this many times the seated id's list price (prompt or completion).
+pub const PRICE_RATIO_LIMIT: f64 = 2.0;
+
+/// (0.2.5 D3) The highest ratio of `cand`'s list price to `seated`'s that a public source of
+/// `current` gives - per source, the two ids' entries as the date gate pairs them, each field
+/// (`prompt`, `completion`) compared only when the source prices it for both. `None` when no source
+/// prices both ids.
+fn list_price_ratio(current: &[SourceList], seated: &str, cand: &str) -> Option<f64> {
+    let mut best: Option<f64> = None;
+    for h in public_hits(current, cand) {
+        let Some(c) = h.source.prices.get(h.id) else {
+            continue;
+        };
+        let Some(s) =
+            seated_entry(h.source, seated, h.vendor).and_then(|id| h.source.prices.get(id))
+        else {
+            continue;
+        };
+        for (cv, sv) in [(c.prompt, s.prompt), (c.completion, s.completion)] {
+            if let (Some(cv), Some(sv)) = (cv, sv) {
+                let r = cv / sv;
+                if r.is_finite() && best.is_none_or(|b| r > b) {
+                    best = Some(r);
+                }
+            }
+        }
+    }
+    best
+}
+
+/// (0.2.5 D3) Why a successor ACROSS A MAJOR (`qwen3.8-max` -> `qwen4-max`) is only announced: a
+/// public catalog prices both ids and the candidate's list price is more than
+/// [`PRICE_RATIO_LIMIT`] times the seated id's in either field - the same plan may charge more for
+/// it, which no smoke can tell. `None` within one major, or without prices for both ids. A list
+/// price is a signal, not the plan's own price.
+pub fn price_hold(current: &[SourceList], seated: &str, cand: &str) -> Option<String> {
+    let (s, c) = (parse_model_id(seated)?, parse_model_id(cand)?);
+    if c.major <= s.major {
+        return None;
+    }
+    let r = list_price_ratio(current, seated, cand)?;
+    (r > PRICE_RATIO_LIMIT).then(|| {
+        format!(
+            "list price {} times higher - seat it by hand",
+            ratio_text(r)
+        )
+    })
+}
+
+/// A price ratio as the report says it: one decimal, `.0` dropped (`3`, `2.5`); two decimals when
+/// one would round it down to the limit (`2.04`).
+fn ratio_text(r: f64) -> String {
+    let one = format!("{r:.1}");
+    if one.parse::<f64>().is_ok_and(|v| v <= PRICE_RATIO_LIMIT) {
+        return format!("{r:.2}");
+    }
+    one.strip_suffix(".0").map(str::to_string).unwrap_or(one)
 }
 
 /// A catalog date later than now by more than this (seconds) is not believed: such a candidate is
@@ -593,7 +682,9 @@ pub struct SwapPlan {
 /// among ALL ids fails its gate, it is returned as rejected (with the reason) and the best
 /// qualifying id, if any, is the candidate. Entries of inactive plans are never touched (iterated
 /// via `active_entries`); protected and on-request entries ARE returned (flagged) so the pass can
-/// announce them, never smoke them.
+/// announce them, never smoke them. (0.2.5 D3) A successor across a major that a catalog prices at
+/// more than twice the seated id is flagged too ([`price_hold`]); an entry whose id the catalogs
+/// spell without its leading lab or plan token is matched through [`catalog_alias`].
 pub fn plan_swaps(
     roster: &Roster,
     current: &[SourceList],
@@ -606,80 +697,199 @@ pub fn plan_swaps(
         if e.model.is_empty() {
             continue;
         }
-        let engine = if e.engine.is_empty() {
-            "codex".to_string()
-        } else {
-            e.engine.clone()
-        };
-        let own: &[String] = source_for(e)
-            .and_then(|source| current.iter().find(|s| s.source == source))
-            .map(|s| s.ids.as_slice())
-            .unwrap_or(&[]);
-        let mut all: Vec<String> = own.to_vec();
-        all.extend(public.iter().filter(|p| !own.contains(p)).cloned());
-        // Only the ids the version rule takes for a successor of the seated id are gated (and can
-        // be recorded as older) - each once.
-        let succ_ids: Vec<String> = all
-            .iter()
-            .filter(|id| successor(&e.model, std::slice::from_ref(*id)).is_some())
-            .cloned()
-            .collect();
-        let verdicts: Vec<Result<(), GateRefusal>> = succ_ids
-            .iter()
-            .map(|id| {
-                if own.contains(id) {
-                    own_verdict(current, &e.model, id, older, now_unix)
-                } else {
-                    public_verdict(current, &e.model, id, older, now_unix)
-                }
-            })
-            .collect();
-        let verdict_of = |id: &str| -> Result<(), GateRefusal> {
-            succ_ids
-                .iter()
-                .position(|x| x == id)
-                .map(|i| verdicts[i])
-                .unwrap_or(Ok(()))
-        };
-        for (id, v) in succ_ids.iter().zip(&verdicts) {
-            if matches!(v, Err(r) if r.older) {
-                let pair = OlderPair::new(&e.model, id);
-                if !plan.older.contains(&pair) {
-                    plan.older.push(pair);
-                }
+        match catalog_alias(e, current) {
+            Some(alias) => {
+                let view = aliased_view(current, &alias);
+                let public = public_candidates(&view);
+                plan_entry(e, &view, &public, older, now_unix, &mut plan);
             }
-        }
-        let cands: Vec<String> = succ_ids
-            .iter()
-            .zip(&verdicts)
-            .filter(|(_, v)| v.is_ok())
-            .map(|(id, _)| id.clone())
-            .collect();
-        if let Some(raw) = successor(&e.model, &all) {
-            if let Err(r) = verdict_of(raw) {
-                plan.rejected.push(RejectedCandidate {
-                    provider: e.provider.clone(),
-                    engine: engine.clone(),
-                    old: e.model.clone(),
-                    new: raw.to_string(),
-                    why: r.why.to_string(),
-                });
-            }
-        }
-        if let Some(succ) = successor(&e.model, &cands) {
-            plan.candidates.push(SwapCandidate {
-                position: e.position,
-                provider: e.provider.clone(),
-                engine,
-                old: e.model.clone(),
-                new: succ.to_string(),
-                from_public: !own.iter().any(|o| o == succ),
-                protected: e.reserve_percent > 0,
-                on_request: e.on_request,
-            });
+            None => plan_entry(e, current, &public, older, now_unix, &mut plan),
         }
     }
     plan
+}
+
+/// (0.2.5 D3) How a roster id is spelled in the public catalogs when they do not list it as it is:
+/// the plan writes a leading token (`kimi-` in `kimi-k3.1-pro`, `kimi-code/` in
+/// `kimi-code/k3.1-pro`) that the catalog leaves out (`moonshotai/k3.1-pro`). `prefix` is that
+/// token with its separator; `vendors` are the catalog's vendor slugs that list the rest - the
+/// maker's ids as the catalog groups them (`moonshotai`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogAlias {
+    pub prefix: String,
+    pub vendors: Vec<String>,
+}
+
+/// (0.2.5 D3) The [`CatalogAlias`] of an entry, or `None`. Tried only when no public source lists
+/// the roster id as it is, and only once: the leading token (up to the first `/`, else the first
+/// `-`) is dropped when it names the maker of the rest or its plan's vendor - by the panel's lab
+/// table ([`crate::panel::plan::lab_named_by`] / [`crate::panel::plan::model_lab`]; the plan's vendor
+/// is the lab its plan slug names or its endpoint host's lab) - and the rest must be an id of a
+/// known maker that a public source lists under a vendor slug, an id of that same maker. Anything
+/// else is no match: nothing is guessed.
+pub fn catalog_alias(e: &RosterEntry, current: &[SourceList]) -> Option<CatalogAlias> {
+    use crate::panel::plan::{lab_named_by, model_lab};
+    let model = e.model.as_str();
+    if !public_hits(current, model).is_empty() {
+        return None; // the catalog spells it as the plan does
+    }
+    let cut = model.find('/').or_else(|| model.find('-'))?;
+    let (token, rest) = (&model[..cut], &model[cut + 1..]);
+    if token.is_empty() || rest.is_empty() || !valid_model_id(rest) {
+        return None;
+    }
+    let lab = model_lab(rest);
+    let token_lab = lab_named_by(token);
+    if lab.is_empty() || token_lab.is_empty() {
+        return None;
+    }
+    let host_lab = e
+        .endpoint
+        .as_ref()
+        .map(|ep| c3_core::claude::lab_of_host(&ep.host_name))
+        .unwrap_or("");
+    if token_lab != lab && token_lab != lab_named_by(&e.plan) && token_lab != host_lab {
+        return None;
+    }
+    let mut vendors: Vec<String> = Vec::new();
+    for id in current
+        .iter()
+        .filter(|s| is_public_source(&s.source))
+        .flat_map(|s| s.ids.iter())
+    {
+        if let Some((vendor, m)) = id.split_once('/') {
+            if m.eq_ignore_ascii_case(rest)
+                && model_lab(id) == lab
+                && !vendors.iter().any(|v| v == vendor)
+            {
+                vendors.push(vendor.to_string());
+            }
+        }
+    }
+    (!vendors.is_empty()).then(|| CatalogAlias {
+        prefix: model[..=cut].to_string(),
+        vendors,
+    })
+}
+
+/// (0.2.5 D3) `current` as the entry's plan spells it: every id a public source lists under one of
+/// the alias's vendor slugs gets the alias prefix put back (`moonshotai/k3.2-pro` ->
+/// `moonshotai/kimi-k3.2-pro`), its date and price keyed the same way; every other id and source
+/// stays as it is. The date gate, the successor rule and the swap then see the plan's own spelling,
+/// exactly as for an id the catalog lists directly.
+fn aliased_view(current: &[SourceList], alias: &CatalogAlias) -> Vec<SourceList> {
+    let spell = |id: &String| -> String {
+        match id.split_once('/') {
+            Some((vendor, m)) if alias.vendors.iter().any(|v| v == vendor) => {
+                let t = format!("{vendor}/{}{m}", alias.prefix);
+                if valid_model_id(&t) {
+                    t
+                } else {
+                    id.clone()
+                }
+            }
+            _ => id.clone(),
+        }
+    };
+    current
+        .iter()
+        .map(|s| {
+            if !is_public_source(&s.source) {
+                return s.clone();
+            }
+            SourceList {
+                source: s.source.clone(),
+                ids: s.ids.iter().map(spell).collect(),
+                created: s.created.iter().map(|(k, v)| (spell(k), *v)).collect(),
+                prices: s.prices.iter().map(|(k, v)| (spell(k), *v)).collect(),
+            }
+        })
+        .collect()
+}
+
+/// [`plan_swaps`] for one entry, over `current` (the pass's sources, or the entry's
+/// [`aliased_view`]) and its public candidates `public`.
+fn plan_entry(
+    e: &RosterEntry,
+    current: &[SourceList],
+    public: &[String],
+    older: &[OlderPair],
+    now_unix: i64,
+    plan: &mut SwapPlan,
+) {
+    let engine = if e.engine.is_empty() {
+        "codex".to_string()
+    } else {
+        e.engine.clone()
+    };
+    let own: &[String] = source_for(e)
+        .and_then(|source| current.iter().find(|s| s.source == source))
+        .map(|s| s.ids.as_slice())
+        .unwrap_or(&[]);
+    let mut all: Vec<String> = own.to_vec();
+    all.extend(public.iter().filter(|p| !own.contains(p)).cloned());
+    // Only the ids the version rule takes for a successor of the seated id are gated (and can
+    // be recorded as older) - each once.
+    let succ_ids: Vec<String> = all
+        .iter()
+        .filter(|id| successor(&e.model, std::slice::from_ref(*id)).is_some())
+        .cloned()
+        .collect();
+    let verdicts: Vec<Result<(), GateRefusal>> = succ_ids
+        .iter()
+        .map(|id| {
+            if own.contains(id) {
+                own_verdict(current, &e.model, id, older, now_unix)
+            } else {
+                public_verdict(current, &e.model, id, older, now_unix)
+            }
+        })
+        .collect();
+    let verdict_of = |id: &str| -> Result<(), GateRefusal> {
+        succ_ids
+            .iter()
+            .position(|x| x == id)
+            .map(|i| verdicts[i])
+            .unwrap_or(Ok(()))
+    };
+    for (id, v) in succ_ids.iter().zip(&verdicts) {
+        if matches!(v, Err(r) if r.older) {
+            let pair = OlderPair::new(&e.model, id);
+            if !plan.older.contains(&pair) {
+                plan.older.push(pair);
+            }
+        }
+    }
+    let cands: Vec<String> = succ_ids
+        .iter()
+        .zip(&verdicts)
+        .filter(|(_, v)| v.is_ok())
+        .map(|(id, _)| id.clone())
+        .collect();
+    if let Some(raw) = successor(&e.model, &all) {
+        if let Err(r) = verdict_of(raw) {
+            plan.rejected.push(RejectedCandidate {
+                provider: e.provider.clone(),
+                engine: engine.clone(),
+                old: e.model.clone(),
+                new: raw.to_string(),
+                why: r.why.to_string(),
+            });
+        }
+    }
+    if let Some(succ) = successor(&e.model, &cands) {
+        plan.candidates.push(SwapCandidate {
+            position: e.position,
+            provider: e.provider.clone(),
+            engine,
+            old: e.model.clone(),
+            new: succ.to_string(),
+            from_public: !own.iter().any(|o| o == succ),
+            protected: e.reserve_percent > 0,
+            on_request: e.on_request,
+            price_hold: price_hold(current, &e.model, succ),
+        });
+    }
 }
 
 /// A "new in the family" announcement: public ids not seen in the previous pass that share the
@@ -820,11 +1030,31 @@ pub fn published_from(state: &ModelsState, trusted: &[super::web::TrustedSource]
                 None => t.class.map(|c| (c.to_string(), id.clone())),
             };
             if let Some(p) = pair.filter(|(_, m)| valid_model_id(m)) {
+                // (0.2.5 D3) the catalog spells a Claude id with dots (`anthropic/claude-opus-4.5`),
+                // the claude engine with dashes (`claude-opus-4-5`): an id under the `anthropic/`
+                // slug is published in its dash form too when that form is of the Claude shape
+                if id.starts_with("anthropic/") {
+                    if let Some(dashed) = claude_dash_form(&p.1) {
+                        out.insert((p.0.clone(), dashed));
+                    }
+                }
                 out.insert(p);
             }
         }
     }
     out
+}
+
+/// (0.2.5 D3) The dash form of a catalog's Claude id: `claude-<family>-<version>` with the dots of
+/// the version part turned into dashes (`claude-opus-4.5` -> `claude-opus-4-5`), returned only when
+/// it differs and is of the published Claude shape ([`c3_core::claude::is_published_claude_shape`]:
+/// `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]`); `None` otherwise (`claude-3.5-sonnet`,
+/// an id already in dash form).
+pub fn claude_dash_form(model: &str) -> Option<String> {
+    let rest = model.strip_prefix("claude-")?;
+    let (family, version) = rest.split_once('-')?;
+    let dashed = format!("claude-{family}-{}", version.replace('.', "-"));
+    (dashed != model && c3_core::claude::is_published_claude_shape(&dashed)).then_some(dashed)
 }
 
 /// [`published_from`] of the maintain state on disk and the C3 config's trusted sources (a config
@@ -2061,5 +2291,296 @@ mod tests {
         assert_eq!(c[0].old, "glm-5.3");
         assert_eq!(c[0].new, "glm-5.4");
         assert_eq!(c[0].provider, "ZAI-claude");
+        assert_eq!(c[0].price_hold, None);
+    }
+
+    /// One catalog row of [`priced`]: the id, its date and (optionally) its `(prompt, completion)`.
+    type PricedRow<'a> = (&'a str, i64, Option<(f64, f64)>);
+
+    /// A public source with a date and (optionally) a `(prompt, completion)` list price per id.
+    fn priced(source: &str, ids: &[PricedRow]) -> SourceList {
+        let mut s = dated(
+            source,
+            &ids.iter()
+                .map(|(i, c, _)| (*i, Some(*c)))
+                .collect::<Vec<_>>(),
+        );
+        for (id, _, p) in ids {
+            if let Some((prompt, completion)) = p {
+                s.prices.insert(
+                    id.to_string(),
+                    ListPrice {
+                        prompt: Some(*prompt),
+                        completion: Some(*completion),
+                    },
+                );
+            }
+        }
+        s
+    }
+
+    /// (0.2.5 D3) A successor ACROSS A MAJOR whose catalog list price is more than twice the seated
+    /// id's (either field) is flagged - announced only, "seat it by hand"; within one major, without
+    /// prices for both ids, or at no more than twice, nothing changes.
+    #[test]
+    fn a_successor_across_a_major_priced_over_twice_the_seated_one_is_announced_only() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![alibaba_endpoint_entry()]);
+        let src = "web:https://openrouter.ai:443/api/v1/models";
+        let hold = |cur: Vec<SourceList>| -> Vec<(String, Option<String>)> {
+            swap_candidates(&roster, &cur, now)
+                .into_iter()
+                .map(|c| (c.new, c.price_hold))
+                .collect()
+        };
+        // the prompt price three times higher
+        let cur = vec![priced(
+            src,
+            &[
+                ("qwen/qwen3.8-max", at(30, now), Some((0.000001, 0.000004))),
+                ("qwen/qwen4-max", at(1, now), Some((0.000003, 0.000006))),
+            ],
+        )];
+        assert_eq!(
+            hold(cur),
+            vec![(
+                "qwen4-max".to_string(),
+                Some("list price 3 times higher - seat it by hand".to_string())
+            )]
+        );
+        // only the completion price over twice
+        let cur = vec![priced(
+            src,
+            &[
+                ("qwen/qwen3.8-max", at(30, now), Some((0.000002, 0.000004))),
+                ("qwen/qwen4-max", at(1, now), Some((0.000003, 0.00001))),
+            ],
+        )];
+        assert_eq!(
+            hold(cur)[0].1.as_deref(),
+            Some("list price 2.5 times higher - seat it by hand")
+        );
+        // exactly twice: not more than twice
+        let cur = vec![priced(
+            src,
+            &[
+                ("qwen/qwen3.8-max", at(30, now), Some((0.000001, 0.000004))),
+                ("qwen/qwen4-max", at(1, now), Some((0.000002, 0.000008))),
+            ],
+        )];
+        assert_eq!(hold(cur), vec![("qwen4-max".to_string(), None)]);
+        // no price for the seated id: nothing changes
+        let cur = vec![priced(
+            src,
+            &[
+                ("qwen/qwen3.8-max", at(30, now), None),
+                ("qwen/qwen4-max", at(1, now), Some((0.00003, 0.00006))),
+            ],
+        )];
+        assert_eq!(hold(cur), vec![("qwen4-max".to_string(), None)]);
+        // within one major: ten times the price changes nothing
+        let cur = vec![priced(
+            src,
+            &[
+                ("qwen/qwen3.8-max", at(30, now), Some((0.000001, 0.000004))),
+                ("qwen/qwen3.9-max", at(1, now), Some((0.00001, 0.00004))),
+            ],
+        )];
+        assert_eq!(hold(cur), vec![("qwen3.9-max".to_string(), None)]);
+        // the prices of an id from the entry's own list come from the catalog too
+        let own = source_for(&alibaba_endpoint_entry()).unwrap();
+        let cur = vec![
+            sl(&own, &["qwen3.8-max", "qwen4-max"]),
+            priced(
+                src,
+                &[
+                    ("qwen/qwen3.8-max", at(30, now), Some((0.000001, 0.000001))),
+                    ("qwen/qwen4-max", at(1, now), Some((0.000005, 0.000001))),
+                ],
+            ),
+        ];
+        assert_eq!(
+            hold(cur)[0].1.as_deref(),
+            Some("list price 5 times higher - seat it by hand")
+        );
+        assert_eq!(ratio_text(2.04), "2.04");
+        assert_eq!(ratio_text(2.0000001), "2.00");
+        assert_eq!(ratio_text(12.345), "12.3");
+    }
+
+    /// (0.2.5 D3) A roster id the plan spells with a leading token naming its maker or its plan's
+    /// vendor (`kimi-code/k3.1-pro`, `kimi-k3.1-pro`), which the catalog leaves out
+    /// (`moonshotai/k3.1-pro`), is matched once more without it: dates and successors work as for
+    /// a direct match, and the successor keeps the plan's spelling (the prefix put back).
+    #[test]
+    fn a_roster_id_with_a_lab_token_is_matched_through_the_catalog_spelling() {
+        let now = 1_795_000_000;
+        let src = "web:https://openrouter.ai:443/api/v1/models";
+        let mut kimi = entry("kimi", "kimi", "kimi-code/k3.1-pro");
+        kimi.plan = "kimi".into();
+        kimi.position = 1;
+        let mut short = entry("kimi-claude", "claude", "kimi-k3.1-pro");
+        short.position = 2;
+        let roster = roster_of(vec![kimi.clone(), short.clone()]);
+        let cur = vec![dated(
+            src,
+            &[
+                ("moonshotai/k3.1-pro", Some(at(30, now))),
+                ("moonshotai/k3.2-pro", Some(at(1, now))),
+                ("qwen/k3.9-pro", Some(at(1, now))),
+            ],
+        )];
+        assert_eq!(
+            catalog_alias(&kimi, &cur),
+            Some(CatalogAlias {
+                prefix: "kimi-code/".into(),
+                vendors: vec!["moonshotai".into()]
+            })
+        );
+        let c = swap_candidates(&roster, &cur, now);
+        let pairs: Vec<(String, String, bool)> = c
+            .iter()
+            .map(|c| (c.old.clone(), c.new.clone(), c.from_public))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                (
+                    "kimi-code/k3.1-pro".to_string(),
+                    "kimi-code/k3.2-pro".to_string(),
+                    true
+                ),
+                (
+                    "kimi-k3.1-pro".to_string(),
+                    "kimi-k3.2-pro".to_string(),
+                    true
+                ),
+            ]
+        );
+        // the dates of the catalog spelling count: a successor dated older is rejected and recorded
+        let older = vec![dated(
+            src,
+            &[
+                ("moonshotai/k3.1-pro", Some(at(30, now))),
+                ("moonshotai/k3.2-pro", Some(at(300, now))),
+            ],
+        )];
+        let plan = plan_swaps(&roster_of(vec![kimi.clone()]), &older, &[], now);
+        assert!(plan.candidates.is_empty(), "{:?}", plan.candidates);
+        assert_eq!(plan.rejected.len(), 1);
+        assert_eq!(plan.rejected[0].new, "kimi-code/k3.2-pro");
+        assert_eq!(plan.rejected[0].why, WHY_OLDER);
+        assert_eq!(
+            plan.older,
+            vec![OlderPair::new("kimi-code/k3.1-pro", "kimi-code/k3.2-pro")]
+        );
+        // nothing is guessed: the seated id itself must be listed in the catalog spelling
+        let only_succ = vec![dated(src, &[("moonshotai/k3.2-pro", Some(at(1, now)))])];
+        assert_eq!(catalog_alias(&kimi, &only_succ), None);
+        assert!(swap_candidates(&roster_of(vec![kimi.clone()]), &only_succ, now).is_empty());
+        // a token that names no maker is never dropped
+        let mut odd = entry("x", "claude", "acme-k3.1-pro");
+        odd.position = 1;
+        assert_eq!(catalog_alias(&odd, &cur), None);
+        // a direct match wins: the catalog spells the roster id as it is
+        let direct = vec![dated(
+            src,
+            &[
+                ("moonshotai/kimi-k3.1-pro", Some(at(30, now))),
+                ("moonshotai/kimi-k3.2-pro", Some(at(1, now))),
+            ],
+        )];
+        assert_eq!(catalog_alias(&short, &direct), None);
+        assert_eq!(
+            swap_candidates(&roster_of(vec![short.clone()]), &direct, now)[0].new,
+            "kimi-k3.2-pro"
+        );
+        // a token naming the plan's vendor (another maker's model on that plan)
+        let mut resold = entry("alibaba-claude", "claude", "alibaba-deepseek-v4.1-flash");
+        resold.plan = "alibaba".into();
+        resold.position = 1;
+        let ds = vec![dated(
+            src,
+            &[
+                ("deepseek/deepseek-v4.1-flash", Some(at(30, now))),
+                ("deepseek/deepseek-v4.2-flash", Some(at(1, now))),
+            ],
+        )];
+        assert_eq!(
+            swap_candidates(&roster_of(vec![resold.clone()]), &ds, now)[0].new,
+            "alibaba-deepseek-v4.2-flash"
+        );
+        // ... but not on a plan of another vendor
+        resold.plan = "byteplus".into();
+        assert_eq!(catalog_alias(&resold, &ds), None);
+        // the prices are read in the plan's spelling too
+        let mut priced_cur = priced(
+            src,
+            &[
+                (
+                    "moonshotai/k3.1-pro",
+                    at(30, now),
+                    Some((0.000001, 0.000001)),
+                ),
+                ("moonshotai/k4-pro", at(1, now), Some((0.000004, 0.000001))),
+            ],
+        );
+        priced_cur.ids.push("acme/other-1".into());
+        let c = swap_candidates(&roster_of(vec![kimi]), &[priced_cur], now);
+        assert_eq!(c[0].new, "kimi-code/k4-pro");
+        assert_eq!(
+            c[0].price_hold.as_deref(),
+            Some("list price 4 times higher - seat it by hand")
+        );
+    }
+
+    /// (0.2.5 D3) A Claude id a trusted catalog spells with dots under the `anthropic/` slug is
+    /// published in its dash form too (the claude engine's spelling), only when that form is of the
+    /// Claude shape.
+    #[test]
+    fn a_dotted_claude_id_of_a_trusted_catalog_is_published_in_its_dash_form() {
+        assert_eq!(
+            claude_dash_form("claude-opus-4.5").as_deref(),
+            Some("claude-opus-4-5")
+        );
+        assert_eq!(
+            claude_dash_form("claude-sonnet-5.1").as_deref(),
+            Some("claude-sonnet-5-1")
+        );
+        assert_eq!(claude_dash_form("claude-opus-4-5"), None, "already dashed");
+        assert_eq!(claude_dash_form("claude-3.5-sonnet"), None, "not the shape");
+        assert_eq!(claude_dash_form("claude-opus-4.5.1"), None, "not the shape");
+        assert_eq!(claude_dash_form("claude-opus-4.5-thinking"), None);
+        assert_eq!(claude_dash_form("gpt-6.2"), None);
+        let st = ModelsState {
+            sources: vec![
+                sl(
+                    "web:https://openrouter.ai:443/api/v1/models",
+                    &[
+                        "anthropic/claude-opus-6.1",
+                        "anthropic/claude-3.5-sonnet",
+                        "z-ai/claude-opus-6.2",
+                    ],
+                ),
+                sl("page:untrusted", &["claude-opus-6.3"]),
+            ],
+            ..Default::default()
+        };
+        let p = published_from(&st, &crate::maintain::web::trusted_sources(None));
+        let has = |class: &str, id: &str| p.contains(&(class.to_string(), id.to_string()));
+        assert!(has("anthropic", "claude-opus-6-1"), "{p:?}");
+        assert!(
+            has("anthropic", "claude-opus-6.1"),
+            "the catalog's own form stays"
+        );
+        assert!(!has("anthropic", "claude-3-5-sonnet"));
+        assert!(
+            !p.iter().any(|(_, m)| m == "claude-opus-6-2"),
+            "another slug: {p:?}"
+        );
+        assert!(
+            !p.iter().any(|(_, m)| m == "claude-opus-6-3"),
+            "untrusted: {p:?}"
+        );
     }
 }

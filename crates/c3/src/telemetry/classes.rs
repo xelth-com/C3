@@ -1284,6 +1284,56 @@ mod tests {
         assert_eq!(model_token_with(alibaba, "qwen4-max", &p), "other");
     }
 
+    /// (0.2.5 D3) A new Claude id is known to telemetry without a release: the built-in catalog
+    /// spells it with dots under the `anthropic/` slug (`anthropic/claude-opus-6.1`), the claude
+    /// engine with dashes (`claude-opus-6-1`) - the dash form is published from it and sent by name,
+    /// and the OpenRouter route keeps sending the catalog's own form. Nothing else changes: an id of
+    /// an untrusted source, or of another slug, stays `other`.
+    #[test]
+    fn a_published_claude_id_spelled_with_dots_is_sent_by_its_dash_name() {
+        use crate::maintain::models::{published_from, ModelsState};
+        use crate::maintain::web::trusted_sources;
+        let state: ModelsState = serde_json::from_str(
+            r#"{"sources":[
+                {"source":"web:https://openrouter.ai:443/api/v1/models","ids":["anthropic/claude-opus-6.1","anthropic/claude-sonnet-6"]},
+                {"source":"web:https://models.example.com:443/v1/models","ids":["anthropic/claude-haiku-6.1"]}
+            ]}"#,
+        )
+        .unwrap();
+        let published = published_from(&state, &trusted_sources(None));
+        let anthropic = vendor_of_class("anthropic");
+        assert_eq!(
+            model_token_with(anthropic, "claude-opus-6-1", &published),
+            "claude-opus-6-1"
+        );
+        assert_eq!(
+            model_token_with(anthropic, "Claude-Opus-6-1[1M]", &published),
+            "claude-opus-6-1"
+        );
+        assert_eq!(
+            model_token_with(anthropic, "claude-sonnet-6", &published),
+            "claude-sonnet-6"
+        );
+        assert_eq!(
+            model_token_with(
+                vendor_of_class("openrouter"),
+                "anthropic/claude-opus-6.1",
+                &published
+            ),
+            "anthropic/claude-opus-6.1"
+        );
+        // a configured catalog not declared public publishes nothing, in either spelling
+        assert_eq!(
+            model_token_with(anthropic, "claude-haiku-6-1", &published),
+            "other"
+        );
+        // another Claude-shaped id stays withheld
+        assert_eq!(
+            model_token_with(anthropic, "claude-opus-6-2", &published),
+            "other"
+        );
+    }
+
     #[test]
     fn judge_classifier_by_name_engine_and_host() {
         let v = |p: &str, m: &str, e: &str, h: &str| CoordinatorView {

@@ -108,17 +108,19 @@ pub struct ReviewerPack {
 }
 
 /// Tool-state paths a reviewer must never see as periphery: another reviewer's replies, the
-/// coordinator's state, the `.eck` manifests and the `.claude` config all live under these
-/// directories. They reach a reviewer only through the pack's dedicated sections (e.g. prior
-/// findings), never as neighbourhood context. A path is tool-state when its first component is
-/// `.collab`, `.eck` or `.claude`. Used by BOTH periphery paths (index-fed and lexical); a file
-/// the focus set names explicitly is a focus file and is shown regardless, since focus files are
-/// never part of the periphery candidate set.
+/// coordinator's state, C3's `.c3` manifests (and a legacy `.eck` folder) and the `.claude`
+/// config all live under these directories. They reach a reviewer only through the pack's
+/// dedicated sections (e.g. prior findings), never as neighbourhood context. A path is tool-state
+/// when its first component is `.collab`, `.claude`, `.c3` or `.eck` (the last two compared the
+/// way the file system compares names - [`crate::state_dir::is_state_component`]). Used by BOTH
+/// periphery paths (index-fed and lexical); a file the focus set names explicitly is a focus file
+/// and is shown regardless, since focus files are never part of the periphery candidate set.
 fn is_tool_state_path(rel: &str) -> bool {
-    matches!(
-        rel.split('/').next(),
-        Some(".collab") | Some(".eck") | Some(".claude")
-    )
+    match rel.split('/').next() {
+        Some(".collab") | Some(".claude") => true,
+        Some(first) => crate::state_dir::is_state_component(first),
+        None => false,
+    }
 }
 
 fn build_set(globs: &[String]) -> GlobSet {
@@ -245,7 +247,7 @@ fn build_inner(
             max_file_size: opts.max_file_size,
             include_binary: false,
             never_commit: false,
-            eck_hidden: false,
+            handoff_hidden: false,
         },
     );
     // (0.2.5 R5) a pack built from a linked worktree (an http review under `--rev`) never carries
@@ -272,7 +274,7 @@ fn build_inner(
     // The periphery candidate set is what `discover` yielded (hard-ignores, secret-file rules
     // and `.gitignore` already applied, paths repo-relative and inside the root) minus the focus
     // files and minus tool-state paths. Both the index-fed and the lexical selection draw from
-    // this one filtered set, so a hit under `.collab/`/`.eck/`/`.claude/` (even one a stale index
+    // this one filtered set, so a hit under `.collab/`/`.c3/`/`.eck/`/`.claude/` (even one a stale index
     // still names) cannot enter either way.
     let periphery: Vec<FileEntry> = discovered
         .iter()
@@ -433,10 +435,8 @@ fn build_inner(
 
     // Sidecar.
     let rev = crate::consult::revision::revision_info(&opts.repo_root, Some(&opts.collab_root));
-    let anchor = std::fs::read_to_string(opts.collab_root.join(".c3").join("anchor"))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    // C3's own anchor only (never the legacy folder's: that one is the old tool's)
+    let anchor = crate::pack::snapshot::read_anchor(&crate::state_dir::path(&opts.repo_root));
     let files_json: Vec<_> = file_hashes
         .iter()
         .map(|(path, hash, role)| json!({ "path": path, "sha256": hash, "role": role }))
@@ -576,7 +576,7 @@ fn index_periphery(
 
 /// Map ranked hit paths to periphery neighbours, in retrieval order, deduped. A hit is used
 /// only when its path is in `periphery` — the set `discover` yielded for this run minus focus
-/// and tool-state paths (items 1 and 2). So a hit that is a focus file, a `.collab`/`.eck`/
+/// and tool-state paths (items 1 and 2). So a hit that is a focus file, a `.collab`/`.c3`/`.eck`/
 /// `.claude` path, or a path a stale index still names although discovery now drops it (a
 /// hard-ignored/secret/`.gitignore`d file), is simply absent from `periphery` and dropped here;
 /// every path validated against the repository root by `discover`. The shared-identifier header
@@ -1027,8 +1027,13 @@ mod tests {
     #[test]
     fn tool_state_paths_are_recognised() {
         assert!(is_tool_state_path(".collab/notes.md"));
+        assert!(is_tool_state_path(".c3/CONTEXT.md"));
         assert!(is_tool_state_path(".eck/CONTEXT.md"));
         assert!(is_tool_state_path(".claude/agents/x.md"));
+        assert_eq!(
+            is_tool_state_path(".C3/CONTEXT.md"),
+            cfg!(any(windows, target_os = "macos"))
+        );
         assert!(!is_tool_state_path("src/lib.rs"));
         assert!(!is_tool_state_path("collab/x.rs")); // no leading dot
         assert!(!is_tool_state_path("crates/.collab_helper.rs")); // not a first component
@@ -1041,12 +1046,14 @@ mod tests {
         let d = scratch("toolstate-lex");
         fs::create_dir_all(d.join(".collab")).unwrap();
         fs::create_dir_all(d.join(".eck")).unwrap();
+        fs::create_dir_all(d.join(".c3")).unwrap();
         fs::write(d.join("brief.md"), "b").unwrap();
         fs::write(d.join("store.rs"), "pub fn open_ledger() {}\n").unwrap();
-        // All three share the `open_ledger` identifier with the focus.
+        // All of them share the `open_ledger` identifier with the focus.
         fs::write(d.join("client.rs"), "pub fn call_it() { open_ledger(); }\n").unwrap();
         fs::write(d.join(".collab/leak.rs"), "fn peek() { open_ledger(); }\n").unwrap();
         fs::write(d.join(".eck/leak.rs"), "fn peek() { open_ledger(); }\n").unwrap();
+        fs::write(d.join(".c3/leak.rs"), "fn peek() { open_ledger(); }\n").unwrap();
         let opts = PackOpts {
             repo_root: d.clone(),
             collab_root: d.join(".collab"),
@@ -1065,6 +1072,7 @@ mod tests {
             "tool-state excluded"
         );
         assert!(!p.content.contains(".eck/leak.rs"), "tool-state excluded");
+        assert!(!p.content.contains(".c3/leak.rs"), "tool-state excluded");
         let _ = fs::remove_dir_all(&d);
     }
 

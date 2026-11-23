@@ -458,7 +458,14 @@ fn cmdline_markers(name: &str, stem: &str, test_mode: bool) -> Vec<String> {
 /// by command line (an npm/PowerShell-shimmed CLI runs as `node`/`powershell` whose image name is
 /// not the launcher stem). A FAILED process snapshot reads as "in use" (fail-closed): the pass must
 /// not update while it cannot prove the engine idle.
+///
+/// (0.2.5 D3) Under `CODEX_CONSULT_TEST_MODE` the machine's process table is never read: the test
+/// answers the probe through the hook [`IN_USE_HOOK`] ([`in_use_by_hook`]), so a real engine CLI
+/// another session runs on the same machine cannot make a test pass skip its fake engine.
 fn engine_in_use(name: &str, launcher: &str) -> bool {
+    if c3_core::test_hooks::mode_on() {
+        return in_use_by_hook(name, c3_core::test_hooks::hook(IN_USE_HOOK).as_deref());
+    }
     let me = std::process::id();
     let mut mine: std::collections::HashSet<u32> = crate::liveness::proc::descendants_of(me)
         .into_iter()
@@ -488,6 +495,17 @@ fn engine_in_use(name: &str, launcher: &str) -> bool {
         &mine,
         rows.as_ref().map(|v| v.as_slice()).map_err(|_| ()),
     )
+}
+
+/// (0.2.5 D3) The test hook that answers the in-use probe under test mode: a comma-separated list
+/// of the engine names to report as in use (`grok`, `codex,kimi`; any case). Unset or empty: none.
+pub const IN_USE_HOOK: &str = "CODEX_CONSULT_TEST_MAINTAIN_IN_USE";
+
+/// Whether the [`IN_USE_HOOK`] value names `engine` (compared case-insensitively, entries trimmed).
+fn in_use_by_hook(engine: &str, hook: Option<&str>) -> bool {
+    hook.unwrap_or("")
+        .split(',')
+        .any(|n| n.trim().eq_ignore_ascii_case(engine))
 }
 
 /// The pure in-use decision over a gathered snapshot (so it is unit-tested without the machine): a
@@ -1500,6 +1518,10 @@ fn run_models(
                 // an `ext.c3.reviewers` http reviewer is not a `reviewers[]` element: the swap
                 // edits only `reviewers[<position>].model` (F02-17), so it is never smoked either
                 Some("an ext.c3.reviewers http entry is announced only")
+            } else if let Some(why) = c.price_hold.as_deref() {
+                // (0.2.5 D3) a successor across a major the catalog lists at more than twice the
+                // seated id's price: the plan may charge more for it - the operator decides
+                Some(why)
             } else if mode == ModelsMode::Announce {
                 Some("mode announce")
             } else {
@@ -1566,6 +1588,8 @@ fn run_models(
                 model: c.new.clone(),
                 bind: smoke::Bind::Entry(c.position),
                 seated: c.old.clone(),
+                // (0.2.5 D3, F15-3) the whole entry as the gate judged it
+                fingerprint: smoke::entry_fingerprint(&basis, c.position),
             };
             // One smoke per entry and pass: the highest successor only. A failed candidate is tried
             // again on a later pass.
@@ -2326,6 +2350,19 @@ mod tests {
             &mine2,
             Ok(&rows)
         ));
+    }
+
+    // (0.2.5 D3) Under test mode the in-use probe is the hook's answer: the engines it names (any
+    // case, entries trimmed), and none when it is unset or empty.
+    #[test]
+    fn the_in_use_hook_names_the_engines_reported_in_use_and_defaults_to_none() {
+        assert!(!in_use_by_hook("grok", None));
+        assert!(!in_use_by_hook("grok", Some("")));
+        assert!(in_use_by_hook("grok", Some("grok")));
+        assert!(in_use_by_hook("grok", Some("codex, GROK ")));
+        assert!(!in_use_by_hook("grok", Some("codex,kimi")));
+        assert!(!in_use_by_hook("grok", Some("grok-build")));
+        assert!(in_use_by_hook("kimi", Some("codex,kimi")));
     }
 
     #[test]

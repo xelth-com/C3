@@ -207,7 +207,7 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
     }
     if let Some(d) = &ctx.diff {
         out.push(format!(
-            "diff        : git diff {} -> {} (named in the prompt; .collab/, .eck/ and ignored files left out, secrets redacted)",
+            "diff        : git diff {} -> {} (named in the prompt; .collab/, .c3/ and ignored files left out, secrets redacted)",
             d.range, d.rel
         ));
     }

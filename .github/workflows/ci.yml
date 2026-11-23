@@ -60,8 +60,17 @@ jobs:
       # Windows: one test thread - the fake codex/claude launchers each start Windows PowerShell 5.1,
       # and a parallel cold start on the runner outlasts the bridge's 15 s `--version` probe.
       # --no-fail-fast: one failed test binary must not hide the binaries after it.
-      - name: Test (default features)
-        run: cargo test --workspace --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
+      # One step per crate (the same tests as `--workspace`): a hung or cancelled run names the
+      # crate it was in, and `success() || failure()` runs every step after a failed one.
+      - name: Test c3-core (default features)
+        if: success() || failure()
+        run: cargo test -p c3-core --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
+      - name: Test c3 (default features)
+        if: success() || failure()
+        run: cargo test -p c3 --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
+      - name: Test c3-cli (default features)
+        if: success() || failure()
+        run: cargo test -p c3-cli --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
 
   index-surreal:
     name: ubuntu-latest / index-surreal
@@ -91,5 +100,14 @@ jobs:
           restore-keys: target-index-${{ runner.os }}-
       - name: Clippy (index-surreal)
         run: cargo clippy -p c3 -p c3-core -p c3-cli --all-targets --features c3-cli/index-surreal -- -D warnings
-      - name: Test (index-surreal)
-        run: cargo test --workspace --no-fail-fast --features c3-cli/index-surreal
+      # One step per crate, as in the check job; the feature reaches c3 through c3-cli, so the c3
+      # step names c3's own feature (c3-core has none).
+      - name: Test c3-core (index-surreal)
+        if: success() || failure()
+        run: cargo test -p c3-core --no-fail-fast
+      - name: Test c3 (index-surreal)
+        if: success() || failure()
+        run: cargo test -p c3 --no-fail-fast --features c3/index-surreal
+      - name: Test c3-cli (index-surreal)
+        if: success() || failure()
+        run: cargo test -p c3-cli --no-fail-fast --features c3-cli/index-surreal

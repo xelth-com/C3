@@ -3,7 +3,7 @@
 //! a real CLI, the network or a model. Every external command of a pass goes through [`Env::run`],
 //! every model-list HTTP read through [`Env::http_get`].
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -165,8 +165,14 @@ impl Env for SystemEnv {
         let ua = format!("c3/{}", env!("CARGO_PKG_VERSION"));
         let public_only = policy.public_only();
         fetch(url, policy, |current, remaining| {
-            let agent = hop_agent(remaining, public_only);
-            let mut req = agent.get(current).timeout(remaining).set("User-Agent", &ua);
+            // (F14-1) the hop's name lookup first, under the deadline; the connect and the request
+            // then get only what is left AFTER it
+            let deadline = Instant::now() + remaining;
+            let netloc = hop_netloc(current).ok_or_else(|| "bad url: no host".to_string())?;
+            let (addrs, left) = resolve_hop(&netloc, deadline, public_only, system_lookup)
+                .map_err(|e| c3_core::one_line(&e.to_string()))?;
+            let agent = hop_agent(left, addrs);
+            let mut req = agent.get(current).timeout(left).set("User-Agent", &ua);
             for (k, v) in headers {
                 req = req.set(k, v);
             }
@@ -195,23 +201,70 @@ impl Env for SystemEnv {
     }
 }
 
-/// (F14-1) The client of ONE hop of a GET: its connect phase gets only `remaining` (ureq's connect
-/// timeout takes precedence over the request's own, so it must not be the whole window), and the
-/// name lookup - which ureq cannot interrupt - runs under the same deadline ([`resolve_within`]).
-/// (F15-1) For a public source the lookup also refuses a name that resolves to a local or private
-/// address, so no connection is made to it.
-fn hop_agent(remaining: Duration, public_only: bool) -> ureq::Agent {
-    let deadline = Instant::now() + remaining;
+/// (F14-1) The client of ONE hop of a GET, built AFTER the hop's name lookup ([`resolve_hop`]):
+/// its connect phase gets only `connect_budget` - the time left once the lookup is done (ureq's
+/// connect timeout takes precedence over the request's own, so it must not be the whole window) -
+/// and it connects to the addresses that lookup vetted (`addrs`; no second lookup, so a name cannot
+/// answer differently the second time). (F29-1) It never uses a proxy: C3 has no proxy setting
+/// for `c3 maintain`, and ureq 2.12 would take one from `ALL_PROXY` / `HTTPS_PROXY` / `HTTP_PROXY`
+/// if its `proxy-from-env` feature were on (off in C3's build, but a dependency could turn it on
+/// through cargo's feature unification). Through a proxy the peer check of a public source would
+/// see the proxy, never the origin, and the name lookup would vet the proxy's name - so the
+/// environment's proxy is refused explicitly here. (The http engine honours the proxy on purpose,
+/// for its own requests only.)
+fn hop_agent(connect_budget: Duration, addrs: Vec<SocketAddr>) -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .timeout_connect(remaining)
+        .timeout_connect(connect_budget)
         .redirects(0)
-        .resolver(move |netloc: &str| {
-            resolve_within(netloc, deadline, public_only, |name: String| {
-                use std::net::ToSocketAddrs as _;
-                name.to_socket_addrs().map(|it| it.collect())
-            })
-        })
+        .try_proxy_from_env(false)
+        .resolver(move |_netloc: &str| Ok(addrs.clone()))
         .build()
+}
+
+/// The `host:port` a hop's URL connects to (the scheme's default port when none is written; an
+/// IPv6 host keeps its brackets). `None` when the URL has no host.
+fn hop_netloc(url: &str) -> Option<String> {
+    let u = url::Url::parse(url).ok()?;
+    let host = u.host_str().filter(|h| !h.is_empty())?;
+    Some(format!("{host}:{}", u.port_or_known_default()?))
+}
+
+/// The operating system's name lookup of a `host:port`.
+fn system_lookup(netloc: String) -> std::io::Result<Vec<SocketAddr>> {
+    use std::net::ToSocketAddrs as _;
+    netloc.to_socket_addrs().map(|it| it.collect())
+}
+
+/// (F14-1) One hop's name lookup under the fetch's `deadline` ([`resolve_within`]; for a public
+/// source a name with any non-global address is refused), then the time left for the connect and
+/// the request - recomputed AFTER the lookup, so a lookup that took most of the window leaves them
+/// only the rest, never a fresh budget. A lookup that ends at or past the deadline is a timeout.
+fn resolve_hop<F>(
+    netloc: &str,
+    deadline: Instant,
+    public_only: bool,
+    lookup: F,
+) -> std::io::Result<(Vec<SocketAddr>, Duration)>
+where
+    F: FnOnce(String) -> std::io::Result<Vec<SocketAddr>> + Send + 'static,
+{
+    let addrs = resolve_within(netloc, deadline, public_only, lookup)?;
+    if addrs.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no address for {netloc}"),
+        ));
+    }
+    let left = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|d| !d.is_zero())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the deadline passed during the name lookup",
+            )
+        })?;
+    Ok((addrs, left))
 }
 
 /// (F14-1, F15-1) Resolve `netloc` (`host:port`) with `lookup` on its own thread, waiting at most
@@ -267,33 +320,73 @@ where
     Ok(addrs)
 }
 
-/// (F15-1) Whether `ip` is a public address a catalog or page may be read from: not loopback,
-/// private (RFC 1918 / unique local `fc00::/7`), link-local (`169.254/16`, `fe80::/10`),
-/// unspecified or multicast. An IPv4-mapped IPv6 address is judged as its IPv4 address.
+/// (F15-1, F27-1) The IPv4 ranges that are not global unicast - a public source is never read from
+/// an address in one of them: `(network, prefix length)`, IANA's special-purpose registry.
+pub(crate) const NON_GLOBAL_V4: &[(Ipv4Addr, u8)] = &[
+    (Ipv4Addr::new(0, 0, 0, 0), 8), // "this network" (a local route on Linux)
+    (Ipv4Addr::new(10, 0, 0, 0), 8), // private
+    (Ipv4Addr::new(100, 64, 0, 0), 10), // shared address space (CGNAT, overlays)
+    (Ipv4Addr::new(127, 0, 0, 0), 8), // loopback
+    (Ipv4Addr::new(169, 254, 0, 0), 16), // link-local
+    (Ipv4Addr::new(172, 16, 0, 0), 12), // private
+    (Ipv4Addr::new(192, 0, 0, 0), 24), // IETF protocol assignments
+    (Ipv4Addr::new(192, 0, 2, 0), 24), // documentation (TEST-NET-1)
+    (Ipv4Addr::new(192, 88, 99, 0), 24), // deprecated 6to4 relay anycast
+    (Ipv4Addr::new(192, 168, 0, 0), 16), // private
+    (Ipv4Addr::new(198, 18, 0, 0), 15), // benchmarking
+    (Ipv4Addr::new(198, 51, 100, 0), 24), // documentation (TEST-NET-2)
+    (Ipv4Addr::new(203, 0, 113, 0), 24), // documentation (TEST-NET-3)
+    (Ipv4Addr::new(224, 0, 0, 0), 4), // multicast
+    (Ipv4Addr::new(240, 0, 0, 0), 4), // reserved
+    (Ipv4Addr::new(255, 255, 255, 255), 32), // limited broadcast
+];
+
+/// (F15-1, F27-1) The IPv6 ranges that are not global unicast: `(network, prefix length)`. An
+/// IPv4-mapped address (`::ffff:0:0/96`) and one of the well-known NAT64 prefix (`64:ff9b::/96`)
+/// are judged as the IPv4 address they carry ([`is_public_address`]).
+pub(crate) const NON_GLOBAL_V6: &[(Ipv6Addr, u8)] = &[
+    (Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0), 128), // unspecified
+    (Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 128), // loopback
+    (Ipv6Addr::new(0x64, 0xff9b, 1, 0, 0, 0, 0, 0), 48), // local-use IPv4/IPv6 translation
+    (Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 0), 64), // discard-only
+    (Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0), 32), // documentation
+    (Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 0), 7), // unique local
+    (Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0), 10), // link-local
+    (Ipv6Addr::new(0xfec0, 0, 0, 0, 0, 0, 0, 0), 10), // site-local (deprecated)
+    (Ipv6Addr::new(0xff00, 0, 0, 0, 0, 0, 0, 0), 8), // multicast
+];
+
+/// Whether `a` lies in `net/len`.
+fn in_v4(a: Ipv4Addr, net: Ipv4Addr, len: u8) -> bool {
+    let mask = u32::MAX.checked_shl(32 - u32::from(len)).unwrap_or(0);
+    u32::from(a) & mask == u32::from(net) & mask
+}
+
+/// Whether `a` lies in `net/len`.
+fn in_v6(a: Ipv6Addr, net: Ipv6Addr, len: u8) -> bool {
+    let mask = u128::MAX.checked_shl(128 - u32::from(len)).unwrap_or(0);
+    u128::from(a) & mask == u128::from(net) & mask
+}
+
+/// (F15-1, F27-1) Whether `ip` is a global unicast address a catalog or page may be read from: in
+/// none of the ranges of [`NON_GLOBAL_V4`] / [`NON_GLOBAL_V6`]. An IPv4-mapped IPv6 address
+/// (`::ffff:a.b.c.d`) and a NAT64 one (`64:ff9b::a.b.c.d`) are judged as their IPv4 address.
+/// Checked at the name lookup and at the peer of every hop.
 pub(crate) fn is_public_address(ip: IpAddr) -> bool {
     let ip = match ip {
-        IpAddr::V6(v6) => v6
-            .to_ipv4_mapped()
-            .map(IpAddr::V4)
-            .unwrap_or(IpAddr::V6(v6)),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None if in_v6(v6, Ipv6Addr::new(0x64, 0xff9b, 0, 0, 0, 0, 0, 0), 96) => {
+                let [.., a, b, c, d] = v6.octets();
+                IpAddr::V4(Ipv4Addr::new(a, b, c, d))
+            }
+            None => IpAddr::V6(v6),
+        },
         v4 => v4,
     };
     match ip {
-        IpAddr::V4(a) => {
-            !(a.is_loopback()
-                || a.is_private()
-                || a.is_link_local()
-                || a.is_unspecified()
-                || a.is_multicast())
-        }
-        IpAddr::V6(a) => {
-            let s0 = a.segments()[0];
-            !(a.is_loopback()
-                || a.is_unspecified()
-                || a.is_multicast()
-                || (s0 & 0xfe00) == 0xfc00
-                || (s0 & 0xffc0) == 0xfe80)
-        }
+        IpAddr::V4(a) => !NON_GLOBAL_V4.iter().any(|(net, len)| in_v4(a, *net, *len)),
+        IpAddr::V6(a) => !NON_GLOBAL_V6.iter().any(|(net, len)| in_v6(a, *net, *len)),
     }
 }
 
@@ -594,8 +687,9 @@ pub(crate) fn redirect_target(
 #[cfg(test)]
 mod tests {
     use super::{
-        fetch, hop_agent, is_named_public_host, is_public_address, is_secret_env, read_capped,
-        redirect_target, resolve_within, GetPolicy, Hop, Redirects,
+        check_peer, fetch, hop_agent, hop_netloc, is_named_public_host, is_public_address,
+        is_secret_env, read_capped, redirect_target, resolve_hop, resolve_within, GetPolicy, Hop,
+        Redirects, NON_GLOBAL_V4, NON_GLOBAL_V6,
     };
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -943,11 +1037,13 @@ mod tests {
     /// and a hop whose transport fails at the deadline reports the deadline's error.
     #[test]
     fn the_connect_phase_gets_only_the_remaining_time() {
+        let addrs = vec!["93.184.216.34:443".parse::<SocketAddr>().unwrap()];
         let agent = format!(
             "{:?}",
-            hop_agent(std::time::Duration::from_millis(1234), true)
+            hop_agent(std::time::Duration::from_millis(1234), addrs)
         );
         assert!(agent.contains("timeout_connect: Some(1.234s)"), "{agent}");
+        assert!(agent.contains("proxy: None"), "{agent}");
         let r = fetch::<&[u8]>(
             "https://catalog.example/m",
             policy(150, Redirects::SameOrigin, 100),
@@ -1002,39 +1098,150 @@ mod tests {
         assert_eq!(ok.unwrap().len(), 1);
     }
 
-    /// (F15-1) The address classes a public source is never read from.
+    /// (F15-1, F27-1) A public source is read only from a global unicast address: one row per
+    /// non-global range (an address inside it, refused) plus the neighbours just outside the
+    /// ranges (global, accepted). Every table entry's own network address is refused as well.
     #[test]
     fn the_address_classes_of_a_public_source() {
-        for a in [
-            "127.0.0.1",
-            "127.8.9.10",
-            "10.1.2.3",
-            "172.16.0.1",
-            "172.31.255.255",
-            "192.168.1.1",
-            "169.254.169.254",
-            "0.0.0.0",
-            "224.0.0.1",
-            "::1",
-            "::",
-            "fc00::1",
-            "fd12:3456::1",
-            "fe80::1",
-            "ff02::1",
-            "::ffff:127.0.0.1",
-            "::ffff:10.0.0.1",
+        for (a, range) in [
+            ("0.0.0.0", "0.0.0.0/8"),
+            ("0.0.0.1", "0.0.0.0/8"),
+            ("0.255.255.255", "0.0.0.0/8"),
+            ("10.1.2.3", "10/8"),
+            ("100.64.0.1", "100.64/10 (CGNAT)"),
+            ("100.127.255.254", "100.64/10 (CGNAT)"),
+            ("127.0.0.1", "127/8"),
+            ("127.8.9.10", "127/8"),
+            ("169.254.169.254", "169.254/16"),
+            ("172.16.0.1", "172.16/12"),
+            ("172.31.255.255", "172.16/12"),
+            ("192.0.0.8", "192.0.0.0/24"),
+            ("192.0.2.1", "192.0.2.0/24"),
+            ("192.88.99.1", "192.88.99.0/24"),
+            ("192.168.1.1", "192.168/16"),
+            ("198.18.0.1", "198.18/15"),
+            ("198.19.255.255", "198.18/15"),
+            ("198.51.100.7", "198.51.100.0/24"),
+            ("203.0.113.9", "203.0.113.0/24"),
+            ("224.0.0.1", "224/4"),
+            ("239.255.255.250", "224/4"),
+            ("240.0.0.1", "240/4"),
+            ("255.255.255.255", "broadcast"),
+            ("::", "::/128"),
+            ("::1", "::1"),
+            ("::ffff:127.0.0.1", "IPv4-mapped, judged as its IPv4"),
+            ("::ffff:10.0.0.1", "IPv4-mapped, judged as its IPv4"),
+            ("::ffff:100.64.0.1", "IPv4-mapped, judged as its IPv4"),
+            ("64:ff9b::a00:1", "NAT64, judged as its IPv4 (10.0.0.1)"),
+            ("64:ff9b:1::1", "64:ff9b:1::/48"),
+            ("100::1", "100::/64"),
+            ("2001:db8::1", "2001:db8::/32"),
+            ("fc00::1", "fc00::/7"),
+            ("fd12:3456::1", "fc00::/7"),
+            ("fe80::1", "fe80::/10"),
+            ("fec0::1", "fec0::/10"),
+            ("feff::1", "fec0::/10"),
+            ("ff02::1", "ff00::/8"),
         ] {
-            assert!(!is_public_address(a.parse().unwrap()), "{a} is not public");
+            assert!(
+                !is_public_address(a.parse().unwrap()),
+                "{a} ({range}) is not public"
+            );
+        }
+        for (net, _) in NON_GLOBAL_V4 {
+            assert!(!is_public_address(IpAddr::V4(*net)), "{net}");
+        }
+        for (net, _) in NON_GLOBAL_V6 {
+            assert!(!is_public_address(IpAddr::V6(*net)), "{net}");
         }
         for a in [
             "93.184.216.34",
             "8.8.8.8",
+            "1.0.0.1",
+            "100.63.255.255",
+            "100.128.0.1",
+            "172.15.255.255",
             "172.32.0.1",
+            "192.0.1.1",
+            "192.0.3.1",
+            "192.88.98.1",
+            "198.17.255.255",
+            "198.20.0.1",
+            "198.51.101.1",
+            "203.0.114.1",
+            "223.255.255.254",
             "2606:4700::1111",
+            "2001:4860:4860::8888",
             "::ffff:93.184.216.34",
+            "64:ff9b::808:808",
+            "100:0:0:1::1",
+            "2001:db9::1",
         ] {
             assert!(is_public_address(a.parse().unwrap()), "{a} is public");
         }
+        // the lookup check refuses such a name (here a CGNAT and a benchmarking address)
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        for bad in ["100.64.0.1:443", "198.18.0.1:443", "[fec0::1]:443"] {
+            let err = resolve_within("catalog.example:443", far, true, move |_| {
+                Ok(vec![bad.parse::<SocketAddr>().unwrap()])
+            })
+            .unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{bad}");
+        }
+        // and the peer check of every hop refuses such an answer
+        assert!(check_peer(Some("100.64.0.1".parse().unwrap())).is_err());
+        assert!(check_peer(Some("0.0.0.1".parse().unwrap())).is_err());
+        assert!(check_peer(Some("93.184.216.34".parse().unwrap())).is_ok());
+    }
+
+    /// (F14-1) The time left for a hop's connect and request is recomputed AFTER its name lookup: a
+    /// lookup that takes most of the deadline leaves the connect only the rest (never the budget
+    /// computed before the lookup), and a lookup that ends past the deadline is a timeout before
+    /// any connect.
+    #[test]
+    fn the_connect_gets_the_time_left_after_the_name_lookup() {
+        let start = std::time::Instant::now();
+        let deadline = start + std::time::Duration::from_millis(1_000);
+        let (addrs, left) = resolve_hop("catalog.example:443", deadline, true, |_| {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            Ok(vec!["93.184.216.34:443".parse::<SocketAddr>().unwrap()])
+        })
+        .unwrap();
+        assert_eq!(addrs.len(), 1);
+        assert!(
+            left <= std::time::Duration::from_millis(200),
+            "the connect budget is what the lookup left: {left:?}"
+        );
+        assert!(!left.is_zero());
+        // the hop's client carries exactly that budget
+        let agent = format!("{:?}", hop_agent(left, addrs));
+        let budget = agent
+            .split("timeout_connect: Some(")
+            .nth(1)
+            .and_then(|s| s.split(')').next())
+            .unwrap_or("?")
+            .to_string();
+        assert!(
+            budget.ends_with("ms") || budget.ends_with("µs"),
+            "a sub-second connect budget, not the hop's whole second: {budget} ({agent})"
+        );
+        // a lookup that outlasts the deadline never reaches a connect
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
+        let err = resolve_hop("slow.example:443", deadline, true, |_| {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            Ok(vec!["93.184.216.34:443".parse::<SocketAddr>().unwrap()])
+        })
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        // the netloc of a hop: the scheme's default port, an IPv6 host in brackets
+        assert_eq!(
+            hop_netloc("https://openrouter.ai/api/v1/models").as_deref(),
+            Some("openrouter.ai:443")
+        );
+        assert_eq!(
+            hop_netloc("https://[::1]:8443/m").as_deref(),
+            Some("[::1]:8443")
+        );
     }
 
     /// (F15-1) A public source's URL names its host: an IP literal (any form) or `localhost` (any

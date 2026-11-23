@@ -38,6 +38,8 @@ const CODEX_MISSING: &str =
 /// own `consult --explain coordinate`). `source` is the SessionStart source (`startup`/`resume`/
 /// `compact`); only `compact` adds the (R30) re-hydration line, so startup/resume stay unchanged.
 pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
+    // (0.2.5, S1) the hook never moves C3's project folder, whatever collab path it looks at
+    crate::state_dir::forbid_moves();
     println!("{}", line(collab_dir));
     println!("{}", pointer_line(explain_command));
     // (R30 wave-boundary compaction) after a compaction the coordinator has lost the in-context

@@ -26,7 +26,7 @@ pub struct ExplainArgs {
     /// Who the explanation is for (free text).
     #[arg(long, default_value = "")]
     pub audience: String,
-    /// Output path. Default: `<collab>/.c3/explains/<repo>_<ts>.md`.
+    /// Output path. Default: `.c3/explains/<repo>_<ts>.md`.
     #[arg(long)]
     pub out: Option<String>,
     /// Skip the confirmation (the pack leaves the machine).
@@ -43,11 +43,14 @@ pub fn run(args: ExplainArgs) -> i32 {
     let repo_root = providers::resolve_repo_root(&cwd);
     let collab_root = providers::resolve_collab_root(&repo_root, &args.collab_dir);
 
+    let into_state_dir = args.out.is_none();
     let out = args
         .out
         .clone()
         .map(PathBuf::from)
-        .unwrap_or_else(|| explain::default_out(&collab_root, &repo_root));
+        .unwrap_or_else(|| explain::default_out(&repo_root));
+    let state_repo = repo_root.clone();
+    let state_collab = collab_root.clone();
 
     let opts = ExplainOpts {
         repo_root,
@@ -87,6 +90,24 @@ pub fn run(args: ExplainArgs) -> i32 {
     if !args.yes && !confirm() {
         eprintln!("c3 explain: aborted (no confirmation).");
         return 1;
+    }
+
+    // The default output goes into C3's folder: make sure it is in place first (and write into the
+    // folder it settled on - the legacy one for a run whose move had to wait).
+    let mut out = out;
+    if into_state_dir {
+        match crate::state_dir::ensure(&state_repo, Some(&state_collab)) {
+            Ok(e) => {
+                crate::state_dir::print_notes("c3 explain", &e.notes(), true);
+                if let Some(name) = out.file_name() {
+                    out = e.dir.join("explains").join(name);
+                }
+            }
+            Err(e) => {
+                eprintln!("c3 explain: {e}");
+                return 1;
+            }
+        }
     }
 
     match explain::write(&pack, &out) {

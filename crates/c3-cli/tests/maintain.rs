@@ -222,6 +222,80 @@ fn an_update_passes_its_smoke_and_is_installed() {
     );
 }
 
+// ------------------------------------------------------------------ the in-use probe under test mode
+
+/// A process that stays alive while a pass runs; killed when dropped (a failed assert too).
+struct Running(std::process::Child);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// (0.2.5 D3) An engine CLI running on the machine - here a process whose command line names the
+/// fake grok launcher, which the real process scan reads as that engine in use - does not make a
+/// test pass skip the engine: under test mode the probe never reads the machine's process table
+/// (another session's real `grok.exe` used to fail six to nine of these tests).
+#[test]
+fn a_running_engine_process_does_not_make_a_test_pass_skip_the_engine() {
+    let e = setup("in-use-machine");
+    let _running = Running(
+        Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Start-Sleep -Seconds 90 # {}", e.grok_exe.display()),
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the stand-in engine process"),
+    );
+    let env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(!t.contains("in use"), "the machine was not read: {t}");
+    assert!(t.contains("grok 1.0.77 -> 1.0.80 ok"), "{t}");
+    assert_eq!(verfile(&e.grok_verfile), "1.0.80");
+}
+
+/// (0.2.5 D3) The "in use - skipped" path, driven through the test hook: the engine it names is
+/// skipped (nothing installed, due again tomorrow); a hook naming other engines leaves it alone.
+#[test]
+fn an_engine_the_test_hook_reports_in_use_is_skipped_and_due_tomorrow() {
+    let e = setup("in-use-hook");
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    env.push(("CODEX_CONSULT_TEST_MAINTAIN_IN_USE", "codex,Grok"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(t.contains("c3 maintain: grok skipped: in use"), "{t}");
+    assert!(
+        t.contains("c3: maintenance") && t.contains(" - grok skipped: in use"),
+        "the report line names it: {t}"
+    );
+    assert_eq!(verfile(&e.grok_verfile), "1.0.77", "nothing was installed");
+    assert!(!e.mnt_log().contains("update --version"), "{}", e.mnt_log());
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(e.state_path()).unwrap()).unwrap();
+    assert_eq!(state["engines"][0]["action"], "skipped: in use", "{state}");
+    let last = chrono::DateTime::parse_from_rfc3339(state["last_pass"].as_str().unwrap()).unwrap();
+    let next = chrono::DateTime::parse_from_rfc3339(state["next_due"].as_str().unwrap()).unwrap();
+    assert_eq!(next - last, chrono::Duration::days(1), "{state}");
+
+    // a hook that names other engines only: grok is updated
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    env.push(("CODEX_CONSULT_TEST_MAINTAIN_IN_USE", "codex,kimi"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert!(t.contains("grok 1.0.77 -> 1.0.80 ok"), "{t}");
+}
+
 // ------------------------------------------------------------------ post-update smoke fails -> rollback
 
 #[test]
@@ -1390,6 +1464,184 @@ fn an_engine_smoke_is_not_run_when_its_roster_seat_changed() {
     let t = run(false);
     assert!(t.contains("grok 1.0.77 -> 1.0.80 ok"), "{t}");
     assert_eq!(verfile(&e.grok_verfile), "1.0.80");
+}
+
+/// (0.2.5 D3, F15-3) The entry-bound smoke refuses ANY edit of the chosen entry, not only of its
+/// provider and model: the seat's plan is edited between the two smokes of an engine update (the
+/// forward update does it), so the post-update smoke - which the script would pass - is not run,
+/// and the update is rolled back like a failed one.
+#[test]
+fn an_entry_edited_in_another_field_during_the_pass_holds_the_post_update_smoke() {
+    let e = setup("seat-edited");
+    let roster = e.work.join("roster.json");
+    let roster_json = r#"{"roster_version":1,"reviewers":[{"provider":"grok","engine":"grok","model":"grok-4.7","plan":"supergrok"}]}"#;
+    std::fs::write(&roster, roster_json).unwrap();
+    let roster_s = roster.to_string_lossy().into_owned();
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    env.extend([
+        ("CODEX_CONSULT_ROSTER", roster_s.as_str()),
+        ("FAKE_GROK_EDIT_ROSTER", roster_s.as_str()),
+        ("FAKE_GROK_EDIT_AT", "update"),
+        ("FAKE_GROK_EDIT_FROM", "\"supergrok\""),
+        ("FAKE_GROK_EDIT_TO", "\"supergrok-team\""),
+        ("C3_MAINTAIN_SMOKE_GROK", ""),
+    ]);
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("smoke failed, rolled back (not run: the roster entry changed: reviewers entry 1 is not the entry the smoke was chosen with (edited since))"),
+        "{t}"
+    );
+    assert!(!t.contains("1.0.80 ok"), "{t}");
+    assert_eq!(verfile(&e.grok_verfile), "1.0.77", "rolled back");
+    assert!(
+        std::fs::read_to_string(&roster)
+            .unwrap()
+            .contains("supergrok-team"),
+        "the edit happened during the pass"
+    );
+}
+
+// ------------------------------------------------------------------ the price of a swap across a major
+
+/// (0.2.5 D3) A successor of a higher major that the catalog lists at more than twice the seated
+/// id's list price is announced only - "list price N times higher - seat it by hand" - never
+/// smoked or seated (the same plan may charge more for it); the prices are not stored.
+#[test]
+fn a_catalog_successor_across_a_major_priced_over_twice_is_announced_only() {
+    let e = setup("web-price");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let catalog = format!(
+        r#"{{"data":[{{"id":"qwen/qwen3.8-max","created":{},"pricing":{{"prompt":"0.000001","completion":"0.000004"}}}},{{"id":"qwen/qwen4-max","created":{},"pricing":{{"prompt":"0.000003","completion":"0.000006"}}}}]}}"#,
+        now - 30 * 86_400,
+        now - 86_400
+    );
+    let m = models_case_with(
+        &e,
+        &endpoint_roster(false),
+        "alibaba-claude::qwen4-max=pass",
+        &catalog,
+    );
+    let o = e.run(&["maintain", "--models"], &m.env());
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("model alibaba-claude :: qwen3.8-max -> qwen4-max not seated (list price 3 times higher - seat it by hand)"),
+        "{t}"
+    );
+    assert!(!t.contains("smoke passed"), "no smoke ran: {t}");
+    assert_eq!(
+        m.roster_text(),
+        endpoint_roster(false),
+        "the roster is untouched"
+    );
+    assert!(m.backups().is_empty());
+    let state = std::fs::read_to_string(e.state_path()).unwrap();
+    assert!(
+        !state.contains("0.000003") && !state.contains("pricing") && !state.contains("prices"),
+        "no price is stored: {state}"
+    );
+}
+
+// ------------------------------------------------------------------ a roster id spelled with its lab token
+
+/// (0.2.5 D3) A roster id the plan spells with a token naming its maker (`kimi-k3.1-pro`), which
+/// the catalog leaves out (`moonshotai/k3.1-pro`), is matched through the catalog's spelling: its
+/// successor is dated, smoked and seated exactly like a direct match, in the plan's own spelling.
+#[test]
+fn a_roster_id_spelled_with_its_lab_token_is_seated_in_the_plans_spelling() {
+    let e = setup("web-alias");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let roster_json = r#"{"roster_version":1,"reviewers":[{"provider":"kimi-claude","engine":"claude","model":"kimi-k3.1-pro","auth":"endpoint","endpoint":{"base_url":"https://kimi.example/anthropic","env_key":"C3_TEST_NO_SUCH_KEY"},"plan":"kimi"}]}"#;
+    let catalog = format!(
+        r#"{{"data":[{{"id":"moonshotai/k3.1-pro","created":{}}},{{"id":"moonshotai/k3.2-pro","created":{}}}]}}"#,
+        now - 10 * 86_400,
+        now - 86_400
+    );
+    let m = models_case_with(&e, roster_json, "kimi-claude::kimi-k3.2-pro=pass", &catalog);
+    let o = e.run(&["maintain", "--models"], &m.env());
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("model kimi-claude :: kimi-k3.1-pro -> kimi-k3.2-pro, smoke passed"),
+        "{t}"
+    );
+    assert_eq!(
+        m.roster_text(),
+        roster_json.replace("\"kimi-k3.1-pro\"", "\"kimi-k3.2-pro\""),
+        "the plan's spelling, the prefix put back"
+    );
+    assert_eq!(m.backups().len(), 1);
+}
+
+// ------------------------------------------------------------------ no proxy from the environment
+
+/// (0.2.5 D3, F29-1) A `c3 maintain` GET never goes through a proxy the environment names: with
+/// `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` pointing at a dead local port, the request still
+/// reaches its origin directly. Driven through an endpoint's model list (the same per-hop client a
+/// public catalog uses; a public catalog itself is never fetched from a loopback address, so the
+/// test cannot serve one locally).
+#[test]
+fn a_maintain_fetch_never_goes_through_the_environments_proxy() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let e = setup("no-proxy");
+    let origin = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = origin.local_addr().unwrap().port();
+    let dead = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    origin.set_nonblocking(true).unwrap();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (acc, halt) = (accepted.clone(), stop.clone());
+    let server = std::thread::spawn(move || {
+        while !halt.load(Ordering::SeqCst) {
+            match origin.accept() {
+                Ok((sock, _)) => {
+                    acc.fetch_add(1, Ordering::SeqCst);
+                    drop(sock); // no TLS: the client fails after it has connected
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            }
+        }
+    });
+    let roster = e.work.join("roster.json");
+    std::fs::write(
+        &roster,
+        format!(
+            r#"{{"roster_version":1,"reviewers":[{{"provider":"probe-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{{"base_url":"https://127.0.0.1:{port}/anthropic","env_key":"C3T_PROBE_KEY"}}}}]}}"#
+        ),
+    )
+    .unwrap();
+    let roster_s = roster.to_string_lossy().into_owned();
+    let proxy = format!("http://127.0.0.1:{dead}");
+    let env: Vec<(&str, &str)> = vec![
+        ("CODEX_CONSULT_ROSTER", roster_s.as_str()),
+        ("C3_MAINTAIN_MODELS", "announce"),
+        ("C3_MODEL_WEB", "off"),
+        ("C3T_PROBE_KEY", "tok-probe"),
+        ("HTTPS_PROXY", proxy.as_str()),
+        ("HTTP_PROXY", proxy.as_str()),
+        ("ALL_PROXY", proxy.as_str()),
+    ];
+    let o = e.run(&["maintain", "--models", "--dry-run"], &env);
+    stop.store(true, Ordering::SeqCst);
+    let _ = server.join();
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(
+        accepted.load(Ordering::SeqCst) >= 1,
+        "the model-list GET connected to its origin directly, not to the proxy: {}",
+        text(&o)
+    );
 }
 
 // ------------------------------------------------------------------ an unresolved pending update and a newer release

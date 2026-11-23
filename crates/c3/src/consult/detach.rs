@@ -1618,6 +1618,18 @@ fn read_detached_runs(task_dir: &Path) -> Vec<RunEntry> {
     runs
 }
 
+/// (0.2.5, S1) Whether a detached consultation of the task directory is still live by its status
+/// records (the hook phrase's "running" class: running, elsewhere or starting). Read-only.
+pub fn has_live_detached_run(task_dir: &Path) -> bool {
+    let now = Utc::now();
+    read_detached_runs(task_dir).iter().any(|run| {
+        matches!(
+            judge(run, now).state.as_str(),
+            "running" | "elsewhere" | "starting"
+        )
+    })
+}
+
 /// The id8 of a `.consult.detached-<id8>.status.json` file name (else `None`).
 fn parse_status_name(name: &str) -> Option<String> {
     let rest = name.strip_prefix(".consult.detached-")?;

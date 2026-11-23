@@ -1,4 +1,4 @@
-//! `c3 manifest` — atomic edits to a `.eck/<NAME>.md` manifest (port spec, Part A).
+//! `c3 manifest` — atomic edits to a `.c3/<NAME>.md` manifest (port spec, Part A).
 //! No git, no snapshot.
 
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use crate::providers;
 /// Arguments of `c3 manifest`.
 #[derive(Args, Debug)]
 pub struct ManifestArgs {
-    /// The manifest file: a plain NAME.md directly under `.eck/`.
+    /// The manifest file: a plain NAME.md directly under `.c3/`.
     #[arg(long)]
     pub file: String,
     /// replace_text | append_to_section | replace_file.
@@ -47,16 +47,19 @@ pub fn run(args: ManifestArgs) -> i32 {
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
+    let collab_root = providers::resolve_collab_root(&repo_root, &args.collab_dir);
 
     match finish::run_manifest(
         &repo_root,
+        Some(&collab_root),
         &args.file,
         action,
         &args.content,
         args.section.as_deref(),
         args.target.as_deref(),
     ) {
-        Ok(path) => {
+        Ok((path, notes)) => {
+            crate::state_dir::print_notes("c3 manifest", &notes, false);
             println!("Edited {}", path.display());
             0
         }

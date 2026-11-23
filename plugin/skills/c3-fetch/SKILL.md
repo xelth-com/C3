@@ -8,11 +8,11 @@ disable-model-invocation: false
 
 # Fetch (c3)
 
-The C3 port of eck's `eck-fetch`: a thin layer over the `c3` binary. `c3 fetch` collects the
+A thin layer over the `c3` binary. `c3 fetch` collects the
 full contents of the files of **this** repository that match the given globs into
-`.eck/scouts/scout_data_<ts>.md`, through the same discovery (gitignore, `.eckignore`, the
-hard-ignore and never-commit filters) and the same secret redactor the snapshot uses — so
-the gathered document is safe to carry into a reviewer's context.
+`.c3/scouts/scout_data_<ts>.md` (C3's project folder, created when missing), through the same
+discovery (gitignore, `.c3ignore`, the hard-ignore and never-commit filters) and the same secret
+redactor the snapshot uses — so the gathered document is safe to carry into a reviewer's context.
 
 Run it from this repository:
 

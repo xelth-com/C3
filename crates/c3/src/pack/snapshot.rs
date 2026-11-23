@@ -4,10 +4,10 @@
 //! `--- File: <posix> ---` marker, and the trailing instruction. The instruction sits at
 //! both ends — the eckSnapshot lesson.
 //!
-//! `--delta` reads C3's own anchor at `<collab>/.c3/anchor` (the commit the last full
+//! `--delta` reads C3's own anchor at `<repo>/.c3/anchor` (the commit the last full
 //! snapshot wrote), lists `git diff --name-only <anchor> HEAD` plus dirty files, marks
-//! deleted files `[FILE DELETED]`, and increments `<collab>/.c3/snapshot_seq`. C3 never
-//! touches eckSnapshot's `.eck/anchor` or `update_seq`, and never commits (D13).
+//! deleted files `[FILE DELETED]`, and increments `<repo>/.c3/snapshot_seq`. C3 never
+//! reads another tool's anchor (moved to `.c3/legacy/` with its folder), and never commits (D13).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,9 +25,12 @@ const INSTRUCTION: &str = "This file is a snapshot of a software repository, car
 #[derive(Debug, Clone)]
 pub struct SnapshotOpts {
     pub repo_root: PathBuf,
-    /// Resolved collab root (C3 keeps its anchor and sequence under `<collab>/.c3/`).
+    /// Resolved collab root (the revision identity leaves it out).
     pub collab_root: PathBuf,
-    /// Explicit output path; when `None` the default `.collab/.c3/snapshots/...` name is used.
+    /// Where C3 keeps its anchor and sequence and the default output: `<repo>/.c3`
+    /// ([`crate::state_dir::path`]; a scout passes a throwaway directory).
+    pub state_dir: PathBuf,
+    /// Explicit output path; when `None` the default `.c3/snapshots/...` name is used.
     pub out: Option<PathBuf>,
     pub delta: bool,
     pub depth: u8,
@@ -43,11 +46,12 @@ pub struct SnapshotOpts {
     /// included). Behaves like `delta` but, when nothing changed since the anchor, writes
     /// no file (`wrote == false`) so the caller can report "nothing changed". (Part B)
     pub fail: bool,
-    /// Write the snapshot under `.eck/snapshots/` (repo root) and copy it into
-    /// `.eck/lastsnapshot/`, pruning `.eck/snapshots/` beyond `keep`, instead of writing
-    /// under `<collab>/.c3/snapshots/`. The architect's hand-off location. (Part B)
-    pub eck: bool,
-    /// How many snapshots to keep in `.eck/snapshots/` (eck output only; 0 = keep all).
+    /// The hand-off snapshot (`c3 snapshot --state`, `c3 finish --snapshot`): written under
+    /// `<state_dir>/snapshots/` whatever `out` says, copied into `<state_dir>/lastsnapshot/`,
+    /// `snapshots/` pruned beyond `keep`; the body follows the hand-off policy (no never-commit
+    /// file, no hidden path but the `.c3/*.md` manifests). (Part B)
+    pub state: bool,
+    /// How many snapshots to keep in `<state_dir>/snapshots/` (hand-off only; 0 = keep all).
     pub keep: usize,
     /// Report text embedded at the very top of the snapshot as
     /// `MESSAGE FROM THE EXECUTION AGENT`. (Part B)
@@ -76,7 +80,7 @@ pub struct SnapshotResult {
     pub anchor: Option<String>,
     /// False only in fail-mode when nothing changed since the anchor: no file was written.
     pub wrote: bool,
-    /// Snapshots deleted from `.eck/snapshots/` by the `keep` prune (eck output only).
+    /// Snapshots deleted from `.c3/snapshots/` by the `keep` prune (hand-off only).
     pub pruned: usize,
 }
 
@@ -215,10 +219,10 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         &DiscoverOpts {
             max_file_size: opts.max_file_size,
             include_binary: false,
-            // The `.eck` hand-off snapshot drops the never-commit set from its body too.
-            never_commit: opts.eck,
-            // ...and every hidden-component path except the `.eck/*.md` manifests.
-            eck_hidden: opts.eck,
+            // The hand-off snapshot drops the never-commit set from its body too.
+            never_commit: opts.state,
+            // ...and every hidden-component path except the `.c3/*.md` manifests.
+            handoff_hidden: opts.state,
         },
     );
 
@@ -227,7 +231,7 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     let anchor = if let Some(b) = base_anchor {
         Some(b)
     } else if is_delta {
-        let a = read_anchor(&opts.collab_root)
+        let a = read_anchor(&opts.state_dir)
             .ok_or_else(|| "no C3 anchor: run `c3 snapshot` (a full snapshot) first".to_string())?;
         Some(a)
     } else {
@@ -265,13 +269,13 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         deletions.retain(|rel| filter.keep(rel));
     }
 
-    // The `.eck` hand-off snapshot carries the curated `.eck/*.md` manifests even when `.eck`
-    // is gitignored (so discovery never walked it). JOURNAL.md is never surfaced (D6).
-    if opts.eck {
-        inject_eck_manifests(&opts.repo_root, opts.max_file_size, &mut included);
-        // A gitignored `.eck` never yields git-tracked deletions, but a non-ignored one can;
+    // The hand-off snapshot carries the curated `.c3/*.md` manifests (discovery never walks
+    // C3's folder). JOURNAL.md is never surfaced (D6).
+    if opts.state {
+        inject_state_manifests(&opts.state_dir, opts.max_file_size, &mut included);
+        // A gitignored `.c3` never yields git-tracked deletions, but a non-ignored one can;
         // drop any hidden-path deletion the policy would hide.
-        deletions.retain(|rel| !discover::eck_hidden_drop(rel));
+        deletions.retain(|rel| !discover::handoff_hidden_drop(rel));
     }
 
     let delta_entries = included.len() + deletions.len();
@@ -362,7 +366,7 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     let generated = chrono::Local::now().to_rfc3339();
     // A `--base` delta is an ad-hoc query: it does not bump C3's persistent sequence.
     let seq = if is_delta && opts.base.is_none() {
-        Some(bump_seq(&opts.collab_root))
+        Some(bump_seq(&opts.state_dir))
     } else {
         None
     };
@@ -438,14 +442,14 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         &format!("~{}", human_tokens(tokens)),
     );
 
-    // Output path. `--eck` writes under `.eck/snapshots/` (repo root), overriding `--out`.
+    // Output path. The hand-off snapshot writes under `<state_dir>/snapshots/`, overriding `--out`.
     let size_kb = (full.len() / 1024).max(1);
-    let path = if opts.eck {
-        eck_snapshot_path(&opts.repo_root, &project, &rev.short_sha, seq, size_kb)
+    let path = if opts.state {
+        default_path(&opts.state_dir, &project, &rev.short_sha, seq, size_kb)
     } else {
         match &opts.out {
             Some(p) => p.clone(),
-            None => default_path(&opts.collab_root, &project, &rev.short_sha, seq, size_kb),
+            None => default_path(&opts.state_dir, &project, &rev.short_sha, seq, size_kb),
         }
     };
     if let Some(parent) = path.parent() {
@@ -453,19 +457,19 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     }
     std::fs::write(&path, full.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
 
-    // eck output: copy into the hand-off folder and prune old snapshots.
+    // Hand-off output: copy into the hand-off folder and prune old snapshots.
     let mut pruned = 0usize;
-    if opts.eck {
-        copy_to_lastsnapshot(&opts.repo_root, &path)?;
-        pruned = prune_snapshots(&opts.repo_root, opts.keep);
+    if opts.state {
+        copy_to_lastsnapshot(&opts.state_dir, &path)?;
+        pruned = prune_snapshots(&opts.state_dir, opts.keep);
     }
 
     // A full snapshot updates C3's anchor and resets the sequence.
     if !is_delta {
         if let Some(head) = &head_full {
-            write_anchor(&opts.collab_root, head)?;
+            write_anchor(&opts.state_dir, head)?;
         }
-        reset_seq(&opts.collab_root);
+        reset_seq(&opts.state_dir);
     }
 
     Ok(SnapshotResult {
@@ -481,33 +485,11 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     })
 }
 
-/// The output path for an eck snapshot: `<repo>/.eck/snapshots/<name>`.
-fn eck_snapshot_path(
-    repo_root: &Path,
-    project: &str,
-    short_sha: &str,
-    seq: Option<u32>,
-    size_kb: usize,
-) -> PathBuf {
-    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let rev = if short_sha.is_empty() || short_sha == "unknown" {
-        String::new()
-    } else {
-        format!("_{}", short7(short_sha))
-    };
-    let up = match seq {
-        Some(n) => format!("_up{n}"),
-        None => String::new(),
-    };
-    let name = format!("{project}_{ts}{rev}{up}_{size_kb}kb.md");
-    repo_root.join(".eck").join("snapshots").join(name)
-}
-
-/// Copy the new snapshot into `.eck/lastsnapshot/`, removing the previous snapshot(s)
-/// there first (every `*.md` except `AnswerToSA.md`, which is the agent report the
-/// architect keeps).
-fn copy_to_lastsnapshot(repo_root: &Path, snapshot: &Path) -> Result<(), String> {
-    let dir = repo_root.join(".eck").join("lastsnapshot");
+/// Copy the new snapshot into `<state_dir>/lastsnapshot/`, removing the previous snapshot(s)
+/// there first (every `*.md` except a report the old tool left there, which a move could not
+/// bring to `last-report.md`).
+fn copy_to_lastsnapshot(state_dir: &Path, snapshot: &Path) -> Result<(), String> {
+    let dir = state_dir.join("lastsnapshot");
     std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
@@ -528,13 +510,13 @@ fn copy_to_lastsnapshot(repo_root: &Path, snapshot: &Path) -> Result<(), String>
     Ok(())
 }
 
-/// Delete snapshots in `.eck/snapshots/` beyond the newest `keep` (by modification time).
+/// Delete snapshots in `<state_dir>/snapshots/` beyond the newest `keep` (by modification time).
 /// `keep == 0` keeps everything. Returns the number deleted.
-fn prune_snapshots(repo_root: &Path, keep: usize) -> usize {
+fn prune_snapshots(state_dir: &Path, keep: usize) -> usize {
     if keep == 0 {
         return 0;
     }
-    let dir = repo_root.join(".eck").join("snapshots");
+    let dir = state_dir.join("snapshots");
     let mut files: Vec<(std::time::SystemTime, PathBuf)> = match std::fs::read_dir(&dir) {
         Ok(rd) => rd
             .flatten()
@@ -608,13 +590,12 @@ fn resolve_base(repo_root: &Path, spec: &str) -> Result<String, String> {
     .ok_or_else(|| format!("base ref '{spec}' does not resolve to a commit"))
 }
 
-/// Surface the curated `.eck/<name>.md` manifests (direct children of `.eck/`) into the
-/// hand-off snapshot's included set, even when `.eck` is gitignored so discovery skipped it.
-/// `JOURNAL.md` is never surfaced (the standing "never read JOURNAL" rule, DESIGN D6).
-/// Already-present manifests (a non-gitignored `.eck`) are not duplicated.
-fn inject_eck_manifests(repo_root: &Path, max_file_size: u64, included: &mut Vec<FileEntry>) {
-    let eck = repo_root.join(".eck");
-    let rd = match std::fs::read_dir(&eck) {
+/// Surface the curated `.c3/<name>.md` manifests (direct children of the folder) into the
+/// hand-off snapshot's included set (discovery never walks C3's folder). `JOURNAL.md` is never
+/// surfaced (the standing "never read JOURNAL" rule, DESIGN D6). Already-present entries are not
+/// duplicated.
+fn inject_state_manifests(state_dir: &Path, max_file_size: u64, included: &mut Vec<FileEntry>) {
+    let rd = match std::fs::read_dir(state_dir) {
         Ok(rd) => rd,
         Err(_) => return,
     };
@@ -629,7 +610,7 @@ fn inject_eck_manifests(repo_root: &Path, max_file_size: u64, included: &mut Vec
         if !name.to_lowercase().ends_with(".md") || name.eq_ignore_ascii_case("JOURNAL.md") {
             continue;
         }
-        let rel = format!(".eck/{name}");
+        let rel = crate::state_dir::label(state_dir, &name);
         if have.contains(&rel) {
             continue;
         }
@@ -663,38 +644,35 @@ fn human_tokens(t: usize) -> String {
     }
 }
 
-fn c3_dir(collab_root: &Path) -> PathBuf {
-    collab_root.join(".c3")
+/// Whether C3 has recorded a full-snapshot anchor in `state_dir` (so a delta is possible).
+pub fn anchor_exists(state_dir: &Path) -> bool {
+    read_anchor(state_dir).is_some()
 }
 
-/// Whether C3 has recorded a full-snapshot anchor (so a delta is possible).
-pub fn anchor_exists(collab_root: &Path) -> bool {
-    read_anchor(collab_root).is_some()
-}
-
-fn read_anchor(collab_root: &Path) -> Option<String> {
-    std::fs::read_to_string(c3_dir(collab_root).join("anchor"))
+/// C3's anchor in `state_dir` (`<repo>/.c3/anchor`), the commit of the last full snapshot.
+pub fn read_anchor(state_dir: &Path) -> Option<String> {
+    std::fs::read_to_string(state_dir.join("anchor"))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
 
-fn write_anchor(collab_root: &Path, head: &str) -> Result<(), String> {
-    let dir = c3_dir(collab_root);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+fn write_anchor(state_dir: &Path, head: &str) -> Result<(), String> {
+    let dir = state_dir;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     std::fs::write(dir.join("anchor"), head.trim().as_bytes())
         .map_err(|e| format!("write anchor: {e}"))
 }
 
-fn reset_seq(collab_root: &Path) {
-    let dir = c3_dir(collab_root);
-    let _ = std::fs::create_dir_all(&dir);
+fn reset_seq(state_dir: &Path) {
+    let dir = state_dir;
+    let _ = std::fs::create_dir_all(dir);
     let _ = std::fs::write(dir.join("snapshot_seq"), b"0");
 }
 
-fn bump_seq(collab_root: &Path) -> u32 {
-    let dir = c3_dir(collab_root);
-    let _ = std::fs::create_dir_all(&dir);
+fn bump_seq(state_dir: &Path) -> u32 {
+    let dir = state_dir;
+    let _ = std::fs::create_dir_all(dir);
     let path = dir.join("snapshot_seq");
     let cur: u32 = std::fs::read_to_string(&path)
         .ok()
@@ -705,8 +683,9 @@ fn bump_seq(collab_root: &Path) -> u32 {
     next
 }
 
+/// The default output path: `<state_dir>/snapshots/<project>_<ts>[_<rev7>][_upN]_<size>kb.md`.
 fn default_path(
-    collab_root: &Path,
+    state_dir: &Path,
     project: &str,
     short_sha: &str,
     seq: Option<u32>,
@@ -723,7 +702,7 @@ fn default_path(
         None => String::new(),
     };
     let name = format!("{project}_{ts}{rev}{up}_{size_kb}kb.md");
-    c3_dir(collab_root).join("snapshots").join(name)
+    state_dir.join("snapshots").join(name)
 }
 
 #[cfg(test)]
@@ -762,6 +741,7 @@ mod tests {
         let opts = SnapshotOpts {
             repo_root: d.clone(),
             collab_root: d.join(".collab"),
+            state_dir: d.join(".c3"),
             out: Some(out.clone()),
             delta: false,
             depth: 9,
@@ -770,7 +750,7 @@ mod tests {
             tree: true,
             max_file_size: 2 * 1024 * 1024,
             fail: false,
-            eck: false,
+            state: false,
             keep: 0,
             embed_report: None,
             base: None,
@@ -788,7 +768,7 @@ mod tests {
         );
         assert_eq!(r.files, 1);
         // Anchor written by the full snapshot.
-        assert!(read_anchor(&opts.collab_root).is_some());
+        assert!(read_anchor(&opts.state_dir).is_some());
         let _ = fs::remove_dir_all(&d);
     }
 
@@ -804,6 +784,7 @@ mod tests {
         let opts = SnapshotOpts {
             repo_root: d.clone(),
             collab_root: d.join(".collab"),
+            state_dir: d.join(".c3"),
             out: Some(out.clone()),
             delta: false,
             depth: 0,
@@ -812,7 +793,7 @@ mod tests {
             tree: true,
             max_file_size: 2 * 1024 * 1024,
             fail: false,
-            eck: false,
+            state: false,
             keep: 0,
             embed_report: None,
             base: None,
@@ -841,6 +822,7 @@ mod tests {
         let base = SnapshotOpts {
             repo_root: d.clone(),
             collab_root: collab.clone(),
+            state_dir: d.join(".c3"),
             out: Some(d.join("full.md")),
             delta: false,
             depth: 9,
@@ -849,7 +831,7 @@ mod tests {
             tree: false,
             max_file_size: 2 * 1024 * 1024,
             fail: false,
-            eck: false,
+            state: false,
             keep: 0,
             embed_report: None,
             base: None,
@@ -895,6 +877,7 @@ mod tests {
         let opts = SnapshotOpts {
             repo_root: d.clone(),
             collab_root: d.join(".collab"),
+            state_dir: d.join(".c3"),
             out: Some(out.clone()),
             delta: false,
             depth: 9,
@@ -903,7 +886,7 @@ mod tests {
             tree: false,
             max_file_size: 2 * 1024 * 1024,
             fail: false,
-            eck: false,
+            state: false,
             keep: 0,
             embed_report: None,
             base: None,
@@ -945,6 +928,7 @@ mod tests {
         let base_opts = SnapshotOpts {
             repo_root: d.clone(),
             collab_root: d.join(".collab"),
+            state_dir: d.join(".c3"),
             out: Some(full_out.clone()),
             delta: false,
             depth: 9,
@@ -953,7 +937,7 @@ mod tests {
             tree: false,
             max_file_size: 2 * 1024 * 1024,
             fail: false,
-            eck: false,
+            state: false,
             keep: 0,
             embed_report: None,
             base: None,
@@ -984,7 +968,7 @@ mod tests {
         // A `--base` query is ad-hoc: it leaves the stored anchor (set by the full snapshot
         // at c0) untouched rather than advancing it to HEAD.
         assert_eq!(
-            read_anchor(&base_opts.collab_root).as_deref(),
+            read_anchor(&base_opts.state_dir).as_deref(),
             Some(c0.as_str())
         );
 

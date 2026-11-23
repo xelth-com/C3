@@ -1,5 +1,6 @@
-//! End-to-end tests for `c3 snapshot` Part B: `--base` (hash and snapshot file), `.eckignore`,
-//! `--profile`, and the `.eck` hand-off hidden-path policy (via `c3 fail`).
+//! End-to-end tests for `c3 snapshot` Part B: `--base` (hash and snapshot file), `.c3ignore` /
+//! `.eckignore`, `--profile`, the hand-off hidden-path policy (via `c3 fail --snapshot`), and the
+//! manifest digest's fallback to a legacy `.eck/`.
 //!
 //! Each test builds a throwaway repository in a temp dir and sets its identity LOCALLY
 //! (`git -C <repo> config ...`) — never `git config --global`. The `c3` binary cargo built
@@ -52,9 +53,13 @@ fn scratch_repo(name: &str) -> PathBuf {
 }
 
 fn run_c3(repo: &Path, args: &[&str]) -> (i32, String, String) {
+    // a test run inside a C3 child (a worker running the suite) must not inherit the mark
     let out = Command::new(c3_bin())
         .current_dir(repo)
         .args(args)
+        .env_remove("C3_CHILD")
+        .env_remove("C3_STATE_MIGRATE")
+        .env("C3_CONFIG", "none")
         .output()
         .expect("spawn c3");
     (
@@ -178,16 +183,86 @@ fn eckignore_excludes_listed_paths() {
     let _ = std::fs::remove_file(&out);
 }
 
+// (0.2.5, S1) `.c3ignore` is read; next to it `.eckignore` is not (in a directory without one it
+// still is - the test above).
+#[test]
+fn c3ignore_wins_over_eckignore() {
+    let repo = scratch_repo("c3ignore");
+    std::fs::write(repo.join("keep.rs"), "fn a() {}\n").unwrap();
+    std::fs::write(repo.join("PRIVATE.md"), "C3IGNORED marker\n").unwrap();
+    std::fs::write(repo.join("LEGACY.md"), "ONLYECKIGNORED marker\n").unwrap();
+    std::fs::write(repo.join(".c3ignore"), "PRIVATE.md\n").unwrap();
+    std::fs::write(repo.join(".eckignore"), "LEGACY.md\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-qm", "init"]);
+
+    let out = out_path(&repo, "snap.md");
+    let (code, _o, e) = run_c3(
+        &repo,
+        &["snapshot", "--no-tree", "--out", out.to_str().unwrap()],
+    );
+    assert_eq!(code, 0, "snapshot failed: {e}");
+    let t = std::fs::read_to_string(&out).unwrap();
+    assert!(t.contains("--- File: keep.rs ---"), "{t}");
+    assert!(!t.contains("C3IGNORED"), ".c3ignore path leaked: {t}");
+    assert!(
+        t.contains("ONLYECKIGNORED"),
+        ".eckignore is not read next to a .c3ignore: {t}"
+    );
+
+    let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_file(&out);
+}
+
+// (0.2.5, S1) With only `.eck/` present and no writing command run, the manifest digest (the
+// explainer pack's; `c3 pack` has none) still reads it - and nothing moves the folder.
+#[test]
+fn the_manifest_digest_reads_a_legacy_folder_before_any_writing_command() {
+    let repo = scratch_repo("digest-fallback");
+    std::fs::write(repo.join("lib.rs"), "pub fn focus_me() {}\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-qm", "init"]);
+    std::fs::create_dir_all(repo.join(".eck")).unwrap();
+    std::fs::write(
+        repo.join(".eck/CONTEXT.md"),
+        "# CONTEXT\n\nLEGACYDIGESTMARKER\n",
+    )
+    .unwrap();
+    let out = out_path(&repo, "explain.md");
+    let (code, _o, e) = run_c3(
+        &repo,
+        &[
+            "explain",
+            "--claim",
+            "x",
+            "--focus",
+            "lib.rs",
+            "--yes",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, 0, "explain failed: {e}");
+    let t = std::fs::read_to_string(&out).unwrap();
+    assert!(t.contains("### .eck/CONTEXT.md"), "{t}");
+    assert!(t.contains("LEGACYDIGESTMARKER"), "{t}");
+    assert!(repo.join(".eck/CONTEXT.md").is_file(), "not moved");
+    assert!(!repo.join(".c3").exists(), "no folder created");
+
+    let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_file(&out);
+}
+
 #[test]
 fn profile_scopes_discovery_and_refuses_unknown() {
     let repo = scratch_repo("profile");
     std::fs::create_dir_all(repo.join("src")).unwrap();
     std::fs::create_dir_all(repo.join("vendor")).unwrap();
-    std::fs::create_dir_all(repo.join(".eck")).unwrap();
+    std::fs::create_dir_all(repo.join(".c3")).unwrap();
     std::fs::write(repo.join("src/main.rs"), "fn main() {}\n").unwrap();
     std::fs::write(repo.join("vendor/lib.rs"), "fn v() {}\n").unwrap();
     std::fs::write(
-        repo.join(".eck/profiles.json"),
+        repo.join(".c3/profiles.json"),
         r#"{"core": {"include": ["src/**"], "exclude": []}}"#,
     )
     .unwrap();
@@ -232,25 +307,25 @@ fn profile_scopes_discovery_and_refuses_unknown() {
 }
 
 #[test]
-fn eck_handoff_drops_hidden_paths_but_keeps_eck_manifests() {
+fn handoff_drops_hidden_paths_but_keeps_c3_manifests() {
     let repo = scratch_repo("handoff");
-    // `.eck/` is gitignored (as in a real C3 workspace); `.collab/` is NOT.
-    std::fs::write(repo.join(".gitignore"), ".eck/\n").unwrap();
+    // `.c3/` is gitignored (as in a real C3 workspace); `.collab/` is NOT.
+    std::fs::write(repo.join(".gitignore"), ".c3/\n").unwrap();
     std::fs::write(repo.join("src.rs"), "fn a() {}\n").unwrap();
     std::fs::create_dir_all(repo.join(".collab/wave")).unwrap();
     std::fs::write(repo.join(".collab/wave/x.md"), "COLLABMARKER\n").unwrap();
-    std::fs::create_dir_all(repo.join(".eck/snapshots")).unwrap();
-    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nROADMARKER\n").unwrap();
-    std::fs::write(repo.join(".eck/snapshots/old.md"), "OLDSNAPSHOTMARKER\n").unwrap();
+    std::fs::create_dir_all(repo.join(".c3/snapshots")).unwrap();
+    std::fs::write(repo.join(".c3/ROADMAP.md"), "# ROADMAP\n\nROADMARKER\n").unwrap();
+    std::fs::write(repo.join(".c3/snapshots/old.md"), "OLDSNAPSHOTMARKER\n").unwrap();
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-qm", "init"]);
 
-    // `c3 fail` produces a full emergency hand-off snapshot (eck mode) with no anchor.
-    let (code, out, err) = run_c3(&repo, &["fail", "--status", "blocked"]);
+    // `c3 fail --snapshot` produces a full emergency hand-off snapshot with no anchor.
+    let (code, out, err) = run_c3(&repo, &["fail", "--status", "blocked", "--snapshot"]);
     assert_eq!(code, 0, "fail failed: {out}\n{err}");
 
     // Read the generated snapshot (the one that is not the pre-seeded old.md).
-    let snap = std::fs::read_dir(repo.join(".eck/snapshots"))
+    let snap = std::fs::read_dir(repo.join(".c3/snapshots"))
         .unwrap()
         .flatten()
         .map(|e| e.path())
@@ -266,14 +341,43 @@ fn eck_handoff_drops_hidden_paths_but_keeps_eck_manifests() {
     // Hidden `.collab/` path dropped (body and path marker).
     assert!(!t.contains("COLLABMARKER"), ".collab body leaked: {t}");
     assert!(!t.contains("--- File: .collab/wave/x.md ---"), "{t}");
-    // The `.eck/*.md` manifest is surfaced even though `.eck` is gitignored.
-    assert!(t.contains("--- File: .eck/ROADMAP.md ---"), "{t}");
+    // The `.c3/*.md` manifest is surfaced even though `.c3` is gitignored.
+    assert!(t.contains("--- File: .c3/ROADMAP.md ---"), "{t}");
     assert!(t.contains("ROADMARKER"), "{t}");
-    // A file under `.eck/snapshots/` is never included.
+    // A file under `.c3/snapshots/` is never included.
     assert!(
         !t.contains("OLDSNAPSHOTMARKER"),
-        ".eck/snapshots leaked: {t}"
+        ".c3/snapshots leaked: {t}"
     );
 
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5, S1) `c3 snapshot --state` (old name `--eck`, a hidden alias) writes the hand-off snapshot
+// into `.c3/snapshots/` and `.c3/lastsnapshot/`, whatever `--out` says.
+#[test]
+fn snapshot_state_writes_the_handoff_into_the_c3_folder() {
+    let repo = scratch_repo("state-flag");
+    std::fs::write(repo.join("src.rs"), "fn a() {}\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-qm", "init"]);
+    for flag in ["--state", "--eck"] {
+        let (code, out, err) = run_c3(&repo, &["snapshot", flag, "--no-tree"]);
+        assert_eq!(code, 0, "{flag}: {out}\n{err}");
+    }
+    let snaps: Vec<_> = std::fs::read_dir(repo.join(".c3/snapshots"))
+        .unwrap()
+        .flatten()
+        .collect();
+    // (two runs in the same second may share a name)
+    assert!(!snaps.is_empty(), "{snaps:?}");
+    let last: Vec<_> = std::fs::read_dir(repo.join(".c3/lastsnapshot"))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert_eq!(last.len(), 1, "only the newest is in lastsnapshot");
+    let (_c, help, _e) = run_c3(&repo, &["snapshot", "--help"]);
+    assert!(help.contains("--state"), "{help}");
+    assert!(!help.contains("--eck"), "the old name stays hidden: {help}");
     let _ = std::fs::remove_dir_all(&repo);
 }

@@ -1,12 +1,12 @@
-//! The agent report (`AnswerToSA.md`) and the journal entry (`.eck/JOURNAL.md`), both as
+//! The agent report (`.c3/last-report.md`) and the journal entry (`.c3/JOURNAL.md`), both as
 //! pure functions over text so the exact format is tested without touching disk.
 
-/// The `AnswerToSA.md` body for `c3 finish`: `# Agent Report\n\n<status>\n`.
+/// The report body for `c3 finish`: `# Agent Report\n\n<status>\n`.
 pub fn answer_finish(status: &str) -> String {
     format!("# Agent Report\n\n{}\n", status.trim_end())
 }
 
-/// The `AnswerToSA.md` body for `c3 fail`: `# Agent Report (BLOCKED/FAILED)\n\n<status>\n`.
+/// The report body for `c3 fail`: `# Agent Report (BLOCKED/FAILED)\n\n<status>\n`.
 pub fn answer_fail(status: &str) -> String {
     format!("# Agent Report (BLOCKED/FAILED)\n\n{}\n", status.trim_end())
 }
@@ -20,7 +20,7 @@ pub fn first_line<'a>(s: &'a str, fallback: &'a str) -> &'a str {
         .unwrap_or(fallback)
 }
 
-/// Prepend a journal entry to `existing` (the current `.eck/JOURNAL.md`, or empty when the
+/// Prepend a journal entry to `existing` (the current `.c3/JOURNAL.md`, or empty when the
 /// file is missing). The entry — `## <timestamp> - <title>\n\n<body>\n` — is inserted right
 /// after the `# JOURNAL` title so the newest entry is first. A missing title is created.
 pub fn insert_journal_entry(existing: &str, timestamp: &str, title: &str, body: &str) -> String {
