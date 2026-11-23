@@ -456,3 +456,16 @@ swap -> xelth.com/C3 page after the tag.
   `member_spec_arg_tests::the_member_spec_is_read_from_its_file`, integration
   `panel_light_required::a_panel_with_many_open_findings_starts_its_members` (160 findings); the
   live dry run with 114 findings now plans all three members. clippy clean, panel unit tests 62.
+- 2026-11-23 06:13 CET: the spec-file fix committed as b9f665a and pushed. Verification panel V1
+  launched: detach id `33fa9671` (brief 21, `--rev b9f665a --diff 4f43074..99e2da7`, Sol + Muse
+  contributor + Grok, binary `scratchpad/bin/c3-review3.exe`). Then V2 (brief 22, roster-v2,
+  `--diff 99e2da7..5d92ca7`) and V3 (brief 23, roster-v3, `--diff 5d92ca7..748ba3a`; fill the CI
+  line of brief 23 first), always `--rev <HEAD at launch>`. Wave S1 still running.
+- 2026-11-23 ~06:30 CET: CI for 748ba3a (R4) FAILED on Windows in one new unit test,
+  `ci_check::tests::the_checks_deadline_kills_gh_and_its_children`: `outlived the check's
+  deadline: [6980] of [2752, 7660, 6980]` - gh.cmd's grandchild survived `ScanChildren::stop`.
+  `kill_tree_by_pid` on Windows was one `taskkill /F /T` whose result nobody read. Fixed by the
+  coordinator: the descendants are enumerated BEFORE the kill (pid + start time) and every one
+  still alive with the same identity is terminated after it (the pattern `kill_tree_checked`
+  already uses). Local: fmt, clippy clean, ci_check / bounded / hook unit tests 20 passed. Linux
+  was green in that run.

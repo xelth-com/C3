@@ -1,0 +1,12 @@
+codex-consult: detached run 33fa9671 (detach id 33fa9671-a457-4e5e-9a94-fb6ca4f31ebd) - pid 19540 on LAPTOP-9SGIHQ03, started 2026-11-23T05:12:38+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-33fa9671.status.json
+Panel 48a7eae3: 3 of 3 roster entries run, at once (roster C:\Users\Dmytro\AppData\Local\Temp\claude\66aab2698810b170\e97cc6d0-6d1c-45b4-8904-07597e0d378e\scratchpad\rosters\roster-v1.json; panel id 48a7eae3-9f02-4d64-9251-d657b353ee02)
+  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)
+  #1 openai :: gpt-6.2-sol - member, n=17, handoff 26
+  #2 meta :: muse-spark-1.3-contributor [muse] - member, n=16, handoff 25
+  #3 grok :: grok-4.7 [grok] - member, n=15, handoff 24
+Routing: routed by the ratings - size 3 (-PanelAll); seed fbe85ddc11e2 (nonce 2026-11-23 from date); exploration 0.2 per slot
+  eligible: #1 openai :: gpt-6.2-sol (lab openai by vendor; score 1.125 neutral), #2 meta :: muse-spark-1.3-contributor [muse] (lab meta by vendor; score 1.75 purpose of 5), #3 grok :: grok-4.7 [grok] (lab xai by vendor; score 1.781 purpose of 6)
+  picked  : 1. #3 grok :: grok-4.7 [grok] (lab-draw), 2. #2 meta :: muse-spark-1.3-contributor [muse] (lab-draw), 3. #1 openai :: gpt-6.2-sol (rank-explore)
+Concurrency: at once - endpoint groups: grok x1, meta x1, openai x1; -PanelConcurrency 0 (no cap)
+Timeout: 2400 s per member (the default of purpose diff-review); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 2 of 3 finished: meta :: muse-spark-1.3-contributor [muse] - usable reply (458.1 s)

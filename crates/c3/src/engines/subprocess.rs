@@ -1256,7 +1256,8 @@ fn kill_pid_unix(pid: u32) {
 }
 
 /// Kill the process tree rooted at `pid` (a tree WE started, by pid — never by name). On Windows
-/// `taskkill /F /T /PID <pid>`; on Unix a best-effort `kill`. Used by the registration-failure path
+/// `taskkill /F /T /PID <pid>` and then every descendant enumerated before it that still runs; on
+/// Unix a best-effort `kill`. Used by the registration-failure path
 /// where only the child pid is known (the `Child` handle is owned by the running turn).
 pub fn kill_tree_by_pid(pid: u32) {
     if pid == 0 {
@@ -1264,11 +1265,22 @@ pub fn kill_tree_by_pid(pid: u32) {
     }
     #[cfg(windows)]
     {
+        use crate::liveness::proc::{pid_identity, PidIdentity};
+        // The tree is read BEFORE the kill, each pid with its start time: `taskkill /T` alone has
+        // left a grandchild running on a loaded CI runner (0.2.5: the CI check's deadline test saw
+        // gh.cmd's `ping` outlive it), and once the root is gone the tree can no longer be walked
+        // from it. A pid is terminated only while it is still the process that was enumerated.
+        let descendants = descendant_tree(pid).unwrap_or_default();
         let _ = Command::new("taskkill")
             .args(["/F", "/T", "/PID", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        for (d, st0) in &descendants {
+            if st0 != "<gone>" && pid_identity(*d, st0) == PidIdentity::Alive {
+                crate::liveness::proc::terminate_pid(*d);
+            }
+        }
     }
     #[cfg(not(windows))]
     {
