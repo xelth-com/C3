@@ -16,7 +16,7 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   the roster, `moonshotai/k3.1-pro` in OpenRouter's list), so the entry never matched and got an
   announcement at best. When no public source lists a roster id as it is, `c3 maintain` tries it
   once more without that token - only when the token names the maker of the rest or the plan's
-  vendor by the panel's lab table (or the endpoint host's lab), the rest is a known maker's id, and
+  vendor by the panel's lab table (the endpoint host's lab alone does not count), the rest is a known maker's id, and
   the catalog lists exactly that rest under a vendor slug of that maker; nothing else is guessed. A
   match found that way is used for the dates and the successors exactly like a direct one, and the
   successor is written in the plan's own spelling (`kimi-code/k3.2-pro`: the token put back), then
@@ -344,6 +344,28 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **A public catalog source is no longer read from an IPv6 address that embeds or tunnels an IPv4
+  (F39-1, F38-2).** Only IPv4-mapped and NAT64 addresses were judged by the IPv4 they carry, so
+  `::10.0.0.1` (IPv4-compatible), `2002:a00:1::1` (6to4) and Teredo `2001::/32` passed the lookup
+  and peer checks, as did the benchmarking range `2001:2::/48`. All four ranges are now in the
+  non-global table and refused outright, at the name lookup and at the peer of every hop; a real
+  global address still passes. Test: `the_address_classes_of_a_public_source` has a row per range
+  for the address check, the lookup check and the peer check.
+- **The price comparison of a swap across a major uses one vendor's rows only (F39-2).** When the
+  candidate's vendor had no row for the seated id, the ratio fell back to the first row of that name
+  from any vendor, so a decoy row with a high price made an expensive successor look cheap and it
+  was seated. The ratio now comes only from the seated id's and the candidate's rows of the same
+  vendor slug in the same source; without a priced seated row under that vendor there is no ratio
+  and nothing is held. Test:
+  `a_successor_across_a_major_priced_over_twice_the_seated_one_is_announced_only` (decoy row, and a
+  candidate vendor without a seated row).
+- **A roster token is an alias only when it names the model's maker or the plan (F39-4).** The
+  leading token of a roster id was also dropped when it only matched the lab of the endpoint host,
+  so `kimi-qwen3.8-max` on a moonshot host was matched to the catalog's `qwen/qwen3.8-max` and its
+  successor written back as `kimi-qwen4-max`. The token is now dropped only when it names the maker
+  of the rest of the id or the plan's vendor. Test:
+  `a_roster_id_with_a_lab_token_is_matched_through_the_catalog_spelling` (the host-only case has no
+  alias; `kimi-k3.1-pro` still works).
 - **The `c3 maintain` tests no longer read the machine's process table.** A pass skips an engine
   whose CLI is running ("grok skipped: in use"), and the integration tests drove that probe against
   the real machine: on 2026-11-23 six to nine of them failed whenever another session's real

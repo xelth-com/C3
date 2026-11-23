@@ -25565,6 +25565,650 @@
                          "reviewer_checks":  [
 
                                              ]
+                     },
+                     {
+                         "id":  "F38-1",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  ".github/workflows/ci.yml",
+                                               "line":  66
+                                           },
+                                           {
+                                               "path":  ".github/workflows/ci.yml",
+                                               "line":  108
+                                           }
+                                       ],
+                         "claim":  "CI split does not survive cancellation: with `if: success() || failure()` a cancelled (timed-out/hung) crate step skips the remaining crate steps, so the exact hung-run scenario the split was built to diagnose still yields only the running step\u0027s log.",
+                         "trigger":  "A test step is cancelled (45/30 min timeout, manual cancel, hung runner) instead of failing.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".github/workflows/ci.yml:60-73; .github/workflows/ci.yml:103-113; Cargo.toml:1-3",
+                                              "observation":  "Check job uses one step per crate (c3-core, c3, c3-cli), each `if: success() || failure()`; same pattern in the index-surreal job. In GitHub Actions a cancelled step makes `failure()` false for later steps, so they are skipped; `always()` (or `!cancelled()`) would be needed. Workspace members are exactly these three crates (Cargo.toml), so coverage is otherwise unchanged and the c3 index-surreal feature exists (crates/c3/Cargo.toml), i.e. failures still run all steps — only cancel skips."
+                                          }
+                                      ],
+                         "verification":  "Cancel a run mid-test-step and confirm the later crate steps still execute and report.",
+                         "remedy":  "Use `if: always()` on the per-crate test steps (job outcome still reflects the failure/cancel).",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  27,
+                                        "reply":  "handoffs/38-muse-reply-meta.md",
+                                        "thread":  "01a20729-63c9-7aa1-bbb2-7640e48e25db",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T07:55:46+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F38-2",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  347
+                                           }
+                                       ],
+                         "claim":  "Address table misses three IPv4-embedding IPv6 forms: Teredo 2001::/32, 6to4 2002::/16, and deprecated IPv4-compatible ::/96 (plus ISATAP). `to_ipv4_mapped` unwraps only ::ffff:0:0/96 and the code unwraps only the NAT64 /96 prefix; the other forms pass `is_public_address` as global even when the embedded IPv4 is private/loopback.",
+                         "trigger":  "A name lookup or redirect hop answering a Teredo/6to4/compat address whose embedded IPv4 is non-global.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:344-391",
+                                              "observation":  "NON_GLOBAL_V6 lists unspecified, loopback, 64:ff9b:1::/48, 100::/64, 2001:db8::/32, fc00::/7, fe80::/10, fec0::/10, ff00::/8 — no 2001::/32, no 2002::/16, no ::/96 compat range. is_public_address unwraps mapped and 64:ff9b::/96 only. Lookup-side (any-bad refuses) and peer-side checks plus the pinned-resolver are otherwise complete."
+                                          }
+                                      ],
+                         "verification":  "Unit-test is_public_address against 2001:0:\u003cpriv\u003e:… , 2002:0a00:1:: and ::10.0.0.1; confirm currently returned as public.",
+                         "remedy":  "Add 2001::/32 and 2002::/16 to the table (or unwrap their embedded IPv4 like NAT64) and refuse ::/96 compat addresses; add one row per range to the address tests.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  27,
+                                        "reply":  "handoffs/38-muse-reply-meta.md",
+                                        "thread":  "01a20729-63c9-7aa1-bbb2-7640e48e25db",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T07:55:46+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F38-3",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  423
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1592
+                                           }
+                                       ],
+                         "claim":  "The whole-entry fingerprint makes benign concurrent edits fatal to a good update: any added annotation key, inert ext field, or semantically-null JSON respelling between the gate snapshot and the smoke changes the SHA-256, so the smoke reports \u0027not run\u0027 and a passing engine update is rolled back / a swap abandoned.",
+                         "trigger":  "Operator (or another session) edits the seated entry in any field while its pre/post smoke is in flight.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/smoke.rs:392-427; crates/c3/src/maintain/mod.rs:1586-1596",
+                                              "observation":  "bound_roster refuses when entry_fingerprint(text) != fingerprint, where the fingerprint is SHA-256 of the canonical whole entry object; the swap flow binds fingerprint from the pre-smoke basis and smokes against it. Fail-closed by design, but the blast radius includes edits that change nothing the smoke executes."
+                                          }
+                                      ],
+                         "verification":  "Edit an inert field of the seat between the two engine-update smokes in the e2e harness and observe rollback of a passing update.",
+                         "remedy":  "Keep fail-closed, but document that any roster edit during a pass holds that entry\u0027s update; optionally scope the fingerprint to executed fields (endpoint, auth, plan, key var, model, protection flags).",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  27,
+                                        "reply":  "handoffs/38-muse-reply-meta.md",
+                                        "thread":  "01a20729-63c9-7aa1-bbb2-7640e48e25db",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T07:55:46+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F38-4",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  128
+                                           }
+                                       ],
+                         "claim":  "A roster with no file path can never be smoked: fingerprint_now returns \u0027\u0027 and bound_roster refuses an empty fingerprint unconditionally, so every engine update for such a roster is held on every pass with only a per-smoke line, instead of one loud refusal.",
+                         "trigger":  "Maintain runs against a roster with empty `path` (tests, embedded use).",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/smoke.rs:126-135, 423",
+                                              "observation":  "fingerprint_now returns String::new when roster.path is empty; bound_roster errors when fingerprint.is_empty(). pick_target still returns a seat, so the pass proceeds to a smoke that cannot run."
+                                          }
+                                      ],
+                         "verification":  "Call pick_target on a file-less roster and run_smoke; confirm perpetual \u0027not run\u0027 Fail rather than a single clear refusal.",
+                         "remedy":  "Return None from pick_target (or abort the engine step loudly) when the fingerprint is empty for a file-backed expectation.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  27,
+                                        "reply":  "handoffs/38-muse-reply-meta.md",
+                                        "thread":  "01a20729-63c9-7aa1-bbb2-7640e48e25db",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T07:55:46+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F38-5",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/web.rs",
+                                               "line":  371
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  460
+                                           }
+                                       ],
+                         "claim":  "An explicit \u0027no fixed price\u0027 marker bypasses the cross-major price hold: list_price keeps only positive finite numbers, so OpenRouter\u0027s \"-1\" (router, no fixed price) and \"0\" become \u0027no price\u0027, and price_hold returns None — the swap proceeds with no announcement, in the direction (unknown cost) the hold exists to catch.",
+                         "trigger":  "Catalog prices the seated id but marks the higher-major candidate \u0027-1\u0027 (or vice versa).",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/web.rs:367-386; crates/c3/src/maintain/models.rs:455-472",
+                                              "observation":  "list_price drops \u0027-1\u0027/\u00270\u0027/non-numeric (positive-finite filter); price_hold fires only when a source prices BOTH ids and the ratio exceeds 2. Documented intent covers \u0027without prices for both ids\u0027, but \u0027-1\u0027 is affirmative unknown-price, not missing data."
+                                          }
+                                      ],
+                         "verification":  "Feed parse_catalog a candidate with pricing {prompt:\u0027-1\u0027} and confirm price_hold is None and the swap proceeds.",
+                         "remedy":  "Treat an explicit \u0027-1\u0027 on either side as unknown-price and hold/announce the cross-major swap (keep \u00270\u0027/free seating).",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  27,
+                                        "reply":  "handoffs/38-muse-reply-meta.md",
+                                        "thread":  "01a20729-63c9-7aa1-bbb2-7640e48e25db",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T07:55:46+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F39-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  375
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  347
+                                           }
+                                       ],
+                         "claim":  "is_public_address accepts IPv6 addresses that embed a non-global IPv4, and the IPv6 benchmarking range, so a public-catalog lookup and every hop\u0027s peer check allow them. Deprecated IPv4-compatible ::10.0.0.1 (::a00:1), 6to4 2002:a00:1:: (embeds 10.0.0.1), Teredo 2001::/32, and benchmarking 2001:2::/48 are outside NON_GLOBAL_V6 and are not unwrapped. Only ::ffff:0:0/96 and 64:ff9b::/96 are unwrapped.",
+                         "trigger":  "A maintain catalog or page name resolves to one of those addresses, or the connected peer is one of them.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:347-389",
+                                              "observation":  "NON_GLOBAL_V6 lists ::/128, ::1/128, 64:ff9b:1::/48, 100::/64, 2001:db8::/32, fc00::/7, fe80::/10, fec0::/10, and ff00::/8. is_public_address unwraps to_ipv4_mapped and 64:ff9b::/96 only, then tests the two tables."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:309-318 and env.rs:483-485",
+                                              "observation":  "resolve_within refuses the name only when some address fails is_public_address, and fetch\u0027s peer check uses the same function."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "6to4 and IPv4-compatible layout",
+                                              "observation":  "2002:a00:1:: embeds 10.0.0.1 and ::a00:1 is the deprecated IPv4-compatible form of 10.0.0.1. Both miss the tables, so is_public_address returns true."
+                                          }
+                                      ],
+                         "verification":  "In crates/c3, assert is_public_address is false for ::a00:1, 2002:a00:1::, a 2001::/32 Teredo address, and 2001:2::1, beside the_address_classes_of_a_public_source.",
+                         "remedy":  "Unwrap 6to4 (2002::/16) and IPv4-compatible (::/96) to the embedded IPv4 and judge that address. Deny 2001::/32 and 2001:2::/48 outright.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  28,
+                                        "reply":  "handoffs/39-grok-reply-grok.md",
+                                        "thread":  "01a20738-a34f-7891-9101-999305b5b0f3",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T08:25:51+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F39-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  411
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  438
+                                           }
+                                       ],
+                         "claim":  "When the candidate\u0027s vendor has no seated row, price_hold divides the candidate\u0027s list price by the first same-name row in that catalog. A decoy row with a high price makes a much more expensive successor look within 2x, and swap mode seats it.",
+                         "trigger":  "One public source lists, in order, decoy/qwen3.8-max at prompt 100, qwen/qwen3.8-max at prompt 0.000001, and new/qwen4-max at prompt 0.01, and the roster seat is qwen3.8-max in swap mode.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:403-412",
+                                              "observation":  "seated_entry prefers the candidate vendor, then hits.first()."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:432-470",
+                                              "observation":  "list_price_ratio uses that pair per field and keeps the max finite ratio. price_hold returns None unless the max is greater than 2, and run_models seats when price_hold is None."
+                                          }
+                                      ],
+                         "verification":  "Add the three-id SourceList above to a_successor_across_a_major_priced_over_twice_the_seated_one_is_announced_only and expect a price_hold. Today the first-row ratio is 0.0001, so the candidate is seated.",
+                         "remedy":  "Pair prices only when the seated id is under the candidate\u0027s vendor. If no same-vendor seated price exists, leave the ratio unset for that hit.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  28,
+                                        "reply":  "handoffs/39-grok-reply-grok.md",
+                                        "thread":  "01a20738-a34f-7891-9101-999305b5b0f3",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T08:25:51+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F39-3",
+                         "status":  "wontfix",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/web.rs",
+                                               "line":  379
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  443
+                                           }
+                                       ],
+                         "claim":  "A seated list price of 0, a negative price, or a price present on only one of prompt and completion produces no ratio, so a higher-major successor of a free or one-sided seat is seated.",
+                         "trigger":  "Catalog pricing.prompt is \"0\" or \"-1\" for the seated id and a positive number for a higher-major successor, or the two ids are priced on different fields.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/web.rs:371-384",
+                                              "observation":  "list_price keeps a field only when it is finite and greater than 0. \"0\" and \"-1\" are dropped."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:443-470",
+                                              "observation":  "A field is compared only when both ids have it. With no pair, list_price_ratio returns None and price_hold does not hold the swap."
+                                          }
+                                      ],
+                         "verification":  "Unit-test seated prompt \"0\" and candidate prompt 0.01 across a major. Expect price_hold to be None and the candidate to remain seatable.",
+                         "remedy":  "Treat a known zero seated price as cheaper than any positive candidate price across a major, and hold. Keep ignoring a missing price.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  28,
+                                        "reply":  "handoffs/39-grok-reply-grok.md",
+                                        "thread":  "01a20738-a34f-7891-9101-999305b5b0f3",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T08:25:51+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T08:26:28+01:00",
+                                             "status":  "wontfix",
+                                             "by":  "coordinator",
+                                             "note":  "As F38-5: decided in the wave\u0027s brief and said in the CHANGELOG - the list price is a signal; without a positive price for both ids on the same field nothing is held.",
+                                             "evidence":  "",
+                                             "base_commit":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8",
+                                             "tree_sha256":  "587435b254b021fc7dbc3f8e6084a57b3704ab10db5367d3e83007a480059790"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F39-4",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  751
+                                           }
+                                       ],
+                         "claim":  "catalog_alias accepts a leading token that matches the endpoint host\u0027s lab even when that token is neither the rest\u0027s maker nor the plan slug. The successor is written with that token put back.",
+                         "trigger":  "Roster model kimi-qwen3.8-max, plan alibaba, endpoint host under moonshot.ai, catalog id qwen/qwen3.8-max with a successor qwen/qwen4-max.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:741-772",
+                                              "observation":  "The alias is refused only when token_lab differs from model_lab(rest), lab_named_by(plan), and host_lab. host_lab is lab_of_host, which returns moonshot for moonshot.ai and kimi.ai."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:780-784",
+                                              "observation":  "aliased_view prefixes every id of the matched vendor with the roster token, so the written successor is kimi-qwen4-max."
+                                          }
+                                      ],
+                         "verification":  "Call catalog_alias on that entry with a source containing qwen/qwen3.8-max and qwen/qwen4-max. Expect Some(prefix kimi-) and swap candidate kimi-qwen4-max.",
+                         "remedy":  "Allow the host lab only when the plan slug is empty. Require token_lab to equal the rest\u0027s maker or the plan slug.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  28,
+                                        "reply":  "handoffs/39-grok-reply-grok.md",
+                                        "thread":  "01a20738-a34f-7891-9101-999305b5b0f3",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T08:25:51+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F39-5",
+                         "status":  "wontfix",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  861
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  1016
+                                           }
+                                       ],
+                         "claim":  "The codex smoke requires switch evidence on every turn in the rollout file, including turns that are not this smoke\u0027s consults. A resumed thread whose older turn has no in-boundary multi_agent_version or tool list is unproven, and the engine update is held or rolled back.",
+                         "trigger":  "Two smoke consults resume one codex thread whose file already contains a completed turn with no turn_context multi_agent_version and no additional_tools between its task_started and task_complete.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/smoke.rs:842-866",
+                                              "observation":  "After boundary_errors and the completed count, the check returns unproven at the first TurnEvidence with evidence false, over the whole turns vector."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/quota.rs:1013-1048",
+                                              "observation":  "Evidence is recorded only on the open turn. A turn_context or tool list outside task_started..task_complete does not mark a turn. The reader comment states a rollout keeps the thread\u0027s history."
+                                          }
+                                      ],
+                         "verification":  "Extend the_codex_smoke_proves_the_switch_for_each_turn_of_a_shared_rollout with an older completed turn that has no in-boundary evidence, then two evidenced smoke turns. Expect Unproven.",
+                         "remedy":  "Require evidence only on the last k turns, where k is the number of smoke consults on that thread, and still reject unpaired boundaries inside that suffix.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  28,
+                                        "reply":  "handoffs/39-grok-reply-grok.md",
+                                        "thread":  "01a20738-a34f-7891-9101-999305b5b0f3",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T08:25:51+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T08:26:28+01:00",
+                                             "status":  "wontfix",
+                                             "by":  "coordinator",
+                                             "note":  "The codex smoke always starts its own thread (first consult new, second resumes it), so the rollout holds only the smoke\u0027s turns; requiring evidence on every turn of that file is the stricter reading of F32-2.",
+                                             "evidence":  "",
+                                             "base_commit":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8",
+                                             "tree_sha256":  "587435b254b021fc7dbc3f8e6084a57b3704ab10db5367d3e83007a480059790"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F39-6",
+                         "status":  "wontfix",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  466
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  506
+                                           }
+                                       ],
+                         "claim":  "Outside test mode the in-use hook is ignored. With CODEX_CONSULT_TEST_MODE on and CODEX_CONSULT_TEST_MAINTAIN_IN_USE unset, engine_in_use returns false for every engine, so a real maintain pass updates a CLI that is running.",
+                         "trigger":  "A production c3 maintain --run process with CODEX_CONSULT_TEST_MODE=1 and the hook unset, while grok or codex is running.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:465-468",
+                                              "observation":  "engine_in_use returns in_use_by_hook immediately when mode_on() is true and does not read the process table."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:505-508 and crates/c3-core/src/test_hooks.rs:41-48",
+                                              "observation":  "in_use_by_hook treats a missing hook as no engine in use. mode_on is true only for 1, true, yes, or on."
+                                          }
+                                      ],
+                         "verification":  "With CODEX_CONSULT_TEST_MODE=1 and the hook unset, call engine_in_use for grok while that process exists. Expect false. With the mode unset and the hook set to grok, expect the process table to decide.",
+                         "remedy":  "Keep the hook test-only. In test mode, if the hook is unset, keep the fail-closed in-use result for any engine the test did not name, or refuse maintain updates while test mode is on.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  28,
+                                        "reply":  "handoffs/39-grok-reply-grok.md",
+                                        "thread":  "01a20738-a34f-7891-9101-999305b5b0f3",
+                                        "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                        "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2",
+                                        "live_head":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-23T08:25:51+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "70ed824ce51003bda28aa317a53b4860aab23db4",
+                                             "tree_sha256":  "5800ef3c913e385daeb3aee6af3601821f499f29f9653d89b0b41b5ab4d565f2"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T08:26:29+01:00",
+                                             "status":  "wontfix",
+                                             "by":  "coordinator",
+                                             "note":  "Test mode is test mode: with CODEX_CONSULT_TEST_MODE on, the in-use probe is answered by the test hook by design (the debt it closes: tests read the real process table).",
+                                             "evidence":  "",
+                                             "base_commit":  "aa71c6e4cffdf5be74d317a33a4a45cf475899e8",
+                                             "tree_sha256":  "587435b254b021fc7dbc3f8e6084a57b3704ab10db5367d3e83007a480059790"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
                      }
                  ],
     "ratings":  [
@@ -26073,6 +26717,75 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1795412135
+                    },
+                    {
+                        "n":  25,
+                        "consult_id":  "681ac501-2f2d-47ea-9490-43f5289c7565",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-23T07:22:45+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-23T07:44:07+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795416247
+                    },
+                    {
+                        "n":  27,
+                        "consult_id":  "cd75d40b-be5b-4c55-9bcb-fc6f175daa49",
+                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                        "provider":  "meta",
+                        "model":  "muse-spark-1.3-contributor",
+                        "engine":  "muse",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-23T07:47:58+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-23T08:01:32+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795417292
+                    },
+                    {
+                        "n":  28,
+                        "consult_id":  "1c9293e5-7320-48c7-bc9a-2f3d9b54aa26",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-23T08:04:35+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-23T08:26:27+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795418787
                     }
                 ]
 }

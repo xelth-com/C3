@@ -343,13 +343,19 @@ pub(crate) const NON_GLOBAL_V4: &[(Ipv4Addr, u8)] = &[
 
 /// (F15-1, F27-1) The IPv6 ranges that are not global unicast: `(network, prefix length)`. An
 /// IPv4-mapped address (`::ffff:0:0/96`) and one of the well-known NAT64 prefix (`64:ff9b::/96`)
-/// are judged as the IPv4 address they carry ([`is_public_address`]).
+/// are judged as the IPv4 address they carry ([`is_public_address`]); (F39-1) the other ranges that
+/// embed an IPv4 or tunnel to one - IPv4-compatible `::/96`, 6to4 `2002::/16`, Teredo `2001::/32` -
+/// are refused outright, as is the benchmarking range `2001:2::/48`.
 pub(crate) const NON_GLOBAL_V6: &[(Ipv6Addr, u8)] = &[
     (Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0), 128), // unspecified
     (Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 128), // loopback
+    (Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0), 96),  // IPv4-compatible (deprecated)
     (Ipv6Addr::new(0x64, 0xff9b, 1, 0, 0, 0, 0, 0), 48), // local-use IPv4/IPv6 translation
     (Ipv6Addr::new(0x100, 0, 0, 0, 0, 0, 0, 0), 64), // discard-only
+    (Ipv6Addr::new(0x2001, 0, 0, 0, 0, 0, 0, 0), 32), // Teredo
+    (Ipv6Addr::new(0x2001, 2, 0, 0, 0, 0, 0, 0), 48), // benchmarking
     (Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0), 32), // documentation
+    (Ipv6Addr::new(0x2002, 0, 0, 0, 0, 0, 0, 0), 16), // 6to4 (embeds an IPv4)
     (Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 0), 7), // unique local
     (Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0), 10), // link-local
     (Ipv6Addr::new(0xfec0, 0, 0, 0, 0, 0, 0, 0), 10), // site-local (deprecated)
@@ -1134,6 +1140,10 @@ mod tests {
             ("::ffff:100.64.0.1", "IPv4-mapped, judged as its IPv4"),
             ("64:ff9b::a00:1", "NAT64, judged as its IPv4 (10.0.0.1)"),
             ("64:ff9b:1::1", "64:ff9b:1::/48"),
+            ("::a00:1", "::/96 (IPv4-compatible)"),
+            ("2002:a00:1::1", "2002::/16 (6to4)"),
+            ("2001:0:1::1", "2001::/32 (Teredo)"),
+            ("2001:2::1", "2001:2::/48 (benchmarking)"),
             ("100::1", "100::/64"),
             ("2001:db8::1", "2001:db8::/32"),
             ("fc00::1", "fc00::/7"),
@@ -1171,6 +1181,7 @@ mod tests {
             "203.0.114.1",
             "223.255.255.254",
             "2606:4700::1111",
+            "2606:4700:4700::1111",
             "2001:4860:4860::8888",
             "::ffff:93.184.216.34",
             "64:ff9b::808:808",
@@ -1181,7 +1192,15 @@ mod tests {
         }
         // the lookup check refuses such a name (here a CGNAT and a benchmarking address)
         let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        for bad in ["100.64.0.1:443", "198.18.0.1:443", "[fec0::1]:443"] {
+        for bad in [
+            "100.64.0.1:443",
+            "198.18.0.1:443",
+            "[fec0::1]:443",
+            "[::a00:1]:443",
+            "[2002:a00:1::1]:443",
+            "[2001:0:1::1]:443",
+            "[2001:2::1]:443",
+        ] {
             let err = resolve_within("catalog.example:443", far, true, move |_| {
                 Ok(vec![bad.parse::<SocketAddr>().unwrap()])
             })
@@ -1191,7 +1210,11 @@ mod tests {
         // and the peer check of every hop refuses such an answer
         assert!(check_peer(Some("100.64.0.1".parse().unwrap())).is_err());
         assert!(check_peer(Some("0.0.0.1".parse().unwrap())).is_err());
+        for bad in ["::a00:1", "2002:a00:1::1", "2001:0:1::1", "2001:2::1"] {
+            assert!(check_peer(Some(bad.parse().unwrap())).is_err(), "{bad}");
+        }
         assert!(check_peer(Some("93.184.216.34".parse().unwrap())).is_ok());
+        assert!(check_peer(Some("2606:4700:4700::1111".parse().unwrap())).is_ok());
     }
 
     /// (F14-1) The time left for a hop's connect and request is recomputed AFTER its name lookup: a

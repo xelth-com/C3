@@ -1,0 +1,100 @@
+codex-consult: detached run da22521b (detach id da22521b-5b45-421e-b225-84f1eac833d6) - pid 18044 on LAPTOP-9SGIHQ03, started 2026-11-23T08:01:41+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-da22521b.status.json
+Panel 0c6b2f11: 1 of 1 roster entries run, at once (roster C:\Users\Dmytro\AppData\Local\Temp\claude\66aab2698810b170\e97cc6d0-6d1c-45b4-8904-07597e0d378e\scratchpad\rosters\roster-grok.json; panel id 0c6b2f11-5ca0-4633-81f9-ef395087c245)
+  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)
+  #1 grok :: grok-4.7 [grok] - member, n=28, handoff 39
+Routing: routed by the ratings - size 1 (-PanelAll); seed 6b55af12e4d8 (nonce 2026-11-23 from date); exploration 0.2 per slot
+  eligible: #1 grok :: grok-4.7 [grok] (lab xai by vendor; score 1.854 purpose of 10)
+  picked  : 1. #1 grok :: grok-4.7 [grok] (lab-draw)
+Concurrency: at once - endpoint groups: grok x1; -PanelConcurrency 0 (no cap)
+Timeout: 2400 s per member (the default of purpose diff-review); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 1 of 1 finished: grok :: grok-4.7 [grok] - usable reply (1443.9 s)
+
+=== panel 0c6b2f11 member 1 of 1: grok :: grok-4.7 [grok] (roster #1) ===
+codex-consult: usable reply - grok :: grok-4.7 [grok], mode new, thread 01a20738-a34f-7891-9101-999305b5b0f3 (source: events), wall 1102 s
+verdict    : HOLD - The new address check still treats several embedded or special-purpose IPv6 addresses as global, and the price gate can pair a successor with another vendor's row and then seat it.
+findings   : 0 blocker, 2 major, 3 minor, 1 note -> F39-1..F39-6 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\39-grok-reply-grok.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\39-grok-reply-grok.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\39-grok-reply-grok.events.jsonl
+
+## Q1. Address table
+
+IPv4-mapped (`::ffff:0:0/96`) and well-known NAT64 (`64:ff9b::/96`) are unwrapped and judged as the IPv4 they carry (`crates/c3/src/maintain/env.rs:377`). A lookup with any non-global address is refused (`env.rs:309`). Each redirect hop resolves again, pins those addresses in the ureq resolver (`env.rs:220`), and checks the peer (`env.rs:483`).
+
+These still pass `is_public_address` (`env.rs:375`) because they are absent from `NON_GLOBAL_V6` (`env.rs:347`) and are not unwrapped: deprecated IPv4-compatible `::10.0.0.1` (`::a00:1`); 6to4 `2002:a00:1::` (embeds `10.0.0.1`); Teredo `2001::/32`; benchmarking `2001:2::/48` (the IPv6 pair of `198.18.0.0/15`, which the v4 table now blocks). The GET stays HTTPS with certificate checks, so this breaks the address invariant rather than proving an internal HTTP hit.
+
+## Q2. Proxy and deadline
+
+Catalog, page, and installer GETs share `SystemEnv::http_get` → `hop_agent`, which sets `try_proxy_from_env(false)` (`env.rs:219`). No second HTTP client in `maintain/`. Installer and engine children still inherit proxy variables (`env.rs:142`); that is the update process, not the catalog GET.
+
+The DNS thread is detached and can finish after the deadline (`env.rs:295`). `read_capped` checks the deadline between reads (`env.rs:600`); one blocking `read` can run until ureq's timeout, which is the time left after lookup (`env.rs:175`). Redirects share that deadline. There is no retry loop. ureq 2.12.1's per-address connect loop was not read.
+
+## Q3. Fingerprint and proof
+
+The fingerprint is SHA-256 of canonical JSON of `reviewers[position]` only (`smoke.rs:76`). Key order and whitespace stay the same hash. A shadowed duplicate key is dropped by the parser, so editing it changes nothing the loader keeps. Bytes outside that one object are not hashed.
+
+A rollout passes only when `boundary_errors` is 0 and every `TurnEvidence` has `evidence` (`smoke.rs:842`, `smoke.rs:861`). Evidence is a `turn_context` `multi_agent_version`, or any `additional_tools` `tools` array including an empty one, and only while a turn is open (`quota.rs:1016`, `quota.rs:1044`). No shape was found that passes with a turn lacking both. The scan is the whole file, so an older turn on a resumed thread with no in-boundary evidence makes the smoke unproven and holds or rolls back the engine update. Inserting a reviewer above the seat changes the positional hash and does the same; that avoids smoking a different entry.
+
+## Q4. Price and lab token
+
+`seated_entry` uses the first same-name row when the candidate's vendor has no seated row (`models.rs:409`). `list_price_ratio` prices that pair (`models.rs:438`). A catalog ordered `decoy/qwen3.8-max` (prompt 100), `qwen/qwen3.8-max` (prompt 0.000001), `new/qwen4-max` (prompt 0.01) yields a tiny ratio, so a higher major is seated.
+
+A zero, negative, or non-numeric price is discarded (`web.rs:379`). A seated `"0"` and a paid higher major produce no ratio and the swap proceeds. A field present on only one id is skipped (`models.rs:443`).
+
+The host-lab arm allows a token that matches neither the rest's maker nor the plan slug (`models.rs:751`). `kimi-qwen3.8-max` on plan `alibaba` with a `moonshot.ai` host aliases via `qwen/qwen3.8-max` and the successor is written `kimi-qwen4-max`. The slash form in the unit test (`kimi-code/k3.2-pro`) puts the original token back (`models.rs:784`).
+
+## Q5. Telemetry
+
+The dash form is inserted only for a trusted source, only an `anthropic/` id, only after lowercasing, and only when the dashed id matches `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]` (`models.rs:1033`, `claude.rs:180`). Another slug, an untrusted source, or `claude-3.5-sonnet` adds no dash name. A custom id is sent by name only when it already equals that derived form.
+
+## Q6. Test hook
+
+`CODEX_CONSULT_TEST_MAINTAIN_IN_USE` is read only when `CODEX_CONSULT_TEST_MODE` is `1`, `true`, `yes`, or `on` (`maintain/mod.rs:466`, `test_hooks.rs:41`). The hook alone does not change a pass. With test mode on and the hook unset, every engine is idle (`mod.rs:506`), so a real pass updates a running CLI. Test mode already warns.
+
+## Q7. CI
+
+Workspace members are only `c3-core`, `c3`, and `c3-cli` (`Cargo.toml:3`). `c3/index-surreal` exists and `c3-cli/index-surreal` forwards to it. `success() || failure()` still runs later crates after a failed step and does not turn a failed job green. A cancelled step matches neither function, so later crates are skipped and the job stays cancelled (`ci.yml:65`, `ci.yml:105`).
+
+## Q8. Untested
+
+No live `c3 maintain` pass, no real OpenRouter body, and no codex rollout beyond the 0.169.0 excerpt (`smoke.rs:1066`). Price and lab-token rules are fixture-only. The `.c3/` move and the rest of the patch were not reviewed. ureq's multi-address connect timing was not read.
+
+## Requested checks
+
+RC1. Read the connect loop in ureq 2.12.1 (cargo registry, read-only, about 20 minutes). Observation that settles it: each failed address waits the full `timeout_connect`, so one hop can outlive the 15s deadline by `(n-1)` times the budget (finding #1's deadline note in Q2).
+
+### Findings
+
+- **F39-1** [major] `crates/c3/src/maintain/env.rs:375`, `crates/c3/src/maintain/env.rs:347` - is_public_address accepts IPv6 addresses that embed a non-global IPv4, and the IPv6 benchmarking range, so a public-catalog lookup and every hop's peer check allow them. Deprecated IPv4-compatible ::10.0.0.1 (::a00:1), 6to4 2002:a00:1:: (embeds 10.0.0.1), Teredo 2001::/32, and benchmarking 2001:2::/48 are outside NON_GLOBAL_V6 and are not unwrapped. Only ::ffff:0:0/96 and 64:ff9b::/96 are unwrapped. Trigger: A maintain catalog or page name resolves to one of those addresses, or the connected peer is one of them. Evidence: read-code: NON_GLOBAL_V6 lists ::/128, ::1/128, 64:ff9b:1::/48, 100::/64, 2001:db8::/32, fc00::/7, fe80::/10, fec0::/10, and ff00::/8. is_public_address unwraps to_ipv4_mapped and 64:ff9b::/96 only, then tests the two tables.; read-code: resolve_within refuses the name only when some address fails is_public_address, and fetch's peer check uses the same function.; inferred: 2002:a00:1:: embeds 10.0.0.1 and ::a00:1 is the deprecated IPv4-compatible form of 10.0.0.1. Both miss the tables, so is_public_address returns true. Verify: In crates/c3, assert is_public_address is false for ::a00:1, 2002:a00:1::, a 2001::/32 Teredo address, and 2001:2::1, beside the_address_classes_of_a_public_source. Remedy: Unwrap 6to4 (2002::/16) and IPv4-compatible (::/96) to the embedded IPv4 and judge that address. Deny 2001::/32 and 2001:2::/48 outright.
+- **F39-2** [major] `crates/c3/src/maintain/models.rs:411`, `crates/c3/src/maintain/models.rs:438` - When the candidate's vendor has no seated row, price_hold divides the candidate's list price by the first same-name row in that catalog. A decoy row with a high price makes a much more expensive successor look within 2x, and swap mode seats it. Trigger: One public source lists, in order, decoy/qwen3.8-max at prompt 100, qwen/qwen3.8-max at prompt 0.000001, and new/qwen4-max at prompt 0.01, and the roster seat is qwen3.8-max in swap mode. Evidence: read-code: seated_entry prefers the candidate vendor, then hits.first().; read-code: list_price_ratio uses that pair per field and keeps the max finite ratio. price_hold returns None unless the max is greater than 2, and run_models seats when price_hold is None. Verify: Add the three-id SourceList above to a_successor_across_a_major_priced_over_twice_the_seated_one_is_announced_only and expect a price_hold. Today the first-row ratio is 0.0001, so the candidate is seated. Remedy: Pair prices only when the seated id is under the candidate's vendor. If no same-vendor seated price exists, leave the ratio unset for that hit.
+- **F39-3** [minor] `crates/c3/src/maintain/web.rs:379`, `crates/c3/src/maintain/models.rs:443` - A seated list price of 0, a negative price, or a price present on only one of prompt and completion produces no ratio, so a higher-major successor of a free or one-sided seat is seated. Trigger: Catalog pricing.prompt is "0" or "-1" for the seated id and a positive number for a higher-major successor, or the two ids are priced on different fields. Evidence: read-code: list_price keeps a field only when it is finite and greater than 0. "0" and "-1" are dropped.; read-code: A field is compared only when both ids have it. With no pair, list_price_ratio returns None and price_hold does not hold the swap. Verify: Unit-test seated prompt "0" and candidate prompt 0.01 across a major. Expect price_hold to be None and the candidate to remain seatable. Remedy: Treat a known zero seated price as cheaper than any positive candidate price across a major, and hold. Keep ignoring a missing price.
+- **F39-4** [minor] `crates/c3/src/maintain/models.rs:751` - catalog_alias accepts a leading token that matches the endpoint host's lab even when that token is neither the rest's maker nor the plan slug. The successor is written with that token put back. Trigger: Roster model kimi-qwen3.8-max, plan alibaba, endpoint host under moonshot.ai, catalog id qwen/qwen3.8-max with a successor qwen/qwen4-max. Evidence: read-code: The alias is refused only when token_lab differs from model_lab(rest), lab_named_by(plan), and host_lab. host_lab is lab_of_host, which returns moonshot for moonshot.ai and kimi.ai.; read-code: aliased_view prefixes every id of the matched vendor with the roster token, so the written successor is kimi-qwen4-max. Verify: Call catalog_alias on that entry with a source containing qwen/qwen3.8-max and qwen/qwen4-max. Expect Some(prefix kimi-) and swap candidate kimi-qwen4-max. Remedy: Allow the host lab only when the plan slug is empty. Require token_lab to equal the rest's maker or the plan slug.
+- **F39-5** [minor] `crates/c3/src/maintain/smoke.rs:861`, `crates/c3-core/src/quota.rs:1016` - The codex smoke requires switch evidence on every turn in the rollout file, including turns that are not this smoke's consults. A resumed thread whose older turn has no in-boundary multi_agent_version or tool list is unproven, and the engine update is held or rolled back. Trigger: Two smoke consults resume one codex thread whose file already contains a completed turn with no turn_context multi_agent_version and no additional_tools between its task_started and task_complete. Evidence: read-code: After boundary_errors and the completed count, the check returns unproven at the first TurnEvidence with evidence false, over the whole turns vector.; read-code: Evidence is recorded only on the open turn. A turn_context or tool list outside task_started..task_complete does not mark a turn. The reader comment states a rollout keeps the thread's history. Verify: Extend the_codex_smoke_proves_the_switch_for_each_turn_of_a_shared_rollout with an older completed turn that has no in-boundary evidence, then two evidenced smoke turns. Expect Unproven. Remedy: Require evidence only on the last k turns, where k is the number of smoke consults on that thread, and still reject unpaired boundaries inside that suffix.
+- **F39-6** [note] `crates/c3/src/maintain/mod.rs:466`, `crates/c3/src/maintain/mod.rs:506` - Outside test mode the in-use hook is ignored. With CODEX_CONSULT_TEST_MODE on and CODEX_CONSULT_TEST_MAINTAIN_IN_USE unset, engine_in_use returns false for every engine, so a real maintain pass updates a CLI that is running. Trigger: A production c3 maintain --run process with CODEX_CONSULT_TEST_MODE=1 and the hook unset, while grok or codex is running. Evidence: read-code: engine_in_use returns in_use_by_hook immediately when mode_on() is true and does not read the process table.; read-code: in_use_by_hook treats a missing hook as no engine in use. mode_on is true only for 1, true, yes, or on. Verify: With CODEX_CONSULT_TEST_MODE=1 and the hook unset, call engine_in_use for grok while that process exists. Expect false. With the mode unset and the hook set to grok, expect the process table to decide. Remedy: Keep the hook test-only. In test mode, if the hook is unset, keep the fail-closed in-use result for any engine the test did not name, or refuse maintain updates while test mode is on.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: HOLD
+
+The new address check still treats several embedded or special-purpose IPv6 addresses as global, and the price gate can pair a successor with another vendor's row and then seat it.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- No live c3 maintain pass and no real OpenRouter body were run; price and lab-token behavior were read against the unit fixtures only.
+- ureq 2.12.1 was not read, so it is unproven whether each resolved address gets a full timeout_connect and a hop can outlive the 15s deadline.
+- Whether current OS stacks deliver a connect to ::a00:1 or 2002:a00:1:: onto the embedded private IPv4 was not tested. TLS hostname checks still apply.
+- A current codex rollout was not compared with the 0.169.0 fixture order (task_started, then tool list, then turn_context).
+- The .c3/ directory move and every other file in the patch outside maintain, telemetry/classes.rs, panel/plan.rs lab_named_by, quota.rs, ci.yml, and the two named test files were not reviewed.
+
+### First-run checklist (observable)
+
+_(none)_
+
+Panel 0c6b2f11: 1 of 1 entries ran (asked 1, started 1, usable 1; wall clock 1444.3 s; at once)
+  grok :: grok-4.7 [grok]  HOLD     0 blocker, 2 major, 3 minor, 1 note  prior: none  1102 s  handoffs/39-grok-reply-grok.md

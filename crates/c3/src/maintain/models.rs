@@ -426,17 +426,26 @@ fn seated_created(source: &SourceList, seated: &str, vendor: &str) -> Option<i64
 pub const PRICE_RATIO_LIMIT: f64 = 2.0;
 
 /// (0.2.5 D3) The highest ratio of `cand`'s list price to `seated`'s that a public source of
-/// `current` gives - per source, the two ids' entries as the date gate pairs them, each field
-/// (`prompt`, `completion`) compared only when the source prices it for both. `None` when no source
-/// prices both ids.
+/// `current` gives - per source, the two ids' rows of the candidate's own vendor slug (no other
+/// vendor's row of the seated id's name is used), each field (`prompt`, `completion`) compared only
+/// when the source prices it for both. `None` when no source prices both ids that way.
 fn list_price_ratio(current: &[SourceList], seated: &str, cand: &str) -> Option<f64> {
     let mut best: Option<f64> = None;
     for h in public_hits(current, cand) {
         let Some(c) = h.source.prices.get(h.id) else {
             continue;
         };
-        let Some(s) =
-            seated_entry(h.source, seated, h.vendor).and_then(|id| h.source.prices.get(id))
+        // (F39-2) the seated id's row of the SAME vendor in the SAME source, or no ratio: another
+        // vendor's row of that name says nothing about the candidate's vendor's price
+        let Some(s) = h
+            .source
+            .ids
+            .iter()
+            .find(|id| {
+                id.split_once('/')
+                    .is_some_and(|(v, m)| v == h.vendor && m.eq_ignore_ascii_case(seated))
+            })
+            .and_then(|id| h.source.prices.get(id))
         else {
             continue;
         };
@@ -724,7 +733,7 @@ pub struct CatalogAlias {
 /// the roster id as it is, and only once: the leading token (up to the first `/`, else the first
 /// `-`) is dropped when it names the maker of the rest or its plan's vendor - by the panel's lab
 /// table ([`crate::panel::plan::lab_named_by`] / [`crate::panel::plan::model_lab`]; the plan's vendor
-/// is the lab its plan slug names or its endpoint host's lab) - and the rest must be an id of a
+/// is the lab its plan slug names; the endpoint host's lab alone does not count) - and the rest must be an id of a
 /// known maker that a public source lists under a vendor slug, an id of that same maker. Anything
 /// else is no match: nothing is guessed.
 pub fn catalog_alias(e: &RosterEntry, current: &[SourceList]) -> Option<CatalogAlias> {
@@ -743,12 +752,8 @@ pub fn catalog_alias(e: &RosterEntry, current: &[SourceList]) -> Option<CatalogA
     if lab.is_empty() || token_lab.is_empty() {
         return None;
     }
-    let host_lab = e
-        .endpoint
-        .as_ref()
-        .map(|ep| c3_core::claude::lab_of_host(&ep.host_name))
-        .unwrap_or("");
-    if token_lab != lab && token_lab != lab_named_by(&e.plan) && token_lab != host_lab {
+    // (F39-4) the maker of the rest or the plan's vendor; the endpoint host's lab alone is not enough
+    if token_lab != lab && token_lab != lab_named_by(&e.plan) {
         return None;
     }
     let mut vendors: Vec<String> = Vec::new();
@@ -2403,6 +2408,36 @@ mod tests {
             hold(cur)[0].1.as_deref(),
             Some("list price 5 times higher - seat it by hand")
         );
+        // (F39-2) only the candidate's own vendor's seated row counts: a decoy row of another
+        // vendor with a high price does not make an expensive successor look cheap
+        let cur = vec![priced(
+            src,
+            &[
+                ("decoy/qwen3.8-max", at(30, now), Some((100.0, 100.0))),
+                ("qwen/qwen3.8-max", at(30, now), Some((0.000001, 0.000001))),
+                ("qwen/qwen4-max", at(1, now), Some((0.01, 0.01))),
+            ],
+        )];
+        let held = hold(cur);
+        assert_eq!(held.len(), 1);
+        assert!(
+            held[0]
+                .1
+                .as_deref()
+                .is_some_and(|w| w.starts_with("list price")),
+            "{held:?}"
+        );
+        // the candidate's vendor lists no priced seated id (only another vendor does): no ratio, no hold
+        let cur = vec![priced(
+            src,
+            &[
+                ("decoy/qwen3.8-max", at(30, now), Some((0.000001, 0.000001))),
+                ("qwen/qwen3.8-max", at(30, now), None),
+                ("new/qwen4-max", at(1, now), Some((0.01, 0.01))),
+            ],
+        )];
+        assert!(list_price_ratio(&cur, "qwen3.8-max", "qwen4-max").is_none());
+        assert_eq!(hold(cur), vec![("qwen4-max".to_string(), None)]);
         assert_eq!(ratio_text(2.04), "2.04");
         assert_eq!(ratio_text(2.0000001), "2.00");
         assert_eq!(ratio_text(12.345), "12.3");
@@ -2478,6 +2513,21 @@ mod tests {
         let only_succ = vec![dated(src, &[("moonshotai/k3.2-pro", Some(at(1, now)))])];
         assert_eq!(catalog_alias(&kimi, &only_succ), None);
         assert!(swap_candidates(&roster_of(vec![kimi.clone()]), &only_succ, now).is_empty());
+        // (F39-4) a token that names only the endpoint host's lab is not dropped: `kimi-qwen3.8-max`
+        // on a moonshot host is not an alias of the catalog's `qwen/qwen3.8-max`
+        let mut host_only = alibaba_endpoint_entry();
+        host_only.model = "kimi-qwen3.8-max".into();
+        host_only.plan = "alibaba".into();
+        host_only.endpoint.as_mut().unwrap().host_name = "api.moonshot.ai".into();
+        let qwen = vec![dated(
+            src,
+            &[
+                ("qwen/qwen3.8-max", Some(at(30, now))),
+                ("qwen/qwen4-max", Some(at(1, now))),
+            ],
+        )];
+        assert_eq!(catalog_alias(&host_only, &qwen), None);
+        assert!(swap_candidates(&roster_of(vec![host_only]), &qwen, now).is_empty());
         // a token that names no maker is never dropped
         let mut odd = entry("x", "claude", "acme-k3.1-pro");
         odd.position = 1;

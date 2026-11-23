@@ -609,3 +609,43 @@ swap -> xelth.com/C3 page after the tag.
   run with `scratchpad/bin/c3-review3.exe` (a build WITHOUT S1 - it cannot move a folder):
   33 with Grok + GLM-5.3, 34 with kimi-claude + Muse contributor, `--rev 70ed824 --diff
   d37a397..70ed824`.
+- 2026-11-23 ~10:50 CET: CI for 70ed824 (run 45122961752): default build GREEN on Linux and Windows;
+  the index-surreal job failed in clippy (`field collab_root is never read`, `cli/index.rs` - S1
+  removed its only reader, which the default build never compiles). Fixed by the coordinator in
+  aa71c6e (the field is gone), pushed, CI run 45126024204 watched.
+- 2026-11-23 ~10:55 CET, review of S1 `fcb610cd`: 1 of 2 usable. n=25 Grok HOLD 6 major / 2 minor,
+  rated yes; n=24 GLM-5.3 failed (z.ai 529 overloaded - the provider, not rated). Findings
+  F36-1..8, ALL ACCEPTED -> wave S2 (brief `briefs/S2-c3-folder-move-safety.md`): one mover at a
+  time and the loser re-reads the state (F36-1: today a lost race re-creates `.eck/` beside the
+  moved `.c3/`); the leftovers are relocated INSIDE `.eck/` first and the rename is the last step
+  (F36-2); no write / read / move through a link, `.c3` itself must be a real directory (F36-3);
+  a read-only command never moves the folder (F36-4); a collab path is normalised before it is
+  classified (F36-5: `sub/../.eck/collab`); the live-run guard fails closed and holds under the
+  move lock, a starting run takes the lock too (F36-6); the switch's wording (F36-7); nested
+  `.c3/` / `.eck/` out of a patch (F36-8). To launch when a worker slot frees.
+  Review of D3 launched: detach id `d5d3e391` (brief 34, kimi-claude + Muse contributor).
+- 2026-11-23 11:08 CET: CI for aa71c6e GREEN on all three jobs (run 45126024204), index-surreal
+  included - main with S1 + D3 is verified.
+- 2026-11-23 ~11:20 CET, review of D3 `d5d3e391`: 1 of 2 usable. n=27 Muse ACCEPT 2 minor / 3 note,
+  rated yes; n=26 kimi-claude failed (the Kimi plan's 5-hour limit). Findings F38-1..5. Accepted:
+  F38-2 (Teredo 2001::/32, 6to4 2002::/16 and IPv4-compatible ::/96 are missing from the
+  non-global IPv6 table) -> the last small wave. wontfix with reasons: F38-1, F38-3, F38-4, F38-5.
+  A second reader for D3: Grok alone, detach id `da22521b` (brief 34).
+- 2026-11-23 ~11:25 CET, wave S2 launched from aa71c6e (worktree `agent-a9482c1199dade578`).
+- 2026-11-23 ~11:30 CET, a peer session (`xelixir-wt-mobile-21`) asked that C3's cargo runs join
+  the compiler turn the other sessions use: the file `HOLD` in `C:/Users/Dmytro/twenty-crm-wt` is
+  taken before ONE cargo command (created only if absent, one line naming session and command,
+  removed afterwards, never somebody else's) and builds start only with >= 6 GB free RAM. Agreed.
+  Wrapper: `scratchpad/turn.sh <label> cargo ...`; the three workers (D4, D2, S2) were told to
+  run every cargo command through it, the coordinator does the same. Expect the waves to take
+  longer.
+- 2026-11-23 ~11:50 CET, Grok alone on D3 `da22521b`, usable, rated yes (n=28): HOLD 2 major /
+  3 minor / 1 note, F39-1..6. Accepted -> wave R6 (sonnet-worker, worktree
+  `agent-af517700ab95d71d9`, from aa71c6e): F39-1 (= F38-2: IPv4-compatible ::/96, 6to4 2002::/16,
+  Teredo 2001::/32 and benchmarking 2001:2::/48 into the non-global table), F39-2 (the price ratio
+  only from two rows of one vendor in one source - no cross-vendor fallback a decoy row could
+  use), F39-4 (a roster token is an alias only when it names the model's maker or the plan, not
+  the endpoint host's lab alone). wontfix with reasons: F39-3, F39-5, F39-6.
+  Store: 171 findings - 118 implemented, 13 wontfix, 1 rejected, 39 proposed (all routed to the
+  running waves D1, D2, D4, S2, R6).
+  Running: D4, D2, S2, R6 - all through the compiler turn. Waiting: D1 (after D4).

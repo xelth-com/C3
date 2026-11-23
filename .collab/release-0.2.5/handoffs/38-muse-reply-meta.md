@@ -1,0 +1,73 @@
+# Handoff 38 - Meta Muse (muse): reply-meta
+
+Date: 2026-11-23 07:55 local. Author: Meta Muse (muse) (model muse-spark-1.3-contributor, effort high), muse-cli 1.4.25-R9361.1.
+Reviewer: meta :: muse-spark-1.3-contributor [muse] (provider from roster, model from roster; engine muse (C:\Users\Dmytro\AppData\Local\Programs\muse\muse.cmd); provider fingerprint 1c6f62bb040d; harness muse-cli 1.4.25-R9361.1).
+Preflight: ok: signed in (~/.config/muse/auth.json: providers.meta, mechanism oauth).
+Effort: high sent (requested high, mapping muse-v1, by caps-v1: engine:muse, muse-spark-1.3-contributor; not confirmed by the provider). Consultation id: cd75d40b-be5b-4c55-9bcb-fc6f175daa49.
+Invocation: `codex-consult.ps1` (mode: new, sandbox: read-only, purpose: diff-review). Argv: `muse exec --json --prompt-file C:\Users\Dmytro\AppData\Local\Temp\codex-consult-prompt-57f48fbbba3c4b22ac70b283a9a91cae.txt --output-schema C:\Users\Dmytro\.codex\c3\schemas\consult-reply.v1.json --model muse-spark-1.3-contributor --reasoning-effort high --no-foreign-personal-context --disable-web-tools --disable-write --disable-shell --approval-mode never` (prompt from a file: --prompt-file).
+Isolation: the reviewer ran in a throwaway git worktree `C:\Users\Dmytro\AppData\Local\Temp\c3-kimi-wt-913360168d7e41d1a2036cb4b6a34416` of revision 70ed824ce51003bda28aa317a53b4860aab23db4 (--rev 70ed824ce51003bda28aa317a53b4860aab23db4; removed after the run).
+Parent thread: (none - new thread). Result thread: `01a20729-63c9-7aa1-bbb2-7640e48e25db` (source: events).
+Brief: `.collab/release-0.2.5/handoffs/34-claude-diff-review-maintain-debt.md` (sha256 c8c00a112dd0). Reviewed: 70ed824, base 70ed824ce51003bda28aa317a53b4860aab23db4, tree sha256 5800ef3c913e, 0 changed files. Live HEAD at launch: aa71c6e4cffdf5be74d317a33a4a45cf475899e8.
+Bridge outcome: usable reply. Wall time: 365.7 s. Tokens: not reported by muse.
+Engine turns: 1 (each one a Muse Code subscription prompt); MSP schema_version 1.
+Warnings: muse: warning: rules file at \\?\C:\Users\Dmytro\AppData\Local\Temp\c3-kimi-wt-913360168d7e41d1a2036cb4b6a34416\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules; muse: warning: project MCP servers from .mcp.json, if any, are not loaded because the workspace is untrusted; restart with --trust-workspace to load them.
+Timeout: 2400 s (the default of purpose diff-review); continuation after a timeout kill: up to 900 s.
+Verdict: ACCEPT - No defect found that could damage a machine, repository, roster or consultation record, leak private data, or report a false result; the five findings are CI-signal, availability-nit and edge-hardening level with fail-closed behavior throughout. Findings: 0 blocker, 0 major, 2 minor, 3 note (F38-1..F38-5, tracked in `findings.json`). Structured reply: `handoffs/38-muse-reply-meta.reply.json`.
+Raw event stream: `handoffs/38-muse-reply-meta.events.jsonl`.
+Verbatim reply follows.
+
+---
+
+Q1. No passing path found for the listed forms: the table covers 0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12, 192.0.0.0/24, docs ×3, 192.88.99/24, 192.168/16, 198.18/15, 224/4, 240/4 + broadcast, and IPv6 ::, ::1, 64:ff9b:1::/48, 100::/64, 2001:db8::/32, fc00::/7, fe80::/10, fec0::/10, ff00::/8 (`env.rs:325-357`); mapped/NAT64-/96 are unwrapped to their IPv4 (`env.rs:375-386`); lookup refuses on ANY bad address and the peer of every hop is checked (`env.rs:309-321,483-485`); the pinned resolver removes lookup→connect TOCTOU (`env.rs:215-222`). Residual: Teredo 2001::/32, 6to4 2002::/16 and compat ::/96 are neither listed nor unwrapped (finding #2, note).
+
+Q2. No other client: engine/endpoint lists, catalogs, pages and installer/marker fetches all go through `Env::http_get` → `hop_agent` with `try_proxy_from_env(false)` (`env.rs:204-222`); key-carrying endpoint lists additionally use `Redirects::Never`. `run`/`run_clean` children intentionally keep proxy (installer needs it). Deadline: lookup-then-leftover-connect is correctly sequenced (`env.rs:242-268`); no retries; body bounded by hop timeout plus per-chunk deadline checks. Only the documented leaked lookup thread can outlive the deadline.
+
+Q3. Fingerprint (`smoke.rs:76-93`): covers every value of the entry via canonical JSON, so no in-entry edit is invisible; out-of-entry edits are irrelevant (one-entry bound roster). Benign concurrent edits cause refusal → rollback of good updates (finding #3); empty-path rosters never smoke (finding #4). Per-turn proof (`smoke.rs:840-867`): evidence bound between each turn's own boundaries, unpaired boundaries and missing terminals are unproven, breach (shown surface) fails — no passing-without-evidence shape found in the check. Legitimate-but-refused: any concurrent entry touch, including inert fields.
+
+Q4. Pairing is per-source and per-field with same-vendor seated entry (`models.rs:432-453`); zero/`-1`/missing become no-price (verified in `web.rs:371-386`), so an explicit `-1` bypasses the hold (finding #5, note). Lab token (`models.rs:730-773`, `plan.rs:115-132`): requires token≠rest labs to match maker/plan/host lab AND a same-maker catalog slug; mismatch shapes I constructed fail closed to 'no match' (smoke then decides). Spelling: alias view rekeys ids+dates+prices consistently (`models.rs:780-808`), invalid respellings fall back to catalog spelling (safe: no successor). Known `openai::gpt-6.2-sol` successor seating is brief-admitted, not re-reported.
+
+Q5. No: dash form requires `anthropic/` slug + trusted source + differing id + `is_published_claude_shape` (family + 1–2 numeric groups; `claude.rs:180-182`). `claude-3.5-sonnet`, 3-group versions, unknown families yield nothing. Endpoint/engine lists never publish. Only an operator-declared `public:true` source can publish new names — the documented trust model.
+
+Q6. No: the hook is read only inside the `mode_on()` branch (`mod.rs:465-468`); production reads the process table. Exact, case-insensitive engine-name match — cannot spill to other engines.
+
+Q7. Failures do not hide later steps (`success() || failure()` runs them; job still fails). But a *cancelled* (hung/timed-out) step skips the rest (finding #1, minor) — defeating the split's purpose. Otherwise identical coverage (3 workspace members; `c3/index-surreal` exists).
+
+Q8. Untested: any live pass (admitted); price/lab rules vs real catalog data (fixtures only); real-DNS/redirect peer behavior; Windows process-table in-use; the CI-cancel path; Teredo/6to4/compat; `-1`/zero-price entries; `quota.rs` turn-splitting internals (unread).
+
+## Requested checks
+RC1 (read-only): read `rollout_subagent_surface` turn-splitting in `crates/c3-core/src/quota.rs` — settle whether evidence can be double-counted across turns or unknown tool names evade `breach()` (touches finding: per-turn proof; unproven item 1).
+RC2 (read-only): read the kimi installer/marker fetch call path — confirm it uses `env.http_get` (same proxy/deadline guarantees) and not a separate client (touches Q2).
+RC3 (workspace-write): push a branch cancelling a test step mid-run — confirm later crate steps skip, then apply `if: always()` (touches finding #1). Budget: one CI run.
+RC4 (read-only): feed `parse_catalog`/`price_hold` a fixture with `pricing:{prompt:"-1"}` on the candidate — confirm hold is bypassed (touches finding #5).
+
+---
+
+### Findings
+
+- **F38-1** [minor] `.github/workflows/ci.yml:66`, `.github/workflows/ci.yml:108` - CI split does not survive cancellation: with `if: success() || failure()` a cancelled (timed-out/hung) crate step skips the remaining crate steps, so the exact hung-run scenario the split was built to diagnose still yields only the running step's log. Trigger: A test step is cancelled (45/30 min timeout, manual cancel, hung runner) instead of failing. Evidence: read-code: Check job uses one step per crate (c3-core, c3, c3-cli), each `if: success() || failure()`; same pattern in the index-surreal job. In GitHub Actions a cancelled step makes `failure()` false for later steps, so they are skipped; `always()` (or `!cancelled()`) would be needed. Workspace members are exactly these three crates (Cargo.toml), so coverage is otherwise unchanged and the c3 index-surreal feature exists (crates/c3/Cargo.toml), i.e. failures still run all steps — only cancel skips. Verify: Cancel a run mid-test-step and confirm the later crate steps still execute and report. Remedy: Use `if: always()` on the per-crate test steps (job outcome still reflects the failure/cancel).
+- **F38-2** [note] `crates/c3/src/maintain/env.rs:347` - Address table misses three IPv4-embedding IPv6 forms: Teredo 2001::/32, 6to4 2002::/16, and deprecated IPv4-compatible ::/96 (plus ISATAP). `to_ipv4_mapped` unwraps only ::ffff:0:0/96 and the code unwraps only the NAT64 /96 prefix; the other forms pass `is_public_address` as global even when the embedded IPv4 is private/loopback. Trigger: A name lookup or redirect hop answering a Teredo/6to4/compat address whose embedded IPv4 is non-global. Evidence: read-code: NON_GLOBAL_V6 lists unspecified, loopback, 64:ff9b:1::/48, 100::/64, 2001:db8::/32, fc00::/7, fe80::/10, fec0::/10, ff00::/8 — no 2001::/32, no 2002::/16, no ::/96 compat range. is_public_address unwraps mapped and 64:ff9b::/96 only. Lookup-side (any-bad refuses) and peer-side checks plus the pinned-resolver are otherwise complete. Verify: Unit-test is_public_address against 2001:0:<priv>:… , 2002:0a00:1:: and ::10.0.0.1; confirm currently returned as public. Remedy: Add 2001::/32 and 2002::/16 to the table (or unwrap their embedded IPv4 like NAT64) and refuse ::/96 compat addresses; add one row per range to the address tests.
+- **F38-3** [minor] `crates/c3/src/maintain/smoke.rs:423`, `crates/c3/src/maintain/mod.rs:1592` - The whole-entry fingerprint makes benign concurrent edits fatal to a good update: any added annotation key, inert ext field, or semantically-null JSON respelling between the gate snapshot and the smoke changes the SHA-256, so the smoke reports 'not run' and a passing engine update is rolled back / a swap abandoned. Trigger: Operator (or another session) edits the seated entry in any field while its pre/post smoke is in flight. Evidence: read-code: bound_roster refuses when entry_fingerprint(text) != fingerprint, where the fingerprint is SHA-256 of the canonical whole entry object; the swap flow binds fingerprint from the pre-smoke basis and smokes against it. Fail-closed by design, but the blast radius includes edits that change nothing the smoke executes. Verify: Edit an inert field of the seat between the two engine-update smokes in the e2e harness and observe rollback of a passing update. Remedy: Keep fail-closed, but document that any roster edit during a pass holds that entry's update; optionally scope the fingerprint to executed fields (endpoint, auth, plan, key var, model, protection flags).
+- **F38-4** [note] `crates/c3/src/maintain/smoke.rs:128` - A roster with no file path can never be smoked: fingerprint_now returns '' and bound_roster refuses an empty fingerprint unconditionally, so every engine update for such a roster is held on every pass with only a per-smoke line, instead of one loud refusal. Trigger: Maintain runs against a roster with empty `path` (tests, embedded use). Evidence: read-code: fingerprint_now returns String::new when roster.path is empty; bound_roster errors when fingerprint.is_empty(). pick_target still returns a seat, so the pass proceeds to a smoke that cannot run. Verify: Call pick_target on a file-less roster and run_smoke; confirm perpetual 'not run' Fail rather than a single clear refusal. Remedy: Return None from pick_target (or abort the engine step loudly) when the fingerprint is empty for a file-backed expectation.
+- **F38-5** [note] `crates/c3/src/maintain/web.rs:371`, `crates/c3/src/maintain/models.rs:460` - An explicit 'no fixed price' marker bypasses the cross-major price hold: list_price keeps only positive finite numbers, so OpenRouter's "-1" (router, no fixed price) and "0" become 'no price', and price_hold returns None — the swap proceeds with no announcement, in the direction (unknown cost) the hold exists to catch. Trigger: Catalog prices the seated id but marks the higher-major candidate '-1' (or vice versa). Evidence: read-code: list_price drops '-1'/'0'/non-numeric (positive-finite filter); price_hold fires only when a source prices BOTH ids and the ratio exceeds 2. Documented intent covers 'without prices for both ids', but '-1' is affirmative unknown-price, not missing data. Verify: Feed parse_catalog a candidate with pricing {prompt:'-1'} and confirm price_hold is None and the swap proceeds. Remedy: Treat an explicit '-1' on either side as unknown-price and hold/announce the cross-major swap (keep '0'/free seating).
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ACCEPT
+
+No defect found that could damage a machine, repository, roster or consultation record, leak private data, or report a false result; the five findings are CI-signal, availability-nit and edge-hardening level with fail-closed behavior throughout.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- How quota.rs splits a rollout into per-turn evidence units (unread): whether two turns sharing one turn_context could share evidence, and whether unrecognized future multi-agent tool names count as evidence, breach, or neither.
+- The kimi installer/marker download call path (unread): assumed to use Env::http_get like every other maintain fetch, hence the same proxy refusal and deadline — not verified.
+- Live behavior of everything (admitted in brief): real catalog prices, real lab-token spellings, real DNS/redirect peer checks, Windows in-use probe against a live process table.
+
+### First-run checklist (observable)
+
+_(none)_
