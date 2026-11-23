@@ -88,6 +88,93 @@ fn mcp_consult_refuses_hostile_rev_and_diff_before_anything_starts() {
     let _ = std::fs::remove_dir_all(&work);
 }
 
+fn git(repo: &std::path::Path, args: &[&str]) -> String {
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("git on PATH");
+    assert!(o.status.success(), "git {args:?} failed");
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+/// (0.2.5) `c3_finish_task` takes `allow_secret` with the CLI's meaning: a staged file with a
+/// secret-shaped value refuses the commit (the file and the kind named, nothing committed); the same
+/// call naming that file in `allow_secret` commits it.
+#[test]
+fn mcp_finish_task_lets_an_allowed_secret_file_through() {
+    let work = std::env::temp_dir().join(format!(
+        "c3-mcp-allow-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&work).unwrap();
+    git(&work, &["init", "-q"]);
+    git(&work, &["config", "user.email", "t@example.com"]);
+    git(&work, &["config", "user.name", "Test"]);
+    git(&work, &["config", "commit.gpgsign", "false"]);
+    std::fs::write(work.join(".gitignore"), ".c3/\n").unwrap();
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "-qm", "init"]);
+    std::fs::write(work.join("cfg.txt"), "password = \"hunter2hunter2\"\n").unwrap();
+    let home = work.join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut child = Command::new(c3_bin())
+        .arg("mcp")
+        .current_dir(&work)
+        .env_remove("C3_CHILD")
+        .env("CODEX_HOME", &home)
+        .env("C3_CONFIG", "none")
+        .env("C3_CI_CHECK", "off")
+        .env("C3_BRANCH_CHECK", "off")
+        .env("CODEX_CONSULT_TELEMETRY", "off")
+        .env("C3_PRIORS", "off")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn c3 mcp");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut call = |id: i64, arguments: Value| -> Value {
+        let msg = json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": "c3_finish_task", "arguments": arguments } });
+        stdin.write_all(msg.to_string().as_bytes()).unwrap();
+        stdin.write_all(b"\n").unwrap();
+        stdin.flush().unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        serde_json::from_str(line.trim()).unwrap_or_else(|e| panic!("bad frame {line:?}: {e}"))
+    };
+    let r = call(
+        1,
+        json!({ "status": "done", "message": "chore: allowed secret" }),
+    );
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let text = r["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(text.contains("cfg.txt: assignment"), "{text}");
+    assert!(!text.contains("hunter2"), "the value was printed: {text}");
+    assert_eq!(git(&work, &["log", "-1", "--pretty=%s"]), "init");
+    let r = call(
+        2,
+        json!({ "status": "done", "message": "chore: allowed secret",
+            "allow_secret": ["cfg.txt"] }),
+    );
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    assert_eq!(
+        git(&work, &["log", "-1", "--pretty=%s"]),
+        "chore: allowed secret"
+    );
+    assert_eq!(git(&work, &["ls-files", "cfg.txt"]), "cfg.txt");
+    drop(stdin);
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&work);
+}
+
 #[test]
 fn mcp_stdio_session() {
     let bin = c3_bin();

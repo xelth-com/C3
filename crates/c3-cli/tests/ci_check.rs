@@ -1,7 +1,8 @@
 //! End-to-end tests of the red-CI check (0.2.5): `c3 finish` and the SessionStart hook name a failed
 //! latest completed run of the default branch, read through the GitHub CLI. A fake `gh` (a `gh.cmd`
 //! on Windows, a `gh` shell script elsewhere) stands first on PATH: it appends its arguments to
-//! `GH_FAKE_LOG`, then prints the file `GH_FAKE_JSON` (or exits with `GH_FAKE_EXIT`, or sleeps for
+//! `GH_FAKE_LOG`, answers `gh repo view` with the file `GH_FAKE_REPO_JSON` (exit 1 without one),
+//! and prints the file `GH_FAKE_JSON` for anything else (or exits with `GH_FAKE_EXIT`, or sleeps for
 //! `GH_FAKE_SLEEP` seconds first). Nothing reaches GitHub or any other network host.
 //!
 //! Each test builds a throwaway repository in a temp dir and sets its identity LOCALLY - never
@@ -44,8 +45,26 @@ fn scratch_dir(name: &str) -> PathBuf {
     d
 }
 
-/// A repository on `main` with a LOCAL identity, one commit and (when `github`) a GitHub remote.
+/// A repository on `main` with a LOCAL identity, one commit and (when `github`) a GitHub remote
+/// whose `origin/HEAD` names `main`, as a clone's does.
 fn scratch_repo(name: &str, github: bool) -> PathBuf {
+    let d = scratch_repo_bare_remote(name, github);
+    if github {
+        git(&d, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(
+            &d,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+    }
+    d
+}
+
+/// [`scratch_repo`] without `origin/HEAD` (a repository that was not cloned).
+fn scratch_repo_bare_remote(name: &str, github: bool) -> PathBuf {
     let d = scratch_dir(name);
     git(&d, &["init", "-q", "-b", "main"]);
     git(&d, &["config", "user.email", "t@example.com"]);
@@ -88,7 +107,7 @@ impl Env {
         #[cfg(windows)]
         std::fs::write(
             bin.join("gh.cmd"),
-            "@echo off\r\n>>\"%GH_FAKE_LOG%\" echo %*\r\nif defined GH_FAKE_SLEEP ping -n %GH_FAKE_SLEEP% 127.0.0.1 >nul\r\nif defined GH_FAKE_EXIT exit /b %GH_FAKE_EXIT%\r\ntype \"%GH_FAKE_JSON%\"\r\n",
+            "@echo off\r\n>>\"%GH_FAKE_LOG%\" echo %*\r\nif not \"%1\"==\"repo\" goto runs\r\nif not defined GH_FAKE_REPO_JSON exit /b 1\r\ntype \"%GH_FAKE_REPO_JSON%\"\r\nexit /b 0\r\n:runs\r\nif defined GH_FAKE_SLEEP ping -n %GH_FAKE_SLEEP% 127.0.0.1 >nul\r\nif defined GH_FAKE_EXIT exit /b %GH_FAKE_EXIT%\r\ntype \"%GH_FAKE_JSON%\"\r\n",
         )
         .unwrap();
         #[cfg(not(windows))]
@@ -97,7 +116,7 @@ impl Env {
             let p = bin.join("gh");
             std::fs::write(
                 &p,
-                "#!/bin/sh\necho \"$@\" >> \"$GH_FAKE_LOG\"\n[ -n \"$GH_FAKE_SLEEP\" ] && sleep \"$GH_FAKE_SLEEP\"\n[ -n \"$GH_FAKE_EXIT\" ] && exit \"$GH_FAKE_EXIT\"\ncat \"$GH_FAKE_JSON\"\n",
+                "#!/bin/sh\necho \"$@\" >> \"$GH_FAKE_LOG\"\nif [ \"$1\" = repo ]; then\n  [ -n \"$GH_FAKE_REPO_JSON\" ] || exit 1\n  cat \"$GH_FAKE_REPO_JSON\"\n  exit 0\nfi\n[ -n \"$GH_FAKE_SLEEP\" ] && sleep \"$GH_FAKE_SLEEP\"\n[ -n \"$GH_FAKE_EXIT\" ] && exit \"$GH_FAKE_EXIT\"\ncat \"$GH_FAKE_JSON\"\n",
             )
             .unwrap();
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -151,6 +170,7 @@ impl Env {
             .env("C3_BRANCH_CHECK", "off")
             .env("GH_FAKE_LOG", &self.log)
             .env("GH_FAKE_JSON", &self.json)
+            .env_remove("GH_FAKE_REPO_JSON")
             .env_remove("GH_FAKE_EXIT")
             .env_remove("GH_FAKE_SLEEP");
         for (k, v) in extra {
@@ -463,6 +483,115 @@ fn the_check_asks_about_the_remotes_default_branch_without_a_local_one() {
         "{out}"
     );
     let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (F31-2) A repository that was not cloned - no `origin/HEAD`, no `c3.defaultBranch` - with a local
+// `main`: the check asks GitHub for the default branch (`gh repo view`) once, asks about THAT branch
+// and remembers the answer for the day; when gh cannot say, it stays silent and never asks about
+// the local `main`.
+#[test]
+fn without_origin_head_the_check_asks_github_for_the_default_branch() {
+    let e = Env::new("finish-ghdefault");
+    let repo = scratch_repo_bare_remote("finish-ghdefault", true);
+    e.reply(RED);
+    let repo_json = e.root.join("repo.json");
+    std::fs::write(&repo_json, r#"{"defaultBranchRef":{"name":"develop"}}"#).unwrap();
+    let repo_json_s = repo_json.to_string_lossy().to_string();
+    let with_repo = [("GH_FAKE_REPO_JSON", repo_json_s.as_str())];
+    let (code, out, err) = finish(&e, &repo, &with_repo, false);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let log = std::fs::read_to_string(&e.log)
+        .unwrap_or_default()
+        .replace('"', "");
+    assert!(
+        log.lines()
+            .any(|l| l.trim() == "repo view --json defaultBranchRef"),
+        "{log}"
+    );
+    assert!(log.contains(&asked("develop")), "{log}");
+    assert!(
+        !log.contains(&asked("main")),
+        "the local main was asked: {log}"
+    );
+    assert!(
+        out.lines()
+            .any(|l| l
+                == "CI: the latest completed run on develop failed (run 4242) - gh run view 4242"),
+        "{out}"
+    );
+    // remembered for the day: the second finish does not ask again
+    let (code, _out, _err) = finish(&e, &repo, &with_repo, false);
+    assert_eq!(code, 0);
+    let log = std::fs::read_to_string(&e.log).unwrap_or_default();
+    assert_eq!(
+        log.lines().filter(|l| l.contains("repo view")).count(),
+        1,
+        "{log}"
+    );
+
+    // gh cannot say (a fresh state): silent, and the local main is never asked about
+    let e2 = Env::new("finish-ghdefault-fail");
+    e2.reply(RED);
+    let (code, out, err) = finish(&e2, &repo, &[], false);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(!out.contains("CI:"), "{out}");
+    let log = std::fs::read_to_string(&e2.log).unwrap_or_default();
+    assert!(
+        !log.contains("run list"),
+        "gh was asked about a branch: {log}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (F31-3 / F30-3) Two sessions that start together in one repository ask once: one takes the day's
+// gate exclusively, the other prints nothing.
+#[test]
+fn two_hooks_starting_together_in_one_repository_ask_once() {
+    let e = Env::new("hook-race");
+    let repo = scratch_repo("hook-race", true);
+    e.reply(RED);
+    let outs: Vec<String> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..2)
+            .map(|_| s.spawn(|| e.run(&repo, &["hook"], &[]).1))
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let red = outs
+        .iter()
+        .map(|o| o.lines().filter(|l| *l == RED_LINE).count())
+        .sum::<usize>();
+    assert_eq!(red, 1, "the red line once in all: {outs:?}");
+    assert_eq!(e.calls(), 1, "gh ran more than once");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (F31-4 / F30-5) GitHub's own other host names are GitHub remotes: `ssh.github.com` (the port-443
+// SSH host) and `www.github.com`.
+#[test]
+fn githubs_own_host_names_are_github_remotes() {
+    for url in [
+        "ssh://git@ssh.github.com:443/example/c3-ci-test.git",
+        "https://www.github.com/example/c3-ci-test.git",
+    ] {
+        let e = Env::new("finish-hosts");
+        let repo = scratch_repo("finish-hosts", false);
+        git(&repo, &["remote", "add", "origin", url]);
+        git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(
+            &repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
+        e.reply(RED);
+        let (code, out, err) = finish(&e, &repo, &[], false);
+        assert_eq!(code, 0, "{out}\n{err}");
+        assert!(out.lines().any(|l| l == RED_LINE), "{url}: {out}");
+        assert_eq!(e.calls(), 1, "{url}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
 }
 
 // (R4, F17-8) A remote whose PATH holds `github.com/` but whose host is another is no GitHub remote:

@@ -270,6 +270,29 @@ mod tests {
         assert_eq!(scan_staged_text(b"fn main() { println!(\"hi\"); }\n"), None);
     }
 
+    // (0.2.5) The test-fixture line that refused three commits on 2026-11-22/23 (`auth` followed
+    // by a plain word), in a file and inside a saved patch, passes the gate; a key-shaped value
+    // under the same keyword is still refused.
+    #[test]
+    fn a_plain_word_under_auth_passes_the_gate() {
+        assert_eq!(
+            scan_staged_text(b"        m.entry.auth = \"endpoint\".into();\n"),
+            None
+        );
+        let patch = "diff --git a/p.rs b/p.rs\n\
+--- a/p.rs\n\
++++ b/p.rs\n\
+@@ -1 +1,2 @@\n\
++        m.entry.auth = \"endpoint\".into();\n\
++        m.entry.auth = \"subscription\".into();\n";
+        assert_eq!(scan_staged_text(patch.as_bytes()), None);
+        assert_eq!(scan_staged_text(added_from_diff(patch).as_bytes()), None);
+        assert_eq!(
+            scan_staged_text(b"m.entry.auth = \"Xk9fLq2mZp7RtW3vBn8Y\".into();\n").as_deref(),
+            Some("assignment")
+        );
+    }
+
     #[test]
     fn nul_bearing_blob_is_still_scanned() {
         // A secret-shaped token with a NUL byte is no longer skipped (Muse, review-2026-10-30):

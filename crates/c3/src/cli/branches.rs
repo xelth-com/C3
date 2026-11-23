@@ -1,8 +1,10 @@
 //! `c3 branches` — every local branch and worktree with its recorded state, and the start folder.
 //! The scan and the record format live in [`crate::setup::branches`]. The listing is a report and
-//! always exits 0; `--set` / `--clear` / `--default` write one config value and exit 1 on a
-//! refusal (all three always refuse inside a child C3 started, `C3_CHILD`). Nothing is
-//! ever deleted or merged.
+//! always exits 0; `--set` / `--clear` / `--default` write one config value, `--record-unknown`
+//! one per unknown branch, and exit 1 on a refusal (all of them always refuse inside a child C3
+//! started, `C3_CHILD`). (0.2.5) `--close <branch>` removes a MERGED branch and its clean worktree
+//! with git's own non-forcing commands (`git worktree remove`, `git branch -d`) and refuses
+//! everything else. Nothing is ever merged, and nothing is ever forced.
 
 use std::path::{Path, PathBuf};
 
@@ -24,14 +26,18 @@ pub struct BranchesArgs {
     /// Record the state of this branch (with --state and --note).
     #[arg(long, value_name = "BRANCH", conflicts_with = "clear")]
     pub set: Option<String>,
-    /// The state to record: work, waits or parked.
-    #[arg(long, requires = "set", value_parser = ["work", "waits", "parked"])]
+    /// Record --state (and --note) on every branch without a recorded state that is not merged
+    /// (one line per branch; nothing else changes).
+    #[arg(long, conflicts_with_all = ["set", "clear", "default_branch", "close"])]
+    pub record_unknown: bool,
+    /// The state to record (with --set or --record-unknown): work, waits or parked.
+    #[arg(long, value_parser = ["work", "waits", "parked"])]
     pub state: Option<String>,
     /// `waits`: the question put to the operator; `parked`: the condition for merging it.
-    #[arg(long, requires = "set", allow_hyphen_values = true)]
+    #[arg(long, allow_hyphen_values = true)]
     pub note: Option<String>,
     /// The owning session or person (default: CODEX_CONSULT_COORDINATOR, else empty).
-    #[arg(long, requires = "set", allow_hyphen_values = true)]
+    #[arg(long, allow_hyphen_values = true)]
     pub owner: Option<String>,
     /// Remove C3's recorded state from this branch (a foreign description is never touched).
     #[arg(long, value_name = "BRANCH")]
@@ -40,6 +46,10 @@ pub struct BranchesArgs {
     /// it wins over origin/HEAD, init.defaultBranch, main and master).
     #[arg(long = "default", value_name = "BRANCH", conflicts_with_all = ["set", "clear"])]
     pub default_branch: Option<String>,
+    /// Close a merged branch: remove its clean worktree (`git worktree remove`, never forced) and
+    /// the branch (`git branch -d`); anything that is not safe is refused with the reason.
+    #[arg(long, value_name = "BRANCH", conflicts_with_all = ["set", "clear", "default_branch"])]
+    pub close: Option<String>,
 }
 
 /// Run `c3 branches`. Returns the process exit code.
@@ -47,6 +57,19 @@ pub fn run(args: BranchesArgs) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
 
+    let record_args = args.state.is_some() || args.note.is_some() || args.owner.is_some();
+    if record_args && args.set.is_none() && !args.record_unknown {
+        eprintln!(
+            "c3 branches: --state, --note and --owner go with --set <branch> or --record-unknown"
+        );
+        return 1;
+    }
+    if args.record_unknown {
+        return run_record_unknown(&repo_root, &args);
+    }
+    if let Some(branch) = &args.close {
+        return run_close(&repo_root, branch, args.json);
+    }
     if let Some(branch) = &args.set {
         return run_set(&repo_root, branch, &args);
     }
@@ -101,6 +124,80 @@ fn run_set(repo_root: &Path, branch: &str, args: &BranchesArgs) -> i32 {
         }
         Err(e) => {
             eprintln!("c3 branches: {e}");
+            1
+        }
+    }
+}
+
+/// `--record-unknown`: one line per unknown branch (`--json`: one object); exit 1 when the run was
+/// refused or any branch could not be recorded.
+fn run_record_unknown(repo_root: &Path, args: &BranchesArgs) -> i32 {
+    let Some(state) = args.state.as_deref().and_then(BranchState::parse) else {
+        eprintln!("c3 branches: --record-unknown needs --state work|waits|parked");
+        return 1;
+    };
+    let note = args.note.clone().unwrap_or_default();
+    let owner = args.owner.clone().unwrap_or_else(branches::default_owner);
+    let done = match branches::record_unknown(repo_root, state, &note, &owner, &branches::today()) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("c3 branches: {e}");
+            return 1;
+        }
+    };
+    let failed = done.iter().filter(|d| d.result.is_err()).count();
+    if args.json {
+        let items: Vec<Value> = done
+            .iter()
+            .map(|d| match &d.result {
+                Ok(line) => json!({ "branch": d.branch, "set": line }),
+                Err(e) => json!({ "branch": d.branch, "error": e }),
+            })
+            .collect();
+        println!("{}", json!({ "recorded": items }));
+    } else {
+        if done.is_empty() {
+            println!("c3 branches: no branch without a recorded state - nothing to record");
+        }
+        for d in &done {
+            match &d.result {
+                Ok(line) => println!("c3 branches: {}: {line}", d.branch),
+                Err(e) => eprintln!("c3 branches: {}: {e}", d.branch),
+            }
+        }
+    }
+    i32::from(failed > 0)
+}
+
+/// `--close <branch>`: what was removed, or why nothing was (exit 1).
+fn run_close(repo_root: &Path, branch: &str, json_out: bool) -> i32 {
+    match branches::close_branch(repo_root, branch) {
+        Ok(c) => {
+            if json_out {
+                println!(
+                    "{}",
+                    json!({ "branch": branch, "closed": true, "merged": c.merged, "worktree_removed": c.worktree })
+                );
+            } else {
+                if let Some(w) = &c.worktree {
+                    println!("c3 branches: {branch}: worktree {w} removed (git worktree remove)");
+                }
+                println!(
+                    "c3 branches: {branch}: deleted (git branch -d; {})",
+                    c.merged
+                );
+            }
+            0
+        }
+        Err(e) => {
+            if json_out {
+                println!(
+                    "{}",
+                    json!({ "branch": branch, "closed": false, "error": e })
+                );
+            } else {
+                eprintln!("c3 branches: {e}");
+            }
             1
         }
     }
@@ -342,6 +439,6 @@ fn print_report(r: &BranchReport) {
     }
     println!("{summary}");
     if unknown > 0 || unrec > 0 {
-        println!("record a state: {SET_HINT}; or integrate (merge, not cherry-pick) and delete it");
+        println!("record a state: {SET_HINT} (every unknown branch at once: --record-unknown); or integrate (merge, not cherry-pick) and close it: c3 branches --close <branch>");
     }
 }

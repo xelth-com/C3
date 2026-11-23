@@ -73,6 +73,71 @@ pub struct DoctorReport {
     /// The rules files that still name `.eck/`: an old template sentence (`--fix` replaces it) or
     /// text the user wrote (reported only) - [`crate::setup::rules::scan_state_sentences`].
     pub state_sentences: Vec<crate::setup::rules::StateSentenceFinding>,
+    /// (0.2.5) The installed git (`2.45.1`), empty when `git --version` did not answer.
+    pub git_version: String,
+    /// (0.2.5) Why the installed git does not do ([`git_version_problem`]); `None` when it does.
+    pub git_problem: Option<String>,
+}
+
+/// (0.2.5) The oldest git C3 works with: since wave R5 revisions reach git after
+/// `--end-of-options`, which git 2.30 introduced.
+pub const MIN_GIT: (u32, u32) = (2, 30);
+
+/// The version in `git --version` output (`git version 2.45.1.windows.1`, `git version 2.39.3
+/// (Apple Git-145)`): major, minor, patch (a missing patch reads 0).
+pub fn parse_git_version(out: &str) -> Option<(u32, u32, u32)> {
+    let v = out.trim().strip_prefix("git version ")?;
+    let mut parts = v
+        .split(|c: char| !c.is_ascii_digit())
+        .take_while(|p| !p.is_empty());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+/// The installed git's version text (`git --version`, the part after `git version `), `Err` (why)
+/// when git does not answer or the answer does not parse. TEST HOOK (test mode only):
+/// `CODEX_CONSULT_TEST_GIT_VERSION=<version>` stands in for the answer.
+pub fn installed_git_version() -> Result<(String, (u32, u32, u32)), String> {
+    let out = match c3_core::test_hooks::hook("CODEX_CONSULT_TEST_GIT_VERSION") {
+        Some(v) => format!("git version {}", v.trim()),
+        None => {
+            let o = std::process::Command::new("git")
+                .arg("--version")
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|e| format!("git could not be started ({e})"))?;
+            if !o.status.success() {
+                return Err("git --version failed".to_string());
+            }
+            String::from_utf8_lossy(&o.stdout).into_owned()
+        }
+    };
+    let parsed = parse_git_version(&out)
+        .ok_or_else(|| format!("git --version answered '{}'", out.trim()))?;
+    let text = out
+        .trim()
+        .strip_prefix("git version ")
+        .unwrap_or(out.trim())
+        .to_string();
+    Ok((text, parsed))
+}
+
+/// (0.2.5) One line when the installed git does not do: older than [`MIN_GIT`] (naming the installed
+/// and the required version), or no answer at all; `None` when it does.
+pub fn git_version_problem() -> Option<String> {
+    match installed_git_version() {
+        Ok((_, v)) if (v.0, v.1) >= MIN_GIT => None,
+        Ok((text, _)) => Some(format!(
+            "git {text} is installed; C3 needs git {}.{} or later (revisions reach git after --end-of-options)",
+            MIN_GIT.0, MIN_GIT.1
+        )),
+        Err(e) => Some(format!(
+            "{e}; C3 needs git {}.{} or later",
+            MIN_GIT.0, MIN_GIT.1
+        )),
+    }
 }
 
 impl DoctorReport {
@@ -89,6 +154,7 @@ impl DoctorReport {
             && self.pinned_agents.is_empty()
             && !self.delegation_rule.is_finding()
             && !self.state_sentences.iter().any(|s| s.is_finding())
+            && self.git_problem.is_none()
             && self
                 .branches
                 .as_ref()
@@ -324,6 +390,8 @@ pub fn scan(repo_root: &Path) -> DoctorReport {
     // `.eck/` is read until a writing command moved it).
     let mut report = DoctorReport {
         state_layout: crate::state_dir::layout(repo_root),
+        git_version: installed_git_version().map(|(t, _)| t).unwrap_or_default(),
+        git_problem: git_version_problem(),
         ..DoctorReport::default()
     };
     let state = crate::state_dir::read_path(repo_root);
@@ -493,6 +561,31 @@ mod tests {
             "[mcp_servers.eck-core]\ncommand = \"node\"\n"
         ));
         assert!(!config_mentions_eck_core("[mcp_servers.other]\n"));
+    }
+
+    // (0.2.5) The git version is read from `git --version` in every shape git prints it; 2.30 is
+    // the oldest that takes `--end-of-options`; a git problem makes the workspace dirty.
+    #[test]
+    fn the_git_version_is_parsed_and_compared_with_2_30() {
+        assert_eq!(
+            parse_git_version("git version 2.45.1.windows.1\n"),
+            Some((2, 45, 1))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.39.3 (Apple Git-145)"),
+            Some((2, 39, 3))
+        );
+        assert_eq!(parse_git_version("git version 2.30"), Some((2, 30, 0)));
+        assert_eq!(parse_git_version("git version 2.29.2"), Some((2, 29, 2)));
+        assert_eq!(parse_git_version("hello"), None);
+        assert_eq!(parse_git_version("git version x"), None);
+        assert!((2, 29) < MIN_GIT && (2, 30) >= MIN_GIT && (3, 0) >= MIN_GIT);
+        let r = DoctorReport {
+            mcp_registered: true,
+            git_problem: Some("git 2.29.2 is installed; C3 needs git 2.30 or later".into()),
+            ..DoctorReport::default()
+        };
+        assert!(!r.is_clean());
     }
 
     #[test]

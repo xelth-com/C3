@@ -308,42 +308,11 @@ pub fn check_branch_name(repo: &Path, name: &str) -> Result<(), String> {
 /// to, `init.defaultBranch`, `main`, `master`. `Err` (the reason, with how to set it) when none
 /// applies: the invoking checkout's branch is never taken for the default.
 pub fn default_branch(repo: &Path) -> Result<String, String> {
-    resolve_default_branch(repo, true)
-}
-
-/// (0.2.5 R4, F16-4 / F17-7) The default branch as the REMOTE names it, for the red-CI check (which
-/// asks GitHub about it, not about a local branch): [`default_branch`]'s order, except that the
-/// branch `origin/HEAD` points to is taken even when it has no local counterpart (a clone whose
-/// default `develop` exists only as `origin/develop` asks about `develop`, never about a local
-/// `main`). `Err` when nothing names a default.
-pub fn remote_default_branch(repo: &Path) -> Result<String, String> {
-    resolve_default_branch(repo, false)
-}
-
-/// [`default_branch`] (`origin_needs_local`: `origin/HEAD` counts only with a local branch of that
-/// name) and [`remote_default_branch`] (it counts as it is).
-fn resolve_default_branch(repo: &Path, origin_needs_local: bool) -> Result<String, String> {
-    if let Some(v) = git_out(repo, &["config", "--local", "--get", DEFAULT_BRANCH_KEY]) {
-        let v = v.trim();
-        if !v.is_empty() {
-            return if branch_exists(repo, v) {
-                Ok(v.to_string())
-            } else {
-                Err(format!(
-                    "{DEFAULT_BRANCH_KEY} names '{v}', which is not a local branch; set it with `c3 branches --default <name>`"
-                ))
-            };
-        }
+    if let Some(v) = configured_default_branch(repo)? {
+        return Ok(v);
     }
-    if let Some(s) = git_out(
-        repo,
-        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-    ) {
-        if let Some(name) = s.trim().strip_prefix("refs/remotes/origin/") {
-            if (!origin_needs_local && !name.is_empty()) || branch_exists(repo, name) {
-                return Ok(name.to_string());
-            }
-        }
+    if let Some(name) = origin_head_branch(repo).filter(|n| branch_exists(repo, n)) {
+        return Ok(name);
     }
     if let Some(v) = git_out(repo, &["config", "--get", "init.defaultBranch"]) {
         let v = v.trim();
@@ -357,6 +326,52 @@ fn resolve_default_branch(repo: &Path, origin_needs_local: bool) -> Result<Strin
         }
     }
     Err(DEFAULT_UNKNOWN.to_string())
+}
+
+/// (0.2.5 R4, F16-4 / F17-7; F31-2) The default branch as the clone knows the REMOTE's, for the
+/// red-CI check (which asks GitHub about it, not about a local branch): `c3.defaultBranch` (naming
+/// a branch that does not exist locally is an error), else the branch `origin/HEAD` points to even
+/// when it has no local counterpart (a clone whose default `develop` exists only as
+/// `origin/develop` asks about `develop`). `Ok(None)` when neither names one - `init.defaultBranch`,
+/// `main` and `master` are local guesses, never taken for the remote's default (the check then asks
+/// GitHub itself).
+pub fn remote_default_branch(repo: &Path) -> Result<Option<String>, String> {
+    if let Some(v) = configured_default_branch(repo)? {
+        return Ok(Some(v));
+    }
+    Ok(origin_head_branch(repo))
+}
+
+/// `c3.defaultBranch` from the local config: `Ok(None)` when unset, `Err` when it names a branch
+/// that does not exist locally.
+fn configured_default_branch(repo: &Path) -> Result<Option<String>, String> {
+    let Some(v) = git_out(repo, &["config", "--local", "--get", DEFAULT_BRANCH_KEY]) else {
+        return Ok(None);
+    };
+    let v = v.trim();
+    if v.is_empty() {
+        return Ok(None);
+    }
+    if branch_exists(repo, v) {
+        Ok(Some(v.to_string()))
+    } else {
+        Err(format!(
+            "{DEFAULT_BRANCH_KEY} names '{v}', which is not a local branch; set it with `c3 branches --default <name>`"
+        ))
+    }
+}
+
+/// The branch `origin/HEAD` points to (`refs/remotes/origin/<name>`), whether or not a local branch
+/// of that name exists.
+fn origin_head_branch(repo: &Path) -> Option<String> {
+    let s = git_out(
+        repo,
+        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+    )?;
+    s.trim()
+        .strip_prefix("refs/remotes/origin/")
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
 }
 
 /// `c3 branches --default <name>`: store the default branch in the local config
@@ -420,6 +435,8 @@ pub struct WorktreeEntry {
     pub branch: Option<String>,
     pub bare: bool,
     pub prunable: bool,
+    /// (0.2.5) `git worktree lock` holds it.
+    pub locked: bool,
 }
 
 /// Parse `git worktree list --porcelain`. The first entry is the primary worktree.
@@ -447,6 +464,8 @@ pub fn parse_worktrees(out: &str) -> Vec<WorktreeEntry> {
             w.bare = true;
         } else if line == "prunable" || line.starts_with("prunable ") {
             w.prunable = true;
+        } else if line == "locked" || line.starts_with("locked ") {
+            w.locked = true;
         }
     }
     if let Some(w) = cur.take() {
@@ -1474,6 +1493,274 @@ pub fn clear_state(repo: &Path, branch: &str) -> Result<ClearOutcome, String> {
         Some(r) => write_config(repo, &key, &r)?,
     }
     Ok(ClearOutcome::Cleared)
+}
+
+// ---------------------------------------------------------------------------------------------
+// --record-unknown / --close (0.2.5)
+// ---------------------------------------------------------------------------------------------
+
+/// One branch [`record_unknown`] handled: the record line written, or why not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedUnknown {
+    pub branch: String,
+    pub result: Result<String, String>,
+}
+
+/// `c3 branches --record-unknown --state <s> --note <text>`: record that state on EVERY branch the
+/// listing calls unknown - not merged by ancestry into the default branch and without a recorded
+/// state - each through [`set_state`] (a foreign description is kept below the record). Nothing
+/// else changes. Refuses inside a C3 child, and `waits` / `parked` without a note, before anything
+/// is written; `Err` too outside a git repository.
+pub fn record_unknown(
+    repo: &Path,
+    state: BranchState,
+    note: &str,
+    owner: &str,
+    date: &str,
+) -> Result<Vec<RecordedUnknown>, String> {
+    refuse_in_child()?;
+    if matches!(state, BranchState::Waits | BranchState::Parked) && note.trim().is_empty() {
+        return Err(format!(
+            "--state {} needs --note ({}); nothing written",
+            state.as_str(),
+            if state == BranchState::Waits {
+                "the question put to the operator"
+            } else {
+                "the condition for merging"
+            }
+        ));
+    }
+    let report = quick_scan(repo, false)
+        .ok_or_else(|| "not a git repository, or no local branch".to_string())?;
+    Ok(report
+        .unknown_branches()
+        .iter()
+        .map(|b| RecordedUnknown {
+            branch: b.name.clone(),
+            result: set_state(repo, &b.name, state, note, owner, date),
+        })
+        .collect())
+}
+
+/// How `--close` refuses inside a C3 child.
+const CLOSE_REFUSED_IN_CHILD: &str =
+    "refused inside a C3 child (C3_CHILD is set): a reviewer or worker C3 started does not remove branches or worktrees; nothing removed";
+
+/// What [`close_branch`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Closed {
+    /// The worktree it removed, if the branch had one.
+    pub worktree: Option<String>,
+    /// Why the branch counted as merged (`merged into main by ancestry`, ...).
+    pub merged: String,
+}
+
+/// (0.2.5) The links inside the worktree `root` that lead outside it - or nowhere (a dangling
+/// link) - as worktree-relative paths; every entry is read WITHOUT following it and no link is
+/// descended into. `Err` (why) when the root is itself a link or something cannot be read.
+pub fn links_leading_outside(root: &Path) -> Result<Vec<String>, String> {
+    let meta = std::fs::symlink_metadata(root)
+        .map_err(|e| format!("{} cannot be read ({e})", root.display()))?;
+    if crate::engines::worktree::is_link(&meta) {
+        return Err(format!("{} is itself a link", root.display()));
+    }
+    let canon_root = std::fs::canonicalize(root)
+        .map_err(|e| format!("{} cannot be resolved ({e})", root.display()))?;
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = std::fs::read_dir(&dir)
+            .map_err(|e| format!("{} cannot be listed ({e})", dir.display()))?;
+        for entry in rd {
+            let path = entry
+                .map_err(|e| format!("an entry of {} cannot be read ({e})", dir.display()))?
+                .path();
+            let m = std::fs::symlink_metadata(&path)
+                .map_err(|e| format!("{} cannot be read ({e})", path.display()))?;
+            if crate::engines::worktree::is_link(&m) {
+                let inside = std::fs::canonicalize(&path)
+                    .map(|t| t.starts_with(&canon_root))
+                    .unwrap_or(false);
+                if !inside {
+                    out.push(
+                        path.strip_prefix(root)
+                            .map(|r| r.to_string_lossy().replace('\\', "/"))
+                            .unwrap_or_else(|_| path.to_string_lossy().to_string()),
+                    );
+                }
+            } else if m.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Whether `inner` is `outer` or lies inside it (canonicalised when possible; case-folded on
+/// Windows).
+fn is_within(inner: &Path, outer: &Path) -> bool {
+    let norm = |p: &Path| -> String {
+        let c = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let mut s = c.to_string_lossy().replace('\\', "/");
+        if let Some(r) = s.strip_prefix("//?/") {
+            s = r.to_string();
+        }
+        let s = s.trim_end_matches('/').to_string();
+        if cfg!(windows) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    };
+    let (i, o) = (norm(inner), norm(outer));
+    i == o || i.starts_with(&format!("{o}/"))
+}
+
+/// `c3 branches --close <branch>`: what a session does by hand after a merge - and only then. The
+/// branch must be merged into the default branch by ancestry, or have every patch there (`git
+/// cherry`); `git branch -d` itself must accept it (merged into its upstream when it has one, else
+/// into this checkout's HEAD - checked first, so nothing is half done). Its worktree, when it has
+/// one, must not be the start folder nor the checkout C3 runs in, not locked, not gone (prunable),
+/// free of links that lead outside it ([`links_leading_outside`]) and clean (`git status
+/// --porcelain`: no change, no untracked file). Then `git worktree remove` WITHOUT `--force` and
+/// `git branch -d`. Anything else is refused with the reason; nothing is ever forced. Refused inside
+/// a C3 child.
+pub fn close_branch(repo: &Path, branch: &str) -> Result<Closed, String> {
+    if crate::engines::in_c3_child() {
+        return Err(CLOSE_REFUSED_IN_CHILD.to_string());
+    }
+    check_branch_name(repo, branch)?;
+    if !branch_exists(repo, branch) {
+        return Err(format!("no local branch named '{branch}'"));
+    }
+    let default = default_branch(repo).map_err(|e| format!("{e}; nothing removed"))?;
+    if default == branch {
+        return Err(format!(
+            "'{branch}' is the default branch; it is never closed"
+        ));
+    }
+    let head = format!("refs/heads/{branch}");
+    let base = format!("refs/heads/{default}");
+    let by_ancestry = git_ok(repo, &["merge-base", "--is-ancestor", &head, &base]);
+    let merged = if by_ancestry {
+        format!("merged into {default} by ancestry")
+    } else {
+        match git_out(repo, &["cherry", &base, &head]) {
+            Some(c) if !c.lines().any(|l| l.trim_start().starts_with('+')) => {
+                format!("its patches are on {default} (git cherry)")
+            }
+            Some(_) => {
+                return Err(format!(
+                    "'{branch}' is not merged into {default} (not by ancestry, and not every patch is there); nothing removed"
+                ))
+            }
+            None => {
+                return Err(format!(
+                    "the patch check of '{branch}' against {default} failed; nothing removed"
+                ))
+            }
+        }
+    };
+    // `git branch -d` decides by the branch's upstream (when it has one) or by this checkout's HEAD:
+    // what it would refuse is refused here, before the worktree is touched.
+    let upstream = git_out(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{branch}@{{upstream}}"),
+        ],
+    )
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty());
+    let (reference, reference_label) = match &upstream {
+        Some(sha) => (sha.clone(), "its upstream".to_string()),
+        None => ("HEAD".to_string(), format!("HEAD of {}", repo.display())),
+    };
+    if !git_ok(repo, &["merge-base", "--is-ancestor", &head, &reference]) {
+        return Err(if by_ancestry && upstream.is_none() {
+            format!(
+                "git branch -d would refuse '{branch}': it is not merged into {reference_label}; run c3 branches --close from a checkout of {default}; nothing removed"
+            )
+        } else if by_ancestry {
+            format!(
+                "git branch -d would refuse '{branch}': it is not merged into {reference_label}; nothing removed (c3 never forces)"
+            )
+        } else {
+            format!(
+                "git branch -d would refuse '{branch}': {merged}, but it is not merged into {reference_label} by ancestry, and c3 never forces - delete it by hand (git branch -D) once you have checked it; nothing removed"
+            )
+        });
+    }
+    let worktrees = git_out(repo, &["worktree", "list", "--porcelain"])
+        .map(|o| parse_worktrees(&o))
+        .ok_or_else(|| "git worktree list failed; nothing removed".to_string())?;
+    let found = worktrees
+        .iter()
+        .enumerate()
+        .find(|(_, w)| w.branch.as_deref() == Some(branch));
+    let mut removed = None;
+    if let Some((index, w)) = found {
+        let path = Path::new(&w.path);
+        let cwd = std::env::current_dir().unwrap_or_else(|_| repo.to_path_buf());
+        let why = if index == 0 {
+            Some("is the start folder".to_string())
+        } else if is_within(&cwd, path) || is_within(repo, path) {
+            Some("is the checkout c3 runs in - run it from another one".to_string())
+        } else if w.locked {
+            Some("is locked (git worktree unlock it first)".to_string())
+        } else if w.prunable {
+            Some("is gone (git calls it prunable: git worktree prune first)".to_string())
+        } else {
+            match links_leading_outside(path) {
+                Err(e) => Some(format!("cannot be checked for links ({e})")),
+                Ok(links) if !links.is_empty() => Some(format!(
+                    "holds links that lead outside it ({})",
+                    name_list(&links.iter().map(String::as_str).collect::<Vec<_>>(), 5)
+                )),
+                Ok(_) => match git_out(path, &["status", "--porcelain"]) {
+                    None => Some("cannot be read by git status".to_string()),
+                    Some(s) if !s.trim().is_empty() => {
+                        Some("has uncommitted changes or untracked files".to_string())
+                    }
+                    Some(_) => None,
+                },
+            }
+        };
+        if let Some(why) = why {
+            return Err(format!(
+                "'{branch}' has its worktree {}, which {why}; nothing removed",
+                w.path
+            ));
+        }
+        let out = git_run(repo, &["worktree", "remove", &w.path])
+            .map_err(|e| format!("git worktree remove: {e}; nothing removed"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "git worktree remove refused {}: {}; nothing removed",
+                w.path,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        removed = Some(w.path.clone());
+    }
+    let out = git_run(repo, &["branch", "-d", branch]).map_err(|e| format!("git branch: {e}"))?;
+    if !out.status.success() {
+        let done = match &removed {
+            Some(p) => format!("its worktree {p} was removed, but "),
+            None => String::new(),
+        };
+        return Err(format!(
+            "{done}git branch -d refused '{branch}': {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(Closed {
+        worktree: removed,
+        merged,
+    })
 }
 
 #[cfg(test)]

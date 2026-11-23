@@ -54,26 +54,16 @@ fi
 
 out=$("$c3_exe" hook --collab-dir "$collab_dir" --source "$source" 2>&1)
 code=$?
-# (0.2.5) forward every line of `c3 hook` that starts with `c3: `, `codex-consult: ` or `CI: ` (the
-# availability line, the coordinator-rules pointer, the compaction, update, maintenance, model,
-# branch and red-CI lines), in the order printed, each only once, at most 10 lines, each cut to 400
-# characters (`...` appended when cut). c3-hook.ps1 does the same and prints the same text for ASCII
-# lines; a longer non-ASCII line may be cut at a different point (awk counts bytes under mawk, the
-# .ps1 counts UTF-16 code units and never splits a surrogate pair).
+# (0.2.5) forward, as they are, the lines of `c3 hook` that start with `c3: `, `codex-consult: ` or
+# `CI: `, in the order printed, each only once, at most 10. `c3 hook` caps its own lines (400
+# characters), so c3-hook.ps1 prints the same text.
 forwarded=$(printf '%s\n' "$out" | tr -d '\r' | sed 's/[[:space:]]*$//' | awk '
-  /^(c3: |codex-consult: |CI: )/ {
-    if (!seen[$0]++ && n < 10) {
-      n++
-      line = $0
-      if (length(line) > 400) line = substr(line, 1, 400) "..."
-      print line
-    }
-  }')
+  /^(c3: |codex-consult: |CI: )/ { if (!seen[$0]++ && n < 10) { n++; print } }')
 if [ -n "$forwarded" ]; then
   printf '%s\n' "$forwarded"
 else
-  # nothing carried a known prefix: the first non-empty line as it is (cut), else a note
-  first=$(printf '%s\n' "$out" | tr -d '\r' | grep -m1 '.' | cut -c1-400)
+  # nothing carried a known prefix: the first non-empty line as it is, else a note
+  first=$(printf '%s\n' "$out" | tr -d '\r' | grep -m1 '.')
   if [ -z "$first" ]; then
     first="c3 hook exited $code without output"
   fi

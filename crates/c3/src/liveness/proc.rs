@@ -952,6 +952,13 @@ pub fn process_command_line(pid: u32) -> String {
     imp::process_command_line(pid)
 }
 
+/// (0.2.5, F31-1) The process group of `pid` (Unix: field 5 of `/proc/<pid>/stat`), `None` when it
+/// cannot be read - and always on Windows, which has no process groups. An orphan keeps its group
+/// after its parent exited, so the deadline stop ([`crate::bounded`]) finds it there.
+pub fn process_group(pid: u32) -> Option<u32> {
+    imp::process_group(pid)
+}
+
 /// The live descendants of `pid` (children first, then their children, ...), from one read of the
 /// process table. Used by the non-Windows tree kill, where no `taskkill /T` exists: a reviewer
 /// launcher's own children would otherwise outlive the kill as orphans.
@@ -1251,6 +1258,11 @@ mod imp {
         }
     }
 
+    /// Windows has no process groups.
+    pub fn process_group(_pid: u32) -> Option<u32> {
+        None
+    }
+
     /// `TerminateProcess` on `pid` (best effort).
     pub fn terminate_pid(pid: u32) {
         // SAFETY: OpenProcess returns 0 on failure; the handle is closed after use.
@@ -1536,15 +1548,33 @@ mod imp {
         it.next()?.parse::<u32>().ok()
     }
 
+    /// (0.2.5, F31-1) The process group of `pid` from `/proc/<pid>/stat` (field 5), or `None`.
+    pub fn process_group(pid: u32) -> Option<u32> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        group_from_stat(&stat)
+    }
+
+    /// Field 5 (the process group) of one `/proc/<pid>/stat` line (pure).
+    pub(super) fn group_from_stat(stat: &str) -> Option<u32> {
+        let rest = stat.rsplit_once(')').map(|(_, r)| r).unwrap_or(stat);
+        rest.split_whitespace().nth(2)?.parse::<u32>().ok()
+    }
+
     /// The start time of `pid` as .NET's `o` string in UTC, from `/proc/<pid>/stat` field 22
     /// (clock ticks since boot, `USER_HZ` = 100 on Linux) plus `btime` of `/proc/stat`; a zombie
     /// (state `Z`) counts as gone, like a Windows process with an exit time. `Some("")` when the
     /// process exists but the start time cannot be read (no `/proc`: a `kill -0` probe), so the
-    /// comparison falls back to the plugin's sub-second tolerance.
+    /// comparison falls back to the plugin's sub-second tolerance. (0.2.5, F12-1) A `/proc/<pid>`
+    /// that exists but cannot be read (permission, `hidepid=1`) is "cannot tell" (`Some("")`), never
+    /// "gone"; so is a pid `/proc` hides altogether (`hidepid=2`) unless `kill -0` says there is no
+    /// such process.
     pub fn process_start_iso(pid: u32) -> Option<String> {
         if std::path::Path::new("/proc/self").exists() {
-            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-            return Some(start_iso_from_stat(&stat, boot_time_secs()).unwrap_or_default());
+            return match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Ok(stat) if stat_is_zombie(&stat) => None,
+                Ok(stat) => Some(start_iso_from_stat(&stat, boot_time_secs()).unwrap_or_default()),
+                Err(e) => unreadable_stat(pid, e.kind(), proc_hides_pids()),
+            };
         }
         // Fallback: kill -0 exits 0 when the process exists.
         let ok = std::process::Command::new("kill")
@@ -1558,6 +1588,62 @@ mod imp {
         } else {
             None
         }
+    }
+
+    /// Whether a `/proc/<pid>/stat` line is a zombie's (state `Z`).
+    fn stat_is_zombie(stat: &str) -> bool {
+        let rest = stat.rsplit_once(')').map(|(_, r)| r).unwrap_or(stat);
+        rest.split_whitespace().next() == Some("Z")
+    }
+
+    /// (0.2.5, F12-1) The answer for a `/proc/<pid>/stat` that could not be read (`kind`): gone
+    /// (`None`) only when there is no `/proc/<pid>` and `/proc` hides no pid (`hides`: mounted with
+    /// `hidepid=2` / `invisible`), or - when it does - `kill -0` reports no such process; otherwise
+    /// the process may exist: "cannot tell" (`Some("")`).
+    pub(super) fn unreadable_stat(
+        pid: u32,
+        kind: std::io::ErrorKind,
+        hides: bool,
+    ) -> Option<String> {
+        let dir_exists = std::fs::symlink_metadata(format!("/proc/{pid}")).is_ok();
+        if kind != std::io::ErrorKind::NotFound || dir_exists {
+            return Some(String::new());
+        }
+        if !hides {
+            return None;
+        }
+        let probe = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .env("LC_ALL", "C")
+            .stdin(std::process::Stdio::null())
+            .output();
+        match probe {
+            Ok(o) if o.status.success() => Some(String::new()),
+            Ok(o) if String::from_utf8_lossy(&o.stderr).contains("No such process") => None,
+            _ => Some(String::new()),
+        }
+    }
+
+    /// Whether `/proc` is mounted so that it hides other users' pids (`hidepid=2`, `hidepid=
+    /// invisible`): a missing `/proc/<pid>` then does not mean the process is gone.
+    fn proc_hides_pids() -> bool {
+        std::fs::read_to_string("/proc/self/mountinfo")
+            .or_else(|_| std::fs::read_to_string("/proc/mounts"))
+            .map(|m| mounts_hide_pids(&m))
+            .unwrap_or(false)
+    }
+
+    /// [`proc_hides_pids`] over the text of `/proc/self/mountinfo` or `/proc/mounts` (pure).
+    pub(super) fn mounts_hide_pids(text: &str) -> bool {
+        text.lines().any(|l| {
+            let fields: Vec<&str> = l.split_whitespace().collect();
+            // mountinfo: the mount point is field 5; /proc/mounts: field 2
+            let at_proc = fields.get(4) == Some(&"/proc") || fields.get(1) == Some(&"/proc");
+            at_proc
+                && l.split([' ', ','])
+                    .any(|o| o == "hidepid=2" || o == "hidepid=invisible")
+        })
     }
 
     /// `btime` (seconds since the epoch at boot) from `/proc/stat`, when readable.
@@ -1603,6 +1689,51 @@ mod imp {
             assert!(super::start_iso_from_stat(&zombie, Some(1_700_000_000)).is_none());
             assert!(super::start_iso_from_stat(stat, None).is_none());
             assert!(super::start_iso_from_stat("1 (x) S 0", Some(1)).is_none());
+            // (F31-1) field 5 is the process group
+            assert_eq!(super::group_from_stat(stat), Some(4242));
+            assert_eq!(super::group_from_stat("7 (a b) S 1 99 7"), Some(99));
+            assert!(super::stat_is_zombie(&zombie));
+            assert!(!super::stat_is_zombie(stat));
+        }
+
+        // (0.2.5, F12-1) A `/proc/<pid>` that exists but cannot be read is "cannot tell", never
+        // "gone"; a missing one is gone unless `/proc` hides pids.
+        #[test]
+        fn an_unreadable_proc_entry_is_cannot_tell_never_gone() {
+            use std::io::ErrorKind;
+            let me = std::process::id();
+            assert_eq!(
+                super::unreadable_stat(me, ErrorKind::PermissionDenied, false).as_deref(),
+                Some("")
+            );
+            // the directory is there (the stat file could not be read): cannot tell
+            assert_eq!(
+                super::unreadable_stat(me, ErrorKind::NotFound, false).as_deref(),
+                Some("")
+            );
+            // no such pid, nothing hidden: gone
+            let none = 4_000_000_000u32;
+            assert_eq!(
+                super::unreadable_stat(none, ErrorKind::NotFound, false),
+                None
+            );
+            assert_eq!(
+                super::unreadable_stat(none, ErrorKind::PermissionDenied, false).as_deref(),
+                Some("")
+            );
+            // hidepid=2 / invisible on /proc
+            assert!(super::mounts_hide_pids(
+                "proc /proc proc rw,nosuid,nodev,noexec,relatime,hidepid=2 0 0\n"
+            ));
+            assert!(super::mounts_hide_pids(
+                "22 27 0:20 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw,hidepid=invisible\n"
+            ));
+            assert!(!super::mounts_hide_pids(
+                "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n"
+            ));
+            assert!(!super::mounts_hide_pids(
+                "proc /other proc rw,hidepid=2 0 0\n"
+            ));
         }
     }
 }

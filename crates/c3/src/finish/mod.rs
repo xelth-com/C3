@@ -9,10 +9,14 @@
 //! (`.c3/last-report.md`), prepends a journal entry, stages everything with
 //! `git add -A`, unstages the machine-local never-commit set ([`never_commit`]), runs the
 //! secret gate over the staged content ([`secret_gate`]), commits, and - only when asked
-//! (`--snapshot`, 0.2.5) - writes a delta snapshot into the hand-off folder. [`run_fail`] does
-//! the same minus the staging and commit (its snapshot, when asked, is an emergency one).
-//! [`run_manifest`] edits a `.c3/*.md` manifest with no git and no snapshot.
+//! (`--snapshot`, 0.2.5) - writes a delta snapshot into the hand-off folder. (0.2.5) Before any of
+//! that it runs the repository's own pre-finish checks ([`checks`]: `"finish_checks"` in
+//! `.c3/config.json`) and refuses when one fails; `--skip-checks` goes on without them and says
+//! so. [`run_fail`] does the same minus the checks, the staging and the commit (its snapshot,
+//! when asked, is an emergency one). [`run_manifest`] edits a `.c3/*.md` manifest with no git and
+//! no snapshot.
 
+pub mod checks;
 pub mod git;
 pub mod journal;
 pub mod manifest;
@@ -39,6 +43,38 @@ pub struct FinishOpts {
     pub allow_empty: bool,
     /// Repo-relative paths the secret gate lets through (`--allow-secret`).
     pub allow_secret: Vec<String>,
+    /// Go on without the pre-finish checks (`--skip-checks`); said in the output and the journal.
+    pub skip_checks: bool,
+}
+
+/// What became of the pre-finish checks of a successful [`run_finish`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChecksOutcome {
+    /// The checks that ran and passed, in order.
+    pub passed: Vec<String>,
+    /// `--skip-checks` was given: the configured checks (listed here) did not run.
+    pub skipped: Vec<String>,
+    /// `--skip-checks` was given (whether or not any check is configured).
+    pub skip_requested: bool,
+}
+
+impl ChecksOutcome {
+    /// The one line `c3 finish` prints (and the journal carries when the checks were skipped);
+    /// `None` when no check is configured and none was skipped.
+    pub fn line(&self) -> Option<String> {
+        if self.skip_requested {
+            return Some(if self.skipped.is_empty() {
+                "Pre-finish checks skipped (--skip-checks; none configured).".to_string()
+            } else {
+                format!(
+                    "Pre-finish checks skipped (--skip-checks): {}.",
+                    self.skipped.join("; ")
+                )
+            });
+        }
+        (!self.passed.is_empty())
+            .then(|| format!("Pre-finish checks passed: {}.", self.passed.join("; ")))
+    }
 }
 
 /// Options for [`run_fail`].
@@ -64,6 +100,8 @@ pub struct FinishResult {
     pub pruned: usize,
     /// What was done to bring the project folder into place ([`crate::state_dir::Ensured::notes`]).
     pub folder_notes: Vec<String>,
+    /// The pre-finish checks.
+    pub checks: ChecksOutcome,
 }
 
 /// The outcome of a successful [`run_fail`].
@@ -86,6 +124,8 @@ pub enum FinishError {
     /// The commit MESSAGE carries a secret-shaped value (the kinds). `--allow-secret` cannot
     /// exempt it — the coordinator must rewrite the message.
     MessageSecret(String),
+    /// (0.2.5) A pre-finish check failed; nothing was written, staged or committed.
+    CheckFailed(checks::CheckFailure),
     /// A git or I/O failure.
     Other(String),
 }
@@ -126,6 +166,7 @@ impl std::fmt::Display for FinishError {
                 f,
                 "refusing to commit: the commit message carries a secret-shaped value ({kinds}); --allow-secret cannot exempt the message - rewrite the message and run finish again"
             ),
+            FinishError::CheckFailed(c) => write!(f, "{c}"),
             FinishError::Other(e) => write!(f, "{e}"),
         }
     }
@@ -207,16 +248,45 @@ pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
         return Err(FinishError::MessageSecret(kinds));
     }
 
+    // 0a. (0.2.5) The repository's own pre-finish checks, before anything is written or staged: a
+    //     failing one refuses with nothing changed. `--skip-checks` goes on and says so.
+    let configured = checks::configured(repo).map_err(|e| {
+        FinishError::Other(format!(
+            "refusing to finish: the pre-finish checks cannot be read - {e}; fix the file or pass --skip-checks"
+        ))
+    });
+    let check_outcome = if opts.skip_checks {
+        ChecksOutcome {
+            skipped: configured.unwrap_or_default(),
+            skip_requested: true,
+            ..Default::default()
+        }
+    } else {
+        let list = configured?;
+        checks::run_all(&list, repo).map_err(FinishError::CheckFailed)?;
+        ChecksOutcome {
+            passed: list,
+            ..Default::default()
+        }
+    };
+
     // 0b. The project folder (an existing `.eck/` moved once, stubs, the `.gitignore` line - before
     //     the staging, so a `.gitignore` change is part of the commit).
     let ensured = state_dir::ensure(repo, Some(&opts.collab_root)).map_err(FinishError::Other)?;
 
-    // 1-2. Report + journal (before any git write, so they are part of the commit).
+    // 1-2. Report + journal (before any git write, so they are part of the commit). Skipped checks
+    //      are said in the journal entry.
     let state = ensured.dir.clone();
     let collab = state_dir::moved_with_folder(repo, &opts.collab_root);
     write_answer(&state, &journal::answer_finish(&opts.status)).map_err(FinishError::Other)?;
     let title = journal::first_line(&opts.message, "Agent Report").to_string();
-    write_journal(&state, &title, &opts.status).map_err(FinishError::Other)?;
+    let journal_body = match check_outcome.line() {
+        Some(l) if check_outcome.skip_requested => {
+            format!("{}\n\n_{l}_", opts.status.trim_end())
+        }
+        _ => opts.status.clone(),
+    };
+    write_journal(&state, &title, &journal_body).map_err(FinishError::Other)?;
 
     // 3. Stage everything (honours .gitignore).
     git::add_all(repo).map_err(FinishError::Other)?;
@@ -261,6 +331,7 @@ pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
         snapshot_note,
         pruned,
         folder_notes: ensured.notes(),
+        checks: check_outcome,
     })
 }
 

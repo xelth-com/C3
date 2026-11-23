@@ -452,6 +452,98 @@ fn the_hook_repairs_nothing_behind_a_stray_git_entry_or_with_git_dir_set() {
     let _ = std::fs::remove_dir_all(&repo);
 }
 
+// (0.2.5, F13-2) A `.git` directory git would not take for a repository - `HEAD` but no `objects`
+// or `refs` - is no root for the hook's repair: nothing is repaired; with them, the pin is.
+#[test]
+fn the_hook_repairs_nothing_behind_a_git_directory_git_would_not_take() {
+    let pinned = "---\nname: opus-worker\nmodel: claude-opus-4-8\n---\nbody\n";
+    let envs = [
+        ("C3_CONFIG", "none"),
+        ("C3_MAINTAIN", "off"),
+        ("C3_UPDATE_CHECK", "off"),
+        ("C3_BRANCH_CHECK", "off"),
+        ("C3_CI_CHECK", "off"),
+    ];
+    let dir = scratch_dir("half-git");
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(dir.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::create_dir_all(dir.join(".claude/agents")).unwrap();
+    let agent = dir.join(".claude/agents/opus-worker.md");
+    std::fs::write(&agent, pinned).unwrap();
+    let (code, out, err) = run_c3_env(&dir, &["hook"], &envs);
+    assert_eq!(code, 0, "hook must exit 0: {out}\n{err}");
+    assert!(!out.contains("model settings"), "{out}");
+    assert_eq!(std::fs::read_to_string(&agent).unwrap(), pinned);
+    // the control: with objects and refs it is a repository, and the pin is repaired
+    std::fs::create_dir_all(dir.join(".git").join("objects")).unwrap();
+    std::fs::create_dir_all(dir.join(".git").join("refs")).unwrap();
+    let (_c, out, _e) = run_c3_env(&dir, &["hook"], &envs);
+    assert!(
+        out.contains("c3: model settings refreshed in this repository"),
+        "{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// (0.2.5) Revisions reach git after `--end-of-options` (git 2.30): `c3 doctor` reports an older git
+// as a problem - one line naming the installed and the required version - and `c3 consult --rev` /
+// `--diff` refuse before anything starts. (The installed version comes from the test hook.)
+#[test]
+fn an_old_git_is_a_doctor_problem_and_refuses_consult_rev_and_diff() {
+    let repo = scratch_repo("old-git");
+    let old = [
+        ("C3_CONFIG", "none"),
+        ("CODEX_CONSULT_TEST_MODE", "1"),
+        ("CODEX_CONSULT_TEST_GIT_VERSION", "2.29.2"),
+    ];
+    let (code, out, err) = run_c3_env(&repo, &["doctor"], &old);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(
+        out.lines().any(|l| l
+            == "[!] git 2.29.2 is installed; C3 needs git 2.30 or later (revisions reach git after --end-of-options)"),
+        "{out}"
+    );
+    let (_c, json, _e) = run_c3_env(&repo, &["doctor", "--json"], &old);
+    let v: serde_json::Value = serde_json::from_str(json.trim()).unwrap();
+    assert_eq!(v["git"]["version"], "2.29.2", "{v}");
+    assert!(v["git"]["problem"].is_string(), "{v}");
+    // the real git is new enough: no git line among the findings
+    let (_c, out, _e) = run_c3_env(&repo, &["doctor"], &[("C3_CONFIG", "none")]);
+    assert!(out.lines().any(|l| l.starts_with("[ok] git ")), "{out}");
+
+    std::fs::write(repo.join("brief.md"), "# brief\n").unwrap();
+    for (flag, value) in [("--rev", "HEAD"), ("--diff", "HEAD~0..HEAD")] {
+        let (code, out, err) = run_c3_env(
+            &repo,
+            &[
+                "consult",
+                "--task",
+                "t",
+                "--purpose",
+                "diff-review",
+                "--brief",
+                "brief.md",
+                "--prompt",
+                "p",
+                flag,
+                value,
+            ],
+            &old,
+        );
+        assert_eq!(code, 1, "{flag}: {out}\n{err}");
+        let text = format!("{out}{err}");
+        assert!(
+            text.contains("is refused before anything starts: git 2.29.2 is installed"),
+            "{flag}: {text}"
+        );
+        assert!(
+            !repo.join(".collab").exists(),
+            "{flag}: a consultation was started"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
 #[test]
 fn init_never_overwrites_an_existing_claude_md() {
     let repo = scratch_repo("noclobber");

@@ -692,6 +692,24 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
             if opt_bool(args, "snapshot") {
                 v.push("--snapshot".into());
             }
+            // (0.2.5) the CLI's `--allow-secret`, one per reviewed repo-relative path (never the
+            // commit message); a path that leaves the working directory is refused
+            if args.get("allow_secret").is_some_and(|a| {
+                !a.as_array()
+                    .is_some_and(|items| items.iter().all(Value::is_string))
+            }) {
+                return Err(
+                    "allow_secret argument must be an array of repo-relative paths".to_string(),
+                );
+            }
+            for p in opt_arr(args, "allow_secret") {
+                reject_escape(&p)?;
+                v.push("--allow-secret".into());
+                v.push(p);
+            }
+            if opt_bool(args, "skip_checks") {
+                v.push("--skip-checks".into());
+            }
             push_collab(&mut v, args)?;
             Ok((v, DEFAULT_TIMEOUT))
         }
@@ -1178,13 +1196,15 @@ fn tool_defs() -> Value {
         },
         {
             "name": "c3_finish_task",
-            "description": "Supervisor-only: workers never call it. Finish the current task: make sure C3's project folder .c3/ is in place (created with stub manifests when missing), write the agent report to .c3/last-report.md and prepend a journal entry to .c3/JOURNAL.md, `git add -A` then unstage the machine-local never-commit set (consult/work event streams, lock files, a work run's .log/.stderr), gate on secrets in the STAGED content (a secret-shaped value refuses the commit, naming the file and KIND, never the value), and commit with the message verbatim. No snapshot unless `snapshot` is true (then a delta snapshot goes into .c3/snapshots/ and .c3/lastsnapshot/ - for a web reviewer that has no bridge). Use ONLY once, when the task is complete and tested.",
+            "description": "Supervisor-only: workers never call it. Finish the current task: make sure C3's project folder .c3/ is in place (created with stub manifests when missing), write the agent report to .c3/last-report.md and prepend a journal entry to .c3/JOURNAL.md, `git add -A` then unstage the machine-local never-commit set (consult/work event streams, lock files, a work run's .log/.stderr), gate on secrets in the STAGED content (a secret-shaped value refuses the commit, naming the file and KIND, never the value; `allow_secret` lets reviewed files through), and commit with the message verbatim. Before all of that it runs the repository's own pre-finish checks (\"finish_checks\" in .c3/config.json): one that fails refuses with nothing written or staged (`skip_checks` goes on without them). No snapshot unless `snapshot` is true (then a delta snapshot goes into .c3/snapshots/ and .c3/lastsnapshot/ - for a web reviewer that has no bridge). Use ONLY once, when the task is complete and tested.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "status": { "type": "string", "description": "The agent report (written to .c3/last-report.md and the journal)." },
                     "message": { "type": "string", "description": "The commit message (verbatim; the coordinator adds its own trailers)." },
                     "snapshot": { "type": "boolean", "description": "Also write the hand-off snapshot into .c3/snapshots/ (default false)." },
+                    "allow_secret": { "type": "array", "items": { "type": "string" }, "description": "Repo-relative paths of staged files you have reviewed that the secret gate lets through (the CLI's --allow-secret, one per path). It never exempts the commit message." },
+                    "skip_checks": { "type": "boolean", "description": "Finish without the repository's pre-finish checks (\"finish_checks\" in .c3/config.json; the CLI's --skip-checks). The output and the journal entry say they were skipped." },
                     "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
                 },
                 "required": ["status", "message"]
@@ -1735,6 +1755,52 @@ mod tests {
         let (argv, _t) =
             build_argv("c3_fail_task", &json!({ "status": "b", "snapshot": true })).unwrap();
         assert!(argv.iter().any(|a| a == "--snapshot"), "{argv:?}");
+    }
+
+    // (0.2.5) `allow_secret` maps to one `--allow-secret <path>` per entry; a path that leaves the
+    // working directory, or a value that is not an array of strings, is refused.
+    #[test]
+    fn finish_task_passes_allow_secret_paths() {
+        let (argv, _t) = build_argv(
+            "c3_finish_task",
+            &json!({ "status": "done", "message": "m",
+                "allow_secret": ["crates/a.rs", "tests/fixtures/key.txt"] }),
+        )
+        .unwrap();
+        let pairs: Vec<&str> = argv
+            .windows(2)
+            .filter(|w| w[0] == "--allow-secret")
+            .map(|w| w[1].as_str())
+            .collect();
+        assert_eq!(pairs, vec!["crates/a.rs", "tests/fixtures/key.txt"]);
+        let (argv, _t) = build_argv(
+            "c3_finish_task",
+            &json!({ "status": "done", "message": "m" }),
+        )
+        .unwrap();
+        assert!(!argv.iter().any(|a| a == "--allow-secret"), "{argv:?}");
+        assert!(!argv.iter().any(|a| a == "--skip-checks"), "{argv:?}");
+        let (argv, _t) = build_argv(
+            "c3_finish_task",
+            &json!({ "status": "done", "message": "m", "skip_checks": true }),
+        )
+        .unwrap();
+        assert!(argv.iter().any(|a| a == "--skip-checks"), "{argv:?}");
+        for bad in [
+            json!(["../outside.rs"]),
+            json!([if cfg!(windows) { "C:\\x.rs" } else { "/x.rs" }]),
+            json!("crates/a.rs"),
+            json!(["ok.rs", 3]),
+        ] {
+            assert!(
+                build_argv(
+                    "c3_finish_task",
+                    &json!({ "status": "done", "message": "m", "allow_secret": bad }),
+                )
+                .is_err(),
+                "{bad} was accepted"
+            );
+        }
     }
 
     #[test]

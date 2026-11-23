@@ -35,6 +35,14 @@ here.) The consultation procedure itself is the `consult` skill; wiring reviewer
   launch, a wait and a re-brief cost more than a brief written once.
 - **English to reviewers and workers.** Briefs, prompts and handoff titles are in English;
   source material in another language is translated or summarised, never pasted.
+- **A reviewer sees the repository, not your knowledge base.** It never reads the project's
+  knowledge base behind MCP or your memory (C3 hands it no credential and fetches nothing for it):
+  quote in the brief what it needs, and leave out a topic the project keeps from panels.
+- **Long suites and the host's memory reaper.** Claude Code stops background shells under memory
+  pressure, so a `FAILED` line - or a log that just ends - in a partial background log can be that
+  kill, not the code: run a long suite in the foreground, one test binary at a time, or start
+  Claude Code with `CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1` before relying on a background
+  run's verdict.
 - **Wait without blocking; keep the prompt cache warm.** Poll a state file or `c3 consult --task
   <task> --status`; never sit in a blocking foreground wait longer than the shell tool's limit.
   After the cache's lifetime the next request re-writes the whole context, so a large context
@@ -193,7 +201,10 @@ as leftovers, the SessionStart line names them, and `c3 finish` notes them after
 - The start folder stays on the default branch and clean; a session that finds it otherwise says
   so first. A guest session never leaves an uncommitted edit in another project's folder.
 - Before removing a worktree, look for junctions/symlinks that point outside it; never `--force`
-  over a link.
+  over a link. `c3 branches --close <branch>` does that after a merge: it removes a merged branch's
+  clean worktree (`git worktree remove`, no `--force`) and the branch (`git branch -d`), and
+  refuses everything else with the reason. A project whose first listing shows every old branch as
+  unknown records them in one go: `c3 branches --record-unknown --state parked --note "..."`.
 - A parked WIP that touches privacy or security is also listed in the tech-debt file.
 
 ## Worker-tier contract

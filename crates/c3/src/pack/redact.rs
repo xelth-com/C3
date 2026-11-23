@@ -11,6 +11,15 @@
 //! surrounding line stays readable. A second, entropy-gated pass catches arbitrary
 //! high-entropy literals assigned to key-shaped variable names.
 //!
+//! (0.2.5) The keyword-assignment rule takes only a value that can be a secret
+//! ([`assignment_value_can_be_secret`]): a single dictionary-shaped word (letters only, one case,
+//! fewer than 24 of them - `"endpoint"`, `"subscription"`) is a setting, not a key, under any
+//! keyword; and under the bare keyword `auth` (a field that names a mode as often as a credential)
+//! only a key-shaped value counts - 16 or more characters, no white space, at least two of lower
+//! case, upper case, digits and symbols. `auth_token`, `authorization`, `api_key`, `password` and
+//! the rest keep the plain rule. Every service-shaped key (`sk-...`, `ghp_...`, `AKIA...`, a JWT, a
+//! bearer token, a private key block) is caught by its own rule whatever keyword stands before it.
+//!
 //! Limits (documented on purpose): this is a lexical scanner, not a vault. It cannot
 //! find a secret that is split across lines, base64-of-a-secret, or a low-entropy
 //! password that does not sit next to a keyword. Hard-ignoring `.env*` and key files at
@@ -56,7 +65,10 @@ pub fn scan(text: &str) -> Redaction {
                     Some(g) => {
                         let full = caps.get(0).map(|m| m.as_str()).unwrap_or("");
                         match caps.get(g) {
-                            Some(secret) if !secret.as_str().is_empty() => {
+                            Some(secret)
+                                if !secret.as_str().is_empty()
+                                    && p.accept.is_none_or(|accept| accept(caps)) =>
+                            {
                                 hits += 1;
                                 full.replacen(secret.as_str(), &placeholder, 1)
                             }
@@ -110,6 +122,55 @@ struct Pat {
     re: Regex,
     /// `Some(n)` = redact only capture group `n`; `None` = redact the whole match.
     group: Option<usize>,
+    /// (capture-group patterns) A match counts only when this says so; `None` = every match.
+    accept: Option<fn(&regex::Captures) -> bool>,
+}
+
+/// (0.2.5) Whether a value is a single dictionary-shaped word: letters only, in one case (all
+/// lower, all upper, or one capital and the rest lower), fewer than 24 letters - a longer run of
+/// letters is no word, so a random lower-case key still counts as a possible secret.
+fn is_dictionary_word(v: &str) -> bool {
+    let n = v.chars().count();
+    if n == 0 || n >= 24 || !v.chars().all(char::is_alphabetic) {
+        return false;
+    }
+    v.chars().all(char::is_lowercase)
+        || v.chars().all(char::is_uppercase)
+        || (v.chars().next().is_some_and(char::is_uppercase)
+            && v.chars().skip(1).all(char::is_lowercase))
+}
+
+/// (0.2.5) Whether a value is shaped like a key: at least 16 characters, no white space, and at
+/// least two of lower case, upper case, digits and symbols.
+fn is_key_shaped(v: &str) -> bool {
+    if v.chars().count() < 16 || v.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let classes = [
+        v.chars().any(char::is_lowercase),
+        v.chars().any(char::is_uppercase),
+        v.chars().any(|c| c.is_ascii_digit()),
+        v.chars().any(|c| !c.is_alphanumeric()),
+    ];
+    classes.iter().filter(|c| **c).count() >= 2
+}
+
+/// (0.2.5) The keyword-assignment rule's filter (group 1 the keyword, group 2 the value): a
+/// dictionary-shaped word is never taken for a secret ([`is_dictionary_word`]), a value an earlier
+/// rule already replaced is left with that rule's kind; under the bare
+/// keyword `auth` the value must be key-shaped ([`is_key_shaped`]); under every other keyword any
+/// other value of 8 or more characters counts.
+fn assignment_value_can_be_secret(caps: &regex::Captures) -> bool {
+    let keyword = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+    let value = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+    // a value an earlier rule already replaced keeps that rule's kind
+    if is_dictionary_word(value) || value.contains("[REDACTED:") {
+        return false;
+    }
+    if keyword.eq_ignore_ascii_case("auth") {
+        return is_key_shaped(value);
+    }
+    true
 }
 
 fn patterns() -> &'static [Pat] {
@@ -124,47 +185,56 @@ fn patterns() -> &'static [Pat] {
                 )
                 .unwrap(),
                 group: None,
+                accept: None,
             },
             // OpenRouter keys (sk-or-...) before the generic OpenAI sk- rule.
             Pat {
                 kind: "openrouter-key",
                 re: Regex::new(r"sk-or-[a-zA-Z0-9-]{20,}").unwrap(),
                 group: None,
+                accept: None,
             },
             Pat {
                 kind: "openai-key",
                 re: Regex::new(r"sk-[a-zA-Z0-9]{32,}").unwrap(),
                 group: None,
+                accept: None,
             },
             Pat {
                 kind: "stripe-key",
                 re: Regex::new(r"sk_live_[0-9a-zA-Z]{24}").unwrap(),
                 group: None,
+                accept: None,
             },
             Pat {
                 kind: "aws-key",
                 re: Regex::new(r"(?:AKIA|ASIA)[0-9A-Z]{16}").unwrap(),
                 group: None,
+                accept: None,
             },
             Pat {
                 kind: "google-key",
                 re: Regex::new(r"AIza[0-9A-Za-z\-_]{35}").unwrap(),
                 group: None,
+                accept: None,
             },
             Pat {
                 kind: "github-token",
                 re: Regex::new(r"gh[pousr]_[a-zA-Z0-9]{36,}").unwrap(),
                 group: None,
+                accept: None,
             },
             Pat {
                 kind: "slack-token",
                 re: Regex::new(r"xox[baprs]-[0-9a-zA-Z-]{10,}").unwrap(),
                 group: None,
+                accept: None,
             },
             Pat {
                 kind: "npm-token",
                 re: Regex::new(r"npm_[a-zA-Z0-9]{36}").unwrap(),
                 group: None,
+                accept: None,
             },
             // JSON Web Tokens: header.payload.signature, each base64url.
             Pat {
@@ -174,21 +244,26 @@ fn patterns() -> &'static [Pat] {
                 )
                 .unwrap(),
                 group: None,
+                accept: None,
             },
             // Authorization: Bearer <token> — redact the token only.
             Pat {
                 kind: "bearer",
                 re: Regex::new(r"(?i)bearer\s+([a-zA-Z0-9._~+/-]{20,}={0,2})").unwrap(),
                 group: Some(1),
+                accept: None,
             },
-            // key = "value" / key: 'value' near a sensitive keyword — redact the value only.
+            // key = "value" / key: 'value' near a sensitive keyword — redact the value only, and
+            // (0.2.5) only a value that can be a secret: not a dictionary-shaped word, and under
+            // the bare keyword `auth` a key-shaped value.
             Pat {
                 kind: "assignment",
                 re: Regex::new(
-                    r#"(?i)(?:api[_-]?key|secret|password|passwd|pwd|token|auth|credential)\s*[:=]\s*["']([^"'\r\n]{8,})["']"#,
+                    r#"(?i)(api[_-]?key|secret|password|passwd|pwd|token|authorization|auth|credential)\s*[:=]\s*["']([^"'\r\n]{8,})["']"#,
                 )
                 .unwrap(),
-                group: Some(1),
+                group: Some(2),
+                accept: Some(assignment_value_can_be_secret),
             },
         ]
     })
@@ -337,6 +412,71 @@ mod tests {
         let (out, n) = redact(src);
         assert_eq!(n, 0);
         assert_eq!(out, src);
+    }
+
+    // (0.2.5) A setting is not a secret: a single dictionary-shaped word under any keyword, and
+    // under the bare keyword `auth` anything that is not key-shaped (the test-fixture line that
+    // refused three `c3 finish` commits on 2026-11-22/23 among them).
+    #[test]
+    fn a_plain_word_is_not_taken_for_a_secret() {
+        for clean in [
+            "m.entry.auth = \"endpoint\".into();",
+            "auth: \"subscription\"",
+            "auth = 'Subscription'",
+            "\"auth\": \"OAUTHFLOW\"",
+            "api_key = \"placeholder\"",
+            "token: \"Unlimited\"",
+            "auth = \"short-mode-1\"",
+            "auth = \"two words here and more\"",
+        ] {
+            let r = scan(clean);
+            assert_eq!(r.count, 0, "{clean:?} was redacted: {:?}", r.text);
+            assert_eq!(r.text, clean);
+        }
+    }
+
+    // (0.2.5) Nothing a real secret trips is lost: a passphrase, a token-shaped value, a
+    // key-shaped value under the bare `auth`, the longer keywords, a long run of random letters.
+    #[test]
+    fn values_that_can_be_secrets_are_still_redacted() {
+        assert_redacted(
+            "password = \"correct horse\"",
+            "assignment",
+            "correct horse",
+        );
+        assert_redacted(
+            "token = \"ghp_shortfixture42\"",
+            "assignment",
+            "ghp_shortfixture42",
+        );
+        assert_redacted(
+            "token = \"ghp_123456789012345678901234567890123456\"",
+            "github-token",
+            "ghp_1234567890",
+        );
+        assert_redacted(
+            "auth = \"Xk9fLq2mZp7RtW3vBn8Y\"",
+            "assignment",
+            "Xk9fLq2mZp7RtW3vBn8Y",
+        );
+        assert_redacted(
+            "auth: 'a1b2c3d4e5f6a7b8c9d0'",
+            "assignment",
+            "a1b2c3d4e5f6a7b8c9d0",
+        );
+        assert_redacted("auth_token = \"endpoint-42\"", "assignment", "endpoint-42");
+        assert_redacted(
+            "authorization: \"Basic dXNlcjpwYXNzd29yZA==\"",
+            "assignment",
+            "dXNlcjpwYXNzd29yZA==",
+        );
+        assert_redacted("api_key = \"PlaceHolder\"", "assignment", "PlaceHolder");
+        assert_redacted(
+            "secret = \"qwertyuiopasdfghjklzxcvbnm\"",
+            "assignment",
+            "qwertyuiopasdfghjklzxcvbnm",
+        );
+        assert_redacted("pwd = 'hunter22'", "assignment", "hunter22");
     }
 
     #[test]

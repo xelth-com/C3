@@ -314,6 +314,117 @@ fn finish_with_nothing_to_commit_refuses() {
     let _ = std::fs::remove_dir_all(&repo);
 }
 
+/// Write the repository's pre-finish checks (`"finish_checks"` in `.c3/config.json`).
+fn set_finish_checks(repo: &Path, checks: &[&str]) {
+    std::fs::create_dir_all(repo.join(".c3")).unwrap();
+    std::fs::write(
+        repo.join(".c3").join("config.json"),
+        serde_json::json!({ "finish_checks": checks }).to_string(),
+    )
+    .unwrap();
+}
+
+fn staged_names(repo: &Path) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["diff", "--cached", "--name-only"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+// (0.2.5) A failing pre-finish check refuses the finish BEFORE anything is written or staged: its
+// name, its exit code and the last 20 lines of its output are printed; no commit, nothing staged,
+// no report or journal entry. `--skip-checks` goes on and says so in the output and the journal.
+#[test]
+fn a_failing_pre_finish_check_refuses_with_nothing_staged() {
+    let repo = scratch_repo("checks-fail");
+    std::fs::write(repo.join("src.rs"), "fn a() {}\n").unwrap();
+    let failing = if cfg!(windows) {
+        "(for /L %i in (1,1,25) do @echo line %i) & exit /b 3"
+    } else {
+        "i=1; while [ $i -le 25 ]; do echo line $i; i=$((i+1)); done; exit 3"
+    };
+    set_finish_checks(&repo, &[failing]);
+    let (code, out, err) = run_c3(
+        &repo,
+        &["finish", "--message", "feat: src", "--status", "done"],
+    );
+    assert_eq!(code, 1, "expected refusal: {out}\n{err}");
+    assert!(err.contains(failing), "the check is not named: {err}");
+    assert!(err.contains("exit code 3"), "{err}");
+    assert!(err.contains("line 25") && err.contains("line 6"), "{err}");
+    assert!(!err.contains("line 5\n"), "more than 20 lines: {err}");
+    assert!(err.contains("nothing was staged or committed"), "{err}");
+    assert_eq!(head_subject(&repo), "init");
+    assert_eq!(staged_names(&repo), "", "something was staged");
+    assert!(
+        !repo.join(".c3").join("JOURNAL.md").exists(),
+        "a journal entry was written"
+    );
+    assert!(!repo.join(".c3").join("last-report.md").exists());
+
+    let (code, out, err) = run_c3(
+        &repo,
+        &[
+            "finish",
+            "--message",
+            "feat: src",
+            "--status",
+            "done",
+            "--skip-checks",
+        ],
+    );
+    assert_eq!(code, 0, "--skip-checks finish failed: {out}\n{err}");
+    assert!(
+        out.contains("Pre-finish checks skipped (--skip-checks)"),
+        "{out}"
+    );
+    assert_eq!(head_subject(&repo), "feat: src");
+    let journal = std::fs::read_to_string(repo.join(".c3").join("JOURNAL.md")).unwrap();
+    assert!(
+        journal.contains("Pre-finish checks skipped (--skip-checks)"),
+        "{journal}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5) Passing checks run in the repository root, marked as a C3 child, and the finish commits;
+// a repository without a list runs none (the other tests), and a list that does not parse refuses.
+#[test]
+fn passing_pre_finish_checks_run_in_the_repository_as_a_child() {
+    let repo = scratch_repo("checks-pass");
+    std::fs::write(repo.join("src.rs"), "fn a() {}\n").unwrap();
+    // the mark file is written into .c3/ (git-ignored), so the check itself stages nothing
+    let mark = if cfg!(windows) {
+        ">.c3\\mark.txt echo child=%C3_CHILD%"
+    } else {
+        "echo child=$C3_CHILD > .c3/mark.txt"
+    };
+    set_finish_checks(&repo, &[mark, "git --version"]);
+    let (code, out, err) = run_c3(
+        &repo,
+        &["finish", "--message", "feat: src", "--status", "done"],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("Pre-finish checks passed: "), "{out}");
+    assert_eq!(head_subject(&repo), "feat: src");
+    let seen = std::fs::read_to_string(repo.join(".c3").join("mark.txt")).unwrap();
+    assert_eq!(seen.trim(), "child=1");
+
+    std::fs::write(repo.join(".c3").join("config.json"), "{ not json").unwrap();
+    std::fs::write(repo.join("src2.rs"), "fn b() {}\n").unwrap();
+    let (code, _out, err) = run_c3(
+        &repo,
+        &["finish", "--message", "feat: src2", "--status", "done"],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("config.json"), "{err}");
+    assert_eq!(head_subject(&repo), "feat: src");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
 #[test]
 fn fail_writes_report_and_snapshot_without_committing() {
     let repo = scratch_repo("fail");

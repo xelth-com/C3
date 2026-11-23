@@ -681,3 +681,20 @@ swap -> xelth.com/C3 page after the tag.
   already waiting (bash reads a script as it runs; the S2 worker found it). Pause set until 10:55;
   the two waiting compile jobs (S2 init_doctor, D2 ci_check) were stopped and their workers told
   to rerun them.
+- 2026-11-23 11:01, wave D4 reported (every use site converted) and committed as 272920d, pushed;
+  CI run 45152085896 watched. New module `crates/c3/src/contain.rs` on `cap-std` 4.0.3 /
+  `cap-fs-ext` 4.0.3: staging (both sides), the link sweep, the removal (through handles, then
+  `git worktree prune`; no `worktree remove --force`, no `remove_dir_all`), the repository repair,
+  the rules rewrite and the patch write. Proof on Windows: a junction as a path component is
+  refused; a held handle keeps the directory and its ancestors from being renamed; the directory-
+  symlink half is skipped here (no privilege). Race tests through `CODEX_CONSULT_TEST_CONTAIN_RACE`.
+  Not converted by instruction: the maintain roster writer, the owner record in git's admin dir.
+  Not rebuilt on main (its files equal the worker's tree; the commits since its base touch other
+  files) - CI is the check. Findings F32-1, F24-1, F29-2, F18-5, F27-2, F16-5, F13-9, F28-1 set to
+  `implemented` (F13-9, F16-5, F24-1, F29-2 had been wontfix: the boundary is withdrawn; F15-4
+  stays). D4's `target` deleted, worktree removed.
+  Accepted: a link inside the repository on the way to the brief / handoffs is refused or skipped
+  (it was followed); the worktree's root handle stays open during a run, so on Windows the
+  worktree directory cannot be renamed while a reviewer runs.
+  Wave D1 launched from 272920d (worktree `agent-a2ae6fdd082032180`, 22 items). Running: D2, S2,
+  D1 - all through the compiler turn.

@@ -383,6 +383,13 @@ fn hook_lines(out: &str) -> Vec<&str> {
         .collect()
 }
 
+/// (0.2.5) The test-mode override of the hook's 2-second branch deadline, for the tests that are
+/// not about the deadline: a loaded machine must not drop the line they look for.
+const LONG_BRANCH_DEADLINE: [(&str, &str); 2] = [
+    ("CODEX_CONSULT_TEST_MODE", "1"),
+    ("CODEX_CONSULT_TEST_BRANCH_DEADLINE_MS", "60000"),
+];
+
 #[test]
 fn hook_prints_one_line_only_when_something_is_unknown() {
     let repo = fixture_repo("hook");
@@ -391,6 +398,8 @@ fn hook_prints_one_line_only_when_something_is_unknown() {
         ("C3_MAINTAIN", "off"),
         ("C3_UPDATE_CHECK", "off"),
         ("C3_REPO_MODELS", "off"),
+        LONG_BRANCH_DEADLINE[0],
+        LONG_BRANCH_DEADLINE[1],
     ];
 
     let (code, out, err) = run_c3(&repo, &["hook"], &quiet);
@@ -788,6 +797,8 @@ fn the_default_branch_is_found_independently_of_the_checkout() {
         ("C3_MAINTAIN", "off"),
         ("C3_UPDATE_CHECK", "off"),
         ("C3_REPO_MODELS", "off"),
+        LONG_BRANCH_DEADLINE[0],
+        LONG_BRANCH_DEADLINE[1],
     ];
     let (_c, out, _e) = run_c3(&d, &["hook"], &quiet);
     assert!(
@@ -1266,5 +1277,210 @@ fn set_and_clear_refuse_inside_a_c3_child() {
     let (code, _o, err) = run_c3(&repo, &["branches", "--default", "open"], &child);
     assert_eq!(code, 1, "{err}");
     assert!(err.contains("inside a C3 child"), "{err}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+fn branch_exists(repo: &Path, b: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args([
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{b}"),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+// (0.2.5) `--record-unknown` records the state on every branch that is neither merged nor recorded
+// - one line per branch, a foreign note kept below the record - and nothing else; a second run has
+// nothing to record. `waits` / `parked` need a note; inside a C3 child it is refused.
+#[test]
+fn record_unknown_records_every_unknown_branch_and_nothing_else() {
+    let repo = fixture_repo("record-unknown");
+    let (code, _o, err) = run_c3(
+        &repo,
+        &["branches", "--record-unknown", "--state", "parked"],
+        &[],
+    );
+    assert_eq!(code, 1, "parked without a note: {err}");
+    assert!(err.contains("--note"), "{err}");
+    let (code, _o, err) = run_c3(
+        &repo,
+        &[
+            "branches",
+            "--record-unknown",
+            "--state",
+            "parked",
+            "--note",
+            "old work",
+        ],
+        &[("C3_CHILD", "1")],
+    );
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("inside a C3 child"), "{err}");
+    assert_eq!(raw_description(&repo, "picked"), None);
+
+    let (code, out, err) = run_c3(
+        &repo,
+        &[
+            "branches",
+            "--record-unknown",
+            "--state",
+            "parked",
+            "--note",
+            "old work",
+            "--owner",
+            "op",
+        ],
+        &[],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 2, "{out}");
+    assert!(
+        lines[0].starts_with("c3 branches: open: c3: parked | op | "),
+        "{out}"
+    );
+    assert!(
+        lines[1].starts_with("c3 branches: picked: c3: parked | op | "),
+        "{out}"
+    );
+    let open = raw_description(&repo, "open").unwrap();
+    assert!(open.starts_with("c3: parked | op | "), "{open}");
+    assert!(open.ends_with("\nmy own note"), "{open}");
+    assert_eq!(
+        raw_description(&repo, "merged-b"),
+        None,
+        "a merged branch was recorded"
+    );
+    let j = branches_json(&repo);
+    assert_eq!(j["unknown"], 0, "{j}");
+    let (code, out, _e) = run_c3(
+        &repo,
+        &["branches", "--record-unknown", "--state", "work"],
+        &[],
+    );
+    assert_eq!(code, 0);
+    assert!(out.contains("nothing to record"), "{out}");
+    // --state without --set or --record-unknown is refused
+    let (code, _o, err) = run_c3(&repo, &["branches", "--state", "work"], &[]);
+    assert_eq!(code, 1, "{err}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5) `--close` removes a branch merged into the default branch together with its clean
+// worktree, with git's own non-forcing commands - and refuses, removing nothing, a branch that is
+// not merged, one `git branch -d` would refuse (its patches are on main, but not by ancestry), a
+// dirty, locked or link-holding worktree, the start folder's branch, the default branch, and
+// anything inside a C3 child.
+#[test]
+fn close_removes_a_merged_branch_and_its_clean_worktree_and_refuses_the_rest() {
+    let repo = fixture_repo("close");
+    let wts = scratch_dir("close-wts");
+    let add_wt = |name: &str| -> PathBuf {
+        git(&repo, &["branch", name]);
+        let p = wts.join(name);
+        git(
+            &repo,
+            &["worktree", "add", "-q", &p.to_string_lossy(), name],
+        );
+        p
+    };
+
+    // merged by ancestry, with a clean worktree: closed
+    let wt = wts.join("merged-b");
+    git(
+        &repo,
+        &["worktree", "add", "-q", &wt.to_string_lossy(), "merged-b"],
+    );
+    let (code, out, err) = run_c3(&repo, &["branches", "--close", "merged-b"], &[]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("worktree"), "{out}");
+    assert!(
+        out.contains("deleted (git branch -d; merged into main by ancestry)"),
+        "{out}"
+    );
+    assert!(!wt.exists(), "the worktree is still there");
+    assert!(!branch_exists(&repo, "merged-b"));
+
+    // not merged: refused, nothing removed
+    let (code, _o, err) = run_c3(&repo, &["branches", "--close", "open"], &[]);
+    assert_eq!(code, 1);
+    assert!(err.contains("not merged into main"), "{err}");
+    assert!(branch_exists(&repo, "open"));
+    // patches on main but not merged by ancestry: git branch -d would refuse - c3 never forces
+    let (code, _o, err) = run_c3(&repo, &["branches", "--close", "picked"], &[]);
+    assert_eq!(code, 1);
+    assert!(err.contains("git branch -d would refuse"), "{err}");
+    assert!(err.contains("never forces"), "{err}");
+    assert!(branch_exists(&repo, "picked"));
+    // the default branch
+    let (code, _o, err) = run_c3(&repo, &["branches", "--close", "main"], &[]);
+    assert_eq!(code, 1);
+    assert!(err.contains("default branch"), "{err}");
+
+    // a dirty worktree: refused, worktree and branch kept
+    let dirty = add_wt("dirty");
+    std::fs::write(dirty.join("scratch.txt"), "x\n").unwrap();
+    let (code, _o, err) = run_c3(&repo, &["branches", "--close", "dirty"], &[]);
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("uncommitted changes or untracked files"),
+        "{err}"
+    );
+    assert!(dirty.join("scratch.txt").exists() && branch_exists(&repo, "dirty"));
+
+    // a locked worktree
+    let locked = add_wt("locked");
+    git(&repo, &["worktree", "lock", &locked.to_string_lossy()]);
+    let (code, _o, err) = run_c3(&repo, &["branches", "--close", "locked"], &[]);
+    assert_eq!(code, 1);
+    assert!(err.contains("is locked"), "{err}");
+    assert!(locked.exists() && branch_exists(&repo, "locked"));
+
+    // a link inside the worktree that leads outside it: refused, the target untouched
+    let linked = add_wt("linked");
+    let outside = scratch_dir("close-outside");
+    std::fs::write(outside.join("keep.txt"), "keep\n").unwrap();
+    dir_link(&linked.join("out"), &outside);
+    let (code, _o, err) = run_c3(&repo, &["branches", "--close", "linked"], &[]);
+    assert_eq!(code, 1);
+    assert!(err.contains("links that lead outside it (out)"), "{err}");
+    assert!(outside.join("keep.txt").exists());
+    assert!(linked.exists() && branch_exists(&repo, "linked"));
+    remove_dir_link(&linked.join("out"));
+
+    // inside a C3 child: refused
+    let clean = add_wt("clean");
+    let (code, _o, err) = run_c3(
+        &repo,
+        &["branches", "--close", "clean"],
+        &[("C3_CHILD", "1")],
+    );
+    assert_eq!(code, 1);
+    assert!(err.contains("inside a C3 child"), "{err}");
+    assert!(clean.exists() && branch_exists(&repo, "clean"));
+    // ...and closed outside one, run from the start folder
+    let (code, out, err) = run_c3(&repo, &["branches", "--close", "clean", "--json"], &[]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let v: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["closed"], true, "{v}");
+    assert!(!clean.exists() && !branch_exists(&repo, "clean"));
+
+    // the start folder's branch: refused
+    git(&repo, &["branch", "here"]);
+    git(&repo, &["checkout", "-q", "here"]);
+    let (code, _o, err) = run_c3(&repo, &["branches", "--close", "here"], &[]);
+    assert_eq!(code, 1);
+    assert!(err.contains("start folder"), "{err}");
+    git(&repo, &["checkout", "-q", "main"]);
+    assert!(branch_exists(&repo, "here"));
+
+    let _ = std::fs::remove_dir_all(&outside);
+    let _ = std::fs::remove_dir_all(&wts);
     let _ = std::fs::remove_dir_all(&repo);
 }

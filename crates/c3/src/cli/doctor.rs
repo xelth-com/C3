@@ -237,6 +237,7 @@ pub fn run(args: DoctorArgs) -> i32 {
             })).collect::<Vec<_>>(),
             "snapshot_count": report.snapshot_count,
             "snapshot_bytes": report.snapshot_bytes,
+            "git": { "version": report.git_version, "problem": report.git_problem },
             "branches": report.branches.as_ref().map(|b| serde_json::json!({
                 "default_branch": b.default_branch,
                 "default_branch_error": b.default_unknown_text(),
@@ -348,6 +349,12 @@ pub fn run(args: DoctorArgs) -> i32 {
             println!("[ok] c3 mcp is registered in .mcp.json");
         } else {
             println!("[!] c3 mcp is NOT registered in .mcp.json (run `c3 init`)");
+        }
+
+        // (0.2.5) revisions reach git after `--end-of-options` (git 2.30 or later)
+        match &report.git_problem {
+            Some(p) => println!("[!] {p}"),
+            None => println!("[ok] git {}", report.git_version),
         }
 
         if report.eck_core_in.is_empty() && report.eck_rule_files.is_empty() {

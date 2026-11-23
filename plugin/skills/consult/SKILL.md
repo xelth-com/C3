@@ -72,6 +72,13 @@ On a resume, write it as a **delta since the last review** plus pointers, but st
 invariants explicitly. Do not paste the brief body into `--prompt`: the reviewer reads the
 file; the prompt only points at it.
 
+**The reviewer cannot see your knowledge base or your memory.** It reads the repository (and the
+task files staged for it) and nothing else - not the project's knowledge base behind MCP, not
+your memory files, not this conversation. C3 hands it no knowledge-base credential and fetches
+nothing for it, because either would send that content to an outside provider. Quote what the
+reviewer needs in the brief; a project may forbid a topic to go to a panel at all - then it stays
+out of the brief too.
+
 ## 2. Run one command
 
 One reviewer:

@@ -34,7 +34,7 @@ hand it to a cheap roster member. `--effort` and `--max-words` override the pres
 | `--mode new\|fork\|resume` | empty = auto: fork the newest thread of this lineage, else new |
 | `--thread <uuid>` | pick a specific parent; needs `--mode fork` or `resume` |
 | `--brief <path>` | the brief file; `c3` never writes briefs |
-| `--prompt <text>` | the one-line ask (points at the brief; do not paste the brief here) |
+| `--prompt <text>` | the one-line ask (points at the brief; do not paste the brief here). The reviewer sees the repository and the staged task files only - never your knowledge base or memory: quote what it needs in the brief (a project may forbid a topic to go to a panel at all) |
 | `--model <id>` | omit and the model comes from the roster entry, else the Codex config top level |
 | `--purpose <name>` | see table above |
 | `--effort low\|medium\|high\|xhigh` | overrides the purpose preset |

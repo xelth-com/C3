@@ -40,29 +40,31 @@ const CODEX_MISSING: &str =
 pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // (0.2.5, S1) the hook never moves C3's project folder, whatever collab path it looks at
     crate::state_dir::forbid_moves();
-    println!("{}", line(collab_dir));
-    println!("{}", pointer_line(explain_command));
+    // (0.2.5) every line goes out through `emit`: at most MAX_LINE_CHARS characters, cut at a
+    // character boundary - the SessionStart scripts forward the lines as they are
+    emit(&line(collab_dir));
+    emit(&pointer_line(explain_command));
     // (R30 wave-boundary compaction) after a compaction the coordinator has lost the in-context
     // memory of who it is coordinating; restore it from the record it would itself write
     // (CODEX_CONSULT_COORDINATOR, resolved against the roster) so it can pick its detached runs
     // (the first line already names them) back up. Printed ONLY for the `compact` source.
     if source.eq_ignore_ascii_case("compact") {
         if let Some(l) = compaction_line() {
-            println!("{l}");
+            emit(&l);
         }
     }
     // (wave 11) one extra line when C3 has a newer release on record: the cache is refreshed if it
     // is stale (within the 3 s budget) and the check is on; any error, a disabled check or an
     // up-to-date install prints nothing, so startup/resume/compact output is otherwise unchanged.
     if let Some(l) = crate::update::hook_line(chrono::Utc::now()) {
-        println!("{l}");
+        emit(&l);
     }
     // (c3 maintain) one extra line when a finished maintenance pass has not been reported yet; the
     // hook also starts a detached pass when one is due and the feature is on. Silent on any error,
     // nothing printed when there is nothing to say, so startup/resume/compact output is otherwise
     // unchanged and never blocked.
     if let Some(l) = crate::maintain::hook_line(chrono::Utc::now()) {
-        println!("{l}");
+        emit(&l);
     }
     // (repo model settings) C3 repairs this repository's stale agent model pins and lets AGENTS.md
     // follow the roster's successor, printing one line only when it changed something or could not
@@ -70,7 +72,7 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // child. No process at all is started (the root is found by walking up to `.git`), nothing is
     // written outside the repo root, a file is replaced by rename, never written through.
     if let Some(l) = crate::setup::repo_models::hook_line() {
-        println!("{l}");
+        emit(&l);
     }
     // (branches) one line when a branch or worktree has no recorded state, the default branch is
     // unknown, or the start folder is not on the default branch. Default ON (`C3_BRANCH_CHECK=off`
@@ -78,8 +80,8 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // `git cherry`, no `git status`), every error swallowed, nothing inside a C3 child or outside a
     // git repository - and (0.2.5, F02-6) all of its git calls share ONE deadline: past it the line
     // is dropped, its git children are killed (R2, F13-5) and the hook goes on.
-    if let Some(l) = branch_line_within(BRANCH_LINE_DEADLINE) {
-        println!("{l}");
+    if let Some(l) = branch_line_within(branch_line_deadline()) {
+        emit(&l);
     }
     // (0.2.5, red CI) one line when the latest completed CI run of the default branch failed, read
     // through `gh`: at most one call per repository and day (the attempt is cached in C3's state
@@ -87,13 +89,52 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // `"ci_check": false`, and inside a C3 child. (R4, F16-3) Every git and `gh` process of the check
     // runs under ONE deadline (`ci_check::HOOK_DEADLINE`, 3 s) and is killed when it fires.
     if let Some(l) = crate::ci_check::hook_line() {
-        println!("{l}");
+        emit(&l);
     }
     0
 }
 
+/// (0.2.5) The longest line `c3 hook` prints, in characters (Unicode scalar values). The cap is
+/// the hook's own - the SessionStart scripts (`plugin/hooks/c3-hook.ps1` and `c3-hook.sh`) forward
+/// the lines as they are, so both print the same text whatever the line holds.
+pub const MAX_LINE_CHARS: usize = 400;
+
+/// The printed form of one line of the hook: carriage returns removed (`c3-hook.sh` drops every one,
+/// the `.ps1` would keep an inner one), trailing white space trimmed, and a line longer than
+/// [`MAX_LINE_CHARS`] characters cut at a character boundary to `MAX_LINE_CHARS - 3` characters with
+/// `...` appended - never longer than [`MAX_LINE_CHARS`].
+pub fn capped_line(text: &str) -> String {
+    let clean: String = text.chars().filter(|c| *c != '\r').collect();
+    let clean = clean.trim_end();
+    if clean.chars().count() <= MAX_LINE_CHARS {
+        return clean.to_string();
+    }
+    let mut cut: String = clean.chars().take(MAX_LINE_CHARS - 3).collect();
+    cut.push_str("...");
+    cut
+}
+
+/// Print one hook message: each of its lines (a message is one line; an inner line break starts a
+/// line of its own) through [`capped_line`].
+fn emit(text: &str) {
+    for l in text.split('\n') {
+        println!("{}", capped_line(l));
+    }
+}
+
 /// (0.2.5, F02-6) The one deadline of the branch line's git calls.
 pub const BRANCH_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The branch line's deadline: [`BRANCH_LINE_DEADLINE`], or - in test mode only (`c3_core::
+/// test_hooks`) - `CODEX_CONSULT_TEST_BRANCH_DEADLINE_MS` milliseconds: the tests that are not about
+/// the deadline give it a long one, so a loaded machine does not drop the line they look for.
+fn branch_line_deadline() -> std::time::Duration {
+    c3_core::test_hooks::hook("CODEX_CONSULT_TEST_BRANCH_DEADLINE_MS")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(BRANCH_LINE_DEADLINE)
+}
 
 /// The branch line, or `None` when it is not ready within `deadline` (a slow or stalled git, a slow
 /// file system): the scan runs on a thread of its own ([`crate::bounded::within`]), and one that
@@ -342,6 +383,42 @@ mod tests {
     #[test]
     fn codex_missing_message() {
         assert!(CODEX_MISSING.starts_with("codex-consult: codex CLI not found on PATH"));
+    }
+
+    // (0.2.5) `c3 hook` caps its own lines - at most 400 characters (not bytes, not UTF-16 units),
+    // cut at a character boundary with `...` appended - so the scripts can forward them as they are.
+    #[test]
+    fn hook_lines_are_capped_at_400_characters_on_a_character_boundary() {
+        let short = "c3: fine";
+        assert_eq!(capped_line(short), short);
+        let ascii = format!("c3: {}", "x".repeat(600));
+        let cut = capped_line(&ascii);
+        assert_eq!(cut.chars().count(), MAX_LINE_CHARS);
+        assert_eq!(cut, format!("c3: {}...", "x".repeat(393)));
+        // non-ASCII: two-byte letters and four-byte emoji (two UTF-16 units each) count once
+        let wide = format!("c3: {}{}", "ü".repeat(300), "\u{1F600}".repeat(200));
+        let cut = capped_line(&wide);
+        assert_eq!(cut.chars().count(), MAX_LINE_CHARS);
+        assert_eq!(
+            cut,
+            format!("c3: {}{}...", "ü".repeat(300), "\u{1F600}".repeat(93))
+        );
+        // exactly 400 characters: unchanged, even when that is 1600 bytes
+        let full = "\u{1F600}".repeat(MAX_LINE_CHARS);
+        assert_eq!(capped_line(&full), full);
+        // carriage returns go, trailing white space is trimmed
+        assert_eq!(capped_line("c3: a\rb  \r"), "c3: ab");
+    }
+
+    // (0.2.5) The branch line's deadline has a test-mode override; without the mode it is ignored.
+    #[test]
+    fn the_branch_deadline_is_two_seconds_unless_a_test_overrides_it() {
+        if !c3_core::test_hooks::mode_on()
+            && std::env::var("CODEX_CONSULT_TEST_BRANCH_DEADLINE_MS").is_err()
+        {
+            assert_eq!(branch_line_deadline(), BRANCH_LINE_DEADLINE);
+        }
+        assert_eq!(BRANCH_LINE_DEADLINE, std::time::Duration::from_secs(2));
     }
 
     #[test]

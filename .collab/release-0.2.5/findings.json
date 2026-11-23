@@ -14556,7 +14556,7 @@
                      },
                      {
                          "id":  "F13-9",
-                         "status":  "wontfix",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -14615,6 +14615,15 @@
                                              "evidence":  "",
                                              "base_commit":  "4f430740c2ce1936fdff3649d67ed21d7ca1e5d4",
                                              "tree_sha256":  "24740c634eea47b9ef4f3e8dcd83c3fd0e88e4e175f7299e02d207591bbcdf8d"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T11:00:45+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave D4, commit 272920d: the operation is done relative to verified directory handles (contain.rs); a race test swaps a directory for a link between validation and use",
+                                             "evidence":  "",
+                                             "base_commit":  "272920dff3ea5a59d905541f017d8bdd7b8c914b",
+                                             "tree_sha256":  "974cd3dbaddc9a7fc79f5869af92682ce3922bd497dff53f0a8491c29a721521"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -17159,7 +17168,7 @@
                      },
                      {
                          "id":  "F16-5",
-                         "status":  "wontfix",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -17218,6 +17227,15 @@
                                              "evidence":  "",
                                              "base_commit":  "4f430740c2ce1936fdff3649d67ed21d7ca1e5d4",
                                              "tree_sha256":  "24740c634eea47b9ef4f3e8dcd83c3fd0e88e4e175f7299e02d207591bbcdf8d"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T11:00:44+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave D4, commit 272920d: the operation is done relative to verified directory handles (contain.rs); a race test swaps a directory for a link between validation and use",
+                                             "evidence":  "",
+                                             "base_commit":  "272920dff3ea5a59d905541f017d8bdd7b8c914b",
+                                             "tree_sha256":  "974cd3dbaddc9a7fc79f5869af92682ce3922bd497dff53f0a8491c29a721521"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -20332,6 +20350,15 @@
                                              "evidence":  "",
                                              "base_commit":  "5d92ca7df38381bccc1fde4d2092a60efcb1bc92",
                                              "tree_sha256":  "c72895bf7d2cf18ad6eb3db86205be6bd5c14cadc326afc49a7b0a90ecb6a291"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T11:00:43+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave D4, commit 272920d: the operation is done relative to verified directory handles (contain.rs); a race test swaps a directory for a link between validation and use",
+                                             "evidence":  "",
+                                             "base_commit":  "272920dff3ea5a59d905541f017d8bdd7b8c914b",
+                                             "tree_sha256":  "974cd3dbaddc9a7fc79f5869af92682ce3922bd497dff53f0a8491c29a721521"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -22338,7 +22365,7 @@
                      },
                      {
                          "id":  "F24-1",
-                         "status":  "wontfix",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -22402,6 +22429,15 @@
                                              "evidence":  "",
                                              "base_commit":  "fdf193a2bb3b3d85fbaf5abb1e45b115ea860a5f",
                                              "tree_sha256":  "77688b0410062189ede5d079a758e8f9acf4c556a9f55ac1cc090c42e6de50f1"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T11:00:42+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave D4, commit 272920d: the operation is done relative to verified directory handles (contain.rs); a race test swaps a directory for a link between validation and use",
+                                             "evidence":  "",
+                                             "base_commit":  "272920dff3ea5a59d905541f017d8bdd7b8c914b",
+                                             "tree_sha256":  "974cd3dbaddc9a7fc79f5869af92682ce3922bd497dff53f0a8491c29a721521"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -23014,7 +23050,7 @@
                      },
                      {
                          "id":  "F27-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -23069,6 +23105,15 @@
                                              "evidence":  "",
                                              "base_commit":  "fdf193a2bb3b3d85fbaf5abb1e45b115ea860a5f",
                                              "tree_sha256":  "77688b0410062189ede5d079a758e8f9acf4c556a9f55ac1cc090c42e6de50f1"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T11:00:44+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave D4, commit 272920d: the operation is done relative to verified directory handles (contain.rs); a race test swaps a directory for a link between validation and use",
+                                             "evidence":  "",
+                                             "base_commit":  "272920dff3ea5a59d905541f017d8bdd7b8c914b",
+                                             "tree_sha256":  "974cd3dbaddc9a7fc79f5869af92682ce3922bd497dff53f0a8491c29a721521"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -23252,7 +23297,7 @@
                      },
                      {
                          "id":  "F28-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -23302,6 +23347,15 @@
                                              "evidence":  "",
                                              "base_commit":  "fdf193a2bb3b3d85fbaf5abb1e45b115ea860a5f",
                                              "tree_sha256":  "77688b0410062189ede5d079a758e8f9acf4c556a9f55ac1cc090c42e6de50f1"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T11:00:45+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave D4, commit 272920d: the operation is done relative to verified directory handles (contain.rs); a race test swaps a directory for a link between validation and use",
+                                             "evidence":  "",
+                                             "base_commit":  "272920dff3ea5a59d905541f017d8bdd7b8c914b",
+                                             "tree_sha256":  "974cd3dbaddc9a7fc79f5869af92682ce3922bd497dff53f0a8491c29a721521"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -23607,7 +23661,7 @@
                      },
                      {
                          "id":  "F29-2",
-                         "status":  "wontfix",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -23663,6 +23717,15 @@
                                              "evidence":  "",
                                              "base_commit":  "fdf193a2bb3b3d85fbaf5abb1e45b115ea860a5f",
                                              "tree_sha256":  "77688b0410062189ede5d079a758e8f9acf4c556a9f55ac1cc090c42e6de50f1"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T11:00:42+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave D4, commit 272920d: the operation is done relative to verified directory handles (contain.rs); a race test swaps a directory for a link between validation and use",
+                                             "evidence":  "",
+                                             "base_commit":  "272920dff3ea5a59d905541f017d8bdd7b8c914b",
+                                             "tree_sha256":  "974cd3dbaddc9a7fc79f5869af92682ce3922bd497dff53f0a8491c29a721521"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -24618,7 +24681,7 @@
                      },
                      {
                          "id":  "F32-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -24685,6 +24748,15 @@
                                              "evidence":  "",
                                              "base_commit":  "fdf193a2bb3b3d85fbaf5abb1e45b115ea860a5f",
                                              "tree_sha256":  "77688b0410062189ede5d079a758e8f9acf4c556a9f55ac1cc090c42e6de50f1"
+                                         },
+                                         {
+                                             "when":  "2026-11-23T11:00:41+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave D4, commit 272920d: the operation is done relative to verified directory handles (contain.rs); a race test swaps a directory for a link between validation and use",
+                                             "evidence":  "",
+                                             "base_commit":  "272920dff3ea5a59d905541f017d8bdd7b8c914b",
+                                             "tree_sha256":  "974cd3dbaddc9a7fc79f5869af92682ce3922bd497dff53f0a8491c29a721521"
                                          }
                                      ],
                          "reviewer_checks":  [

@@ -506,10 +506,10 @@ pub fn enabled() -> bool {
 
 /// (0.2.5, F02-6) The repository root WITHOUT running git: the nearest directory, from `start`
 /// upwards, holding a `.git` entry. (R2, F13-2) That entry decides: the directory is the root only
-/// when its `.git` is a repository ([`is_git_entry`]: a directory holding `HEAD`, or the `gitdir:`
-/// file of a linked worktree or a submodule whose target directory holds `HEAD`); a stray `.git`
-/// (an empty file, a broken link, a non-repository directory) means no root - `None`, and the
-/// repair does nothing. `None` too when no ancestor has a `.git` entry.
+/// when its `.git` is a repository the way git itself recognises one ([`is_git_entry`]: a git
+/// directory, or the `gitdir:` file of a linked worktree or a submodule naming one); a stray `.git`
+/// (an empty file, a broken link, a directory that is no git directory) means no root - `None`,
+/// and the repair does nothing. `None` too when no ancestor has a `.git` entry.
 pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
     let mut dir = Some(start);
     while let Some(d) = dir {
@@ -522,10 +522,10 @@ pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Whether a `.git` entry is a repository, read without running git and without following a link:
-/// a real directory (not a link) that holds `HEAD`, or a regular file (not a link) whose first line
-/// is `gitdir: <path>` naming a directory - relative paths against the file's own directory - that
-/// holds `HEAD`. Anything else is not.
+/// Whether a `.git` entry is a repository, read without running git and without following the entry
+/// itself: a real directory (not a link) that is a git directory ([`is_git_dir`]), or a regular
+/// file (not a link) whose first line is `gitdir: <path>` naming one - relative paths against the
+/// file's own directory. Anything else is not.
 fn is_git_entry(dotgit: &Path) -> bool {
     let Ok(m) = std::fs::symlink_metadata(dotgit) else {
         return false;
@@ -534,7 +534,7 @@ fn is_git_entry(dotgit: &Path) -> bool {
         return false;
     }
     if m.file_type().is_dir() {
-        return dotgit.join("HEAD").is_file();
+        return is_git_dir(dotgit);
     }
     if !m.file_type().is_file() {
         return false;
@@ -565,7 +565,108 @@ fn is_git_entry(dotgit: &Path) -> bool {
             None => return false,
         }
     };
-    target.is_dir() && target.join("HEAD").is_file()
+    is_git_dir(&target)
+}
+
+/// (0.2.5, F13-2) git's own test of a git directory (`is_git_directory` in git's `setup.c`): it
+/// holds `HEAD`, and its common directory - the one its `commondir` file names (relative paths
+/// against the directory itself: a linked worktree's `.git/worktrees/<name>` names `../..`), else
+/// the directory itself - holds an `objects` and a `refs` directory.
+fn is_git_dir(dir: &Path) -> bool {
+    if !dir.is_dir() || !dir.join("HEAD").is_file() {
+        return false;
+    }
+    let common = match std::fs::read_to_string(dir.join("commondir")) {
+        Ok(text) => {
+            let Some(line) = text.lines().next().map(str::trim).filter(|l| !l.is_empty()) else {
+                return false;
+            };
+            let p = Path::new(line);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                dir.join(p)
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => dir.to_path_buf(),
+        Err(_) => return false,
+    };
+    common.join("objects").is_dir() && common.join("refs").is_dir()
+}
+
+#[cfg(test)]
+mod git_dir_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "c3-gitdir-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|t| t.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// A git directory shaped by hand: `HEAD`, and `objects` / `refs` when `full`.
+    fn git_dir(at: &Path, full: bool) {
+        std::fs::create_dir_all(at).unwrap();
+        std::fs::write(at.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        if full {
+            std::fs::create_dir_all(at.join("objects")).unwrap();
+            std::fs::create_dir_all(at.join("refs")).unwrap();
+        }
+    }
+
+    // (0.2.5, F13-2) A `.git` directory counts only with `HEAD`, `objects` and `refs`; a `gitdir:`
+    // file only when its target passes the same test - for a linked worktree, `HEAD` and `commondir`
+    // in the target and the common directory passing it.
+    #[test]
+    fn a_repository_is_recognised_the_way_git_recognises_one() {
+        let base = scratch("recognise");
+        // HEAD alone is not a repository
+        let half = base.join("half");
+        git_dir(&half.join(".git"), false);
+        assert_eq!(find_repo_root(&half), None);
+        // HEAD, objects and refs: the root
+        let full = base.join("full");
+        git_dir(&full.join(".git"), true);
+        std::fs::create_dir_all(full.join("sub")).unwrap();
+        assert_eq!(find_repo_root(&full.join("sub")), Some(full.clone()));
+        // a gitdir file naming a HEAD-only directory, then a full one
+        let module = base.join("module");
+        std::fs::create_dir_all(&module).unwrap();
+        git_dir(&base.join("modgit"), false);
+        std::fs::write(module.join(".git"), "gitdir: ../modgit\n").unwrap();
+        assert_eq!(find_repo_root(&module), None);
+        git_dir(&base.join("modgit"), true);
+        assert_eq!(find_repo_root(&module), Some(module.clone()));
+        // a linked worktree: HEAD and commondir in the target, the common directory full
+        let common = base.join("main.git");
+        git_dir(&common, true);
+        let admin = common.join("worktrees").join("wt");
+        git_dir(&admin, false);
+        std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+        let wt = base.join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}\n", admin.to_string_lossy()),
+        )
+        .unwrap();
+        assert_eq!(find_repo_root(&wt), Some(wt.clone()));
+        // ...whose common directory lacks refs: not a repository
+        std::fs::remove_dir_all(common.join("refs")).unwrap();
+        assert_eq!(find_repo_root(&wt), None);
+        // ...or whose commondir names nothing
+        std::fs::create_dir_all(common.join("refs")).unwrap();
+        std::fs::write(admin.join("commondir"), "../nowhere\n").unwrap();
+        assert_eq!(find_repo_root(&wt), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 /// The hook's line for a repair pass: what was refreshed and what could not be, in one line;
@@ -1135,9 +1236,20 @@ mod tests {
         assert!(find_repo_root(&deep).is_none_or(|r| !r.starts_with(&base)));
         std::fs::create_dir_all(repo.join(".git").join("worktrees").join("wt")).unwrap();
         std::fs::write(repo.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        // (0.2.5, F13-2) git's own test: objects and refs too; a linked worktree's commondir
+        std::fs::create_dir_all(repo.join(".git").join("objects")).unwrap();
+        std::fs::create_dir_all(repo.join(".git").join("refs")).unwrap();
         std::fs::write(
             repo.join(".git").join("worktrees").join("wt").join("HEAD"),
             "0123\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join(".git")
+                .join("worktrees")
+                .join("wt")
+                .join("commondir"),
+            "../..\n",
         )
         .unwrap();
         assert_eq!(find_repo_root(&deep), Some(repo.clone()));
@@ -1174,6 +1286,10 @@ mod tests {
         std::fs::write(&dotgit, "gitdir: ../admin\n").unwrap();
         assert_eq!(find_repo_root(&deep), None);
         std::fs::write(target.join("HEAD"), "0123\n").unwrap();
+        // (0.2.5, F13-2) HEAD alone is not enough: objects and refs too
+        assert_eq!(find_repo_root(&deep), None);
+        std::fs::create_dir_all(target.join("objects")).unwrap();
+        std::fs::create_dir_all(target.join("refs")).unwrap();
         assert_eq!(find_repo_root(&deep), Some(dir.clone()));
         // an absolute target is read as such
         std::fs::write(&dotgit, format!("gitdir: {}\n", target.display())).unwrap();
@@ -1183,6 +1299,9 @@ mod tests {
         std::fs::create_dir_all(&dotgit).unwrap();
         assert_eq!(find_repo_root(&deep), None);
         std::fs::write(dotgit.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert_eq!(find_repo_root(&deep), None);
+        std::fs::create_dir_all(dotgit.join("objects")).unwrap();
+        std::fs::create_dir_all(dotgit.join("refs")).unwrap();
         assert_eq!(find_repo_root(&deep), Some(dir.clone()));
         let _ = std::fs::remove_dir_all(&base);
     }

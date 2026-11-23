@@ -709,6 +709,22 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
 - **No snapshot by default.** `c3 finish` / `c3 fail` write the report, the journal entry and (finish)
   the commit. `--snapshot` (MCP: `"snapshot": true`) adds the hand-off snapshot for a web reviewer
   that has no bridge; `c3 snapshot --state` writes one on its own.
+- **Pre-finish checks.** A repository's own checks go in `.c3/config.json`, e.g.
+  `{"finish_checks": ["cargo fmt --all -- --check"]}`: an array of command lines. `c3 finish` runs
+  them BEFORE it writes or stages anything - in order, in the repository root, through the shell
+  (`sh -c`, Windows `cmd /D /S /C`), each under a 120 s deadline that stops it with everything it
+  started, each with `C3_CHILD=1`. The first one that fails ends it: `c3 finish` prints its name,
+  its exit code and the last 20 lines of its output, and nothing is written, staged or committed.
+  `--skip-checks` (MCP: `"skip_checks": true`) finishes without them and says so in its output and
+  in the journal entry. No file
+  or no key: no checks. A file that does not parse refuses the finish (fix it, or `--skip-checks`).
+  The file is per repository and only read - C3 never creates it.
+- **The secret gate reads values, not words.** Before it commits, `c3 finish` scans the lines the
+  commit adds with the pack redactor and refuses a secret-shaped value (naming the file and the
+  kind, never the value); `--allow-secret <path>` (MCP: `"allow_secret": [paths]`) lets a reviewed
+  file through, never the commit message. A keyword assignment counts only with a value that can be
+  a secret: a single dictionary-shaped word (`auth = "endpoint"`) never does, and under the bare
+  keyword `auth` only a key-shaped value (16+ characters, no space, two kinds of character) does.
 - **Kept out of what leaves the machine.** Reviewer packs, snapshots, `c3 fetch` and `--diff`
   patches leave out `.c3/` and `.eck/` (compared case-insensitively on Windows and macOS). The
   project's "never put in AI context" list is `.c3ignore` (gitignore syntax, per directory); a
@@ -776,8 +792,17 @@ one session's memory. C3 keeps the state in the repository and checks it.
   branch's upstream as the local refs know it (no fetch) and its uncommitted-change count. `--json`
   gives the same data. `c3 branches --set <branch> --state work|waits|parked --note "<text>"
   [--owner <name>]` records a state (the owner defaults to `CODEX_CONSULT_COORDINATOR`; `waits` and
-  `parked` need a note); `c3 branches --clear <branch>` removes it. Both refuse inside a session C3
-  itself started (`C3_CHILD`). Nothing is ever deleted or merged.
+  `parked` need a note); `c3 branches --clear <branch>` removes it; `c3 branches --record-unknown
+  --state <state> --note "<text>"` records that state on every unknown branch at once (one line per
+  branch; for a project whose first listing shows every old branch as unknown). All of them refuse
+  inside a session C3 itself started (`C3_CHILD`). Nothing is ever merged.
+- **`c3 branches --close <branch>`** does what a session does by hand after a merge, and only then:
+  the branch must be merged into the default branch by ancestry (or have every patch there, `git
+  cherry`) and `git branch -d` itself must accept it (merged into its upstream, else into the
+  current checkout's HEAD - checked first, so nothing is half done); its worktree, when it has one,
+  must be clean, not locked, not the start folder nor the checkout C3 runs in, and free of links
+  that lead outside it. Then `git worktree remove` WITHOUT `--force` and `git branch -d`. Anything
+  else is refused with the reason; nothing is ever forced. Refused inside a C3 child.
 - **The checks.** `c3 doctor` reports unknown branches and unrecorded worktrees as leftovers (exit 1)
   and warns, without changing the exit code, when the start folder is off the default branch or
   dirty. The SessionStart hook prints one line only when there is something to say (cheap: ancestry
@@ -790,8 +815,12 @@ one session's memory. C3 keeps the state in the repository and checks it.
   `CI: the latest completed run on main failed (run <id>) - gh run view <id>` when it failed - no
   run title or other text from GitHub; never a refusal, every git and gh process under one 10 s
   (hook: 3 s) deadline, silent without `gh`, a login, a GitHub remote (the remote URL's host is
-  `github.com`) or a default branch, and the hook asks once a day per repository. Switch (default
-  ON): `C3_CI_CHECK=off`, or `"ci_check": false` in `<codex home>/c3/config.json`.
+  `github.com`, `www.github.com` or `ssh.github.com`) or a default branch. The branch is the one the
+  clone names (`c3.defaultBranch`, else `origin/HEAD`); when the clone names none, `gh repo view`
+  is asked once for GitHub's default and the answer is kept for a day - a local `main` is never
+  taken for it. The hook asks once a day per repository: the session that creates the day's claim
+  file asks, another one starting at the same moment prints nothing. Switch (default ON):
+  `C3_CI_CHECK=off`, or `"ci_check": false` in `<codex home>/c3/config.json`.
 - **Old rule text is completed.** `c3 init` never rewrites `.claude/rules/02-delegation.md`; `c3 doctor`
   reports a C3-written copy that lacks the "BRANCHES AND WORKTREES" section and `c3 doctor --fix`
   appends exactly that section. C3 recognises its own copy by the template's title line alone;

@@ -278,6 +278,14 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
     if !o.diff.is_empty() {
         super::reviewed::parse_diff_spec(&o.diff)?;
     }
+    // (0.2.5) both reach git after `--end-of-options` (git 2.30): an older git refuses here, before
+    // anything starts, instead of failing inside git
+    if !o.rev.is_empty() || !o.diff.is_empty() {
+        if let Some(p) = crate::setup::doctor::git_version_problem() {
+            let flag = if o.rev.is_empty() { "-Diff" } else { "-Rev" };
+            return Err(format!("{flag} is refused before anything starts: {p}."));
+        }
+    }
     if o.sandbox == "danger-full-access" {
         return Err("-Sandbox danger-full-access is refused: consultations run without write access to your machine.".into());
     }

@@ -36,6 +36,10 @@ pub struct FinishArgs {
     /// Let a reviewed file past the secret gate (repeatable; repo-relative path).
     #[arg(long = "allow-secret")]
     pub allow_secret: Vec<String>,
+    /// Finish without the repository's pre-finish checks (`"finish_checks"` in `.c3/config.json`);
+    /// the output and the journal entry say they were skipped.
+    #[arg(long)]
+    pub skip_checks: bool,
     /// Where consultations are stored; a relative path resolves against the repo root.
     #[arg(long, default_value = ".collab")]
     pub collab_dir: String,
@@ -82,6 +86,7 @@ pub fn run(args: FinishArgs) -> i32 {
         snapshot: args.snapshot,
         allow_empty: args.allow_empty,
         allow_secret: args.allow_secret,
+        skip_checks: args.skip_checks,
     };
 
     match finish::run_finish(&opts) {
@@ -121,9 +126,17 @@ pub fn run(args: FinishArgs) -> i32 {
                     "pruned": r.pruned,
                     "branches": branches_json,
                     "ci": ci.as_ref().map(crate::ci_check::CiFailure::json),
+                    "checks": {
+                        "passed": r.checks.passed,
+                        "skipped": r.checks.skip_requested,
+                        "not_run": r.checks.skipped,
+                    },
                 });
                 println!("{obj}");
             } else {
+                if let Some(l) = r.checks.line() {
+                    println!("{l}");
+                }
                 let short = r.commit.chars().take(7).collect::<String>();
                 println!("Committed {short}");
                 println!("Staged {} file(s):", r.staged.len());
@@ -161,6 +174,7 @@ pub fn run(args: FinishArgs) -> i32 {
                 FinishError::NothingToCommit
                 | FinishError::Secrets(_)
                 | FinishError::MessageSecret(_)
+                | FinishError::CheckFailed(_)
                 | FinishError::Other(_) => 1,
             }
         }

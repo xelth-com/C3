@@ -11,6 +11,40 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Added
 
+- **`c3 finish` runs the repository's own checks first.** CI sat red for a week on a formatting
+  failure nobody had run locally. A repository lists its checks in `.c3/config.json` as
+  `"finish_checks": ["cargo fmt --all -- --check", ...]` (per repository; C3's own configuration is
+  per machine, and the file is only read, never created). `c3 finish` runs them before it writes or
+  stages anything - in order, in the repository root, through the shell, each with `C3_CHILD=1` and
+  under its own 120 s deadline through the shared deadline-bound runner - and the first that fails
+  refuses the finish with its name, its exit code and the last 20 lines of its output: nothing is
+  written, staged or committed. `--skip-checks` (the MCP tool: `skip_checks`) goes on without them
+  and says so in the output and in the journal entry; a list that does not parse refuses (fix it, or
+  skip); no list, no checks.
+  Tests: `finish::checks` unit tests (the list, the tail, the message, a check run in the repository
+  as a child, a check stopped at its deadline) and `finish.rs`'s
+  `a_failing_pre_finish_check_refuses_with_nothing_staged` and
+  `passing_pre_finish_checks_run_in_the_repository_as_a_child`.
+- **`c3 branches --record-unknown` and `--close`.** The two leftovers of the branch rules of
+  2026-11-18. `--record-unknown --state <s> --note "<text>"` records that state on every branch the
+  listing calls unknown (not merged, no recorded state), one line per branch, nothing else - for a
+  project whose first listing shows every old branch as unknown. `--close <branch>` does what a
+  session does by hand after a merge: the branch must be merged into the default branch by ancestry
+  (or have every patch there), `git branch -d` itself must accept it (checked before anything is
+  touched), and its worktree, when it has one, must be clean, not locked, not the start folder nor
+  the checkout C3 runs in, and free of links that lead outside it; then `git worktree remove`
+  without `--force` and `git branch -d`. Anything else is refused with the reason, nothing is ever
+  forced, and both refuse inside a C3 child. Tests: `branches.rs`'s
+  `record_unknown_records_every_unknown_branch_and_nothing_else` and
+  `close_removes_a_merged_branch_and_its_clean_worktree_and_refuses_the_rest`.
+- **`c3 doctor` checks the git version.** Since wave R5 revisions reach git after
+  `--end-of-options`, which needs git 2.30. `c3 doctor` reports an older git as a problem - one line
+  naming the installed and the required version (`--json`: `git {version, problem}`) - and `c3
+  consult --rev` / `--diff` on an older git refuse before anything starts instead of failing inside
+  git. Tests: the parser unit test in `setup/doctor.rs` and `init_doctor.rs`'s
+  `an_old_git_is_a_doctor_problem_and_refuses_consult_rev_and_diff` (the installed version from a
+  test hook).
+
 - **A roster id spelled differently from the catalog is still matched.** A plan may write a model
   with a leading token the public catalog leaves out (`kimi-code/k3.1-pro` or `kimi-k3.1-pro` on
   the roster, `moonshotai/k3.1-pro` in OpenRouter's list), so the entry never matched and got an
@@ -166,6 +200,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Changed
 
+- **`c3 hook` caps its own lines; the wrapper scripts forward them as they are.** The two
+  SessionStart scripts each cut a forwarded line at 400 - the `.ps1` by UTF-16 units, the `.sh` by
+  bytes under `mawk` - so they printed different text for a long non-ASCII line. The cap is now
+  `c3 hook`'s own (Rust): at most 400 characters per printed line, cut at a character boundary with
+  `...` appended (397 kept), carriage returns removed and trailing white space trimmed. Both
+  scripts lost their cutting (they keep only their prefix filter and the order, de-duplication and
+  count rules) and print the same text again, non-ASCII lines included. Tests: the unit test
+  `hook_lines_are_capped_at_400_characters_on_a_character_boundary` and `hook_scripts.rs` extended
+  by a long non-ASCII line and a line longer than the cap (both forwarded unchanged by both
+  scripts).
 - **C3's project folder is `.c3/`, and `c3 finish` writes no snapshot by default.** C3 inherited its
   per-project folder `.eck/` from another tool; it now keeps everything in a lowercase `.c3/` at the
   repository root, git-ignored as a whole: the manifests (same names) and `profiles.json`,
@@ -396,6 +440,74 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   the patch placement without hard links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`,
   `CODEX_CONSULT_TEST_CONTAIN_WRITE_FAIL`). `c3_core::test_hooks::set_thread_hook` lets an
   in-process test set a hook for its own thread only.
+- **The secret gate no longer takes a plain word for a secret; the MCP finish tool takes
+  `allow_secret`.** `c3 finish` refused three commits on 2026-11-22/23 over the test-fixture line
+  `m.entry.auth = "endpoint".into();` and a saved patch holding it: the keyword-assignment rule took
+  any quoted value of 8+ characters after `auth`. A value now counts only when it can be a secret: a
+  single dictionary-shaped word (letters only, one case, fewer than 24 of them) never does, under
+  any keyword; under the bare keyword `auth` only a key-shaped value does (16+ characters, no white
+  space, two of lower case, upper case, digits and symbols); `auth_token`, `authorization` (now a
+  keyword of its own), `api_key`, `password` and the rest keep the plain rule, and a value an
+  earlier rule already replaced keeps that rule's kind. Packs and `--diff` patches use the same
+  rules; every service-shaped key is still caught by its own rule. The MCP tool `c3_finish_task`
+  gains `allow_secret` (repo-relative paths, the CLI's `--allow-secret`; a path that leaves the
+  working directory is refused). Tests: `redact.rs`'s `a_plain_word_is_not_taken_for_a_secret` and
+  `values_that_can_be_secrets_are_still_redacted`, `secret_gate.rs`'s
+  `a_plain_word_under_auth_passes_the_gate`, the MCP unit test
+  `finish_task_passes_allow_secret_paths` and `mcp_integration.rs`'s
+  `mcp_finish_task_lets_an_allowed_secret_file_through`.
+- **A deadline stop reaps what an exited child left behind, and a child stays under the deadline
+  until it has exited (F31-1, F32-4).** `ScanChildren::stop` killed the tree of a registered child
+  only while that direct child still ran, so a `gh.cmd` shim that had already exited left its `ping`
+  alive; and the shared runner took a child out of the registry as soon as both its pipes reached
+  their end, so a wrapper that closed them and kept running was no longer stopped. The set now
+  remembers every child it started (pid, start time, when it was reaped) and keeps each one
+  registered until its exit is confirmed (polled under the lock); the stop reads the process table
+  once per round (up to three), kills the registered children by their handles and terminates every
+  descendant of every child the set started - found by parent pid and, on Unix, by the child's own
+  process group (each registered child leads one; an orphan keeps it) - only when it started at or
+  after that child did (for a child already reaped, not after it was reaped) and is still the same
+  process; it waits (at most 5 s) for what it terminated to leave, and the caller of `within` gives
+  the worker thread 1.5 s to end and joins it. Tests: `bounded.rs`'s
+  `the_deadline_reaps_what_an_exited_shim_left_behind`, `a_child_stays_under_the_deadline_until_it_has_exited`,
+  `the_sweep_takes_only_what_the_children_started` and `an_orphan_is_found_by_its_process_group`.
+- **The CI check learns the default branch from GitHub when the clone does not know it (F31-2).**
+  With `origin/HEAD` unset and no `c3.defaultBranch` the check asked gh about a local `main` or
+  `master`, which need not be the repository's default. It now asks gh once
+  (`gh repo view --json defaultBranchRef`, under the same deadline), remembers the answer in the
+  repository's gate file for a day (`default_branch`, `default_branch_at`; the attempt record and
+  the memory keep each other), and stays silent when gh cannot say - it never guesses. Tests:
+  `ci_check.rs`'s `the_check_asks_github_for_the_default_branch_when_the_clone_does_not_know` and the
+  end-to-end `without_origin_head_the_check_asks_github_for_the_default_branch`.
+- **Two session starts in one repository ask once (F31-3, F30-3, F31-5, F30-6).** The hook's daily
+  gate is now taken by creating the day's claim file `ci-check-<hash>.<YYYYMMDD>.claim` exclusively
+  before gh starts: the loser of the race prints nothing, and a claim left by a killed hook holds
+  only for the rest of that UTC day. The gate record's temp file is removed on every failed write,
+  and the prune removes claim and temp files older than 30 days too (a `.tmp` left by a killed hook
+  was never removed). Tests: `the_daily_gate_is_taken_by_one_session_only`,
+  `stale_claim_and_temp_files_are_pruned` and the end-to-end
+  `two_hooks_starting_together_in_one_repository_ask_once`.
+- **GitHub's own host names are GitHub (F31-4, F30-5).** A remote whose host is `github.com`,
+  `www.github.com` or `ssh.github.com` (GitHub's port-443 SSH host) is a GitHub remote; nothing
+  else - no substring match, no other subdomain. Tests: `github_remotes_are_recognised_by_their_host`
+  extended and the end-to-end `githubs_own_host_names_are_github_remotes`.
+- **The hook's branch-line test no longer depends on the 2-second deadline.**
+  `hook_prints_one_line_only_when_something_is_unknown` came back empty once on a loaded machine.
+  The deadline has a test-mode override (`CODEX_CONSULT_TEST_BRANCH_DEADLINE_MS`, honoured only with
+  `CODEX_CONSULT_TEST_MODE`), and the branch tests that are not about the deadline run with 60 s.
+  Test: `the_branch_deadline_is_two_seconds_unless_a_test_overrides_it`.
+- **"Cannot tell" on Linux too (F12-1).** A `/proc/<pid>` that exists but cannot be read
+  (permission, `hidepid=1`) now reads as "cannot tell" (a blank start time), never "gone"; so does a
+  pid `/proc` hides altogether (`hidepid=2` / `invisible`) unless `kill -0` reports no such
+  process; and a zombie reads as gone, as the documentation always said. Test:
+  `an_unreadable_proc_entry_is_cannot_tell_never_gone` (Linux).
+- **A repository is recognised the way git recognises one (F13-2).** The hook's own root search (no
+  process started) took any `.git` directory holding `HEAD`. It now applies git's own test: `HEAD`,
+  and in the common directory (the one a `commondir` file names, else the directory itself) an
+  `objects` and a `refs` directory - for a `.git` directory and for the target of a `gitdir:` file
+  alike (a linked worktree's `.git/worktrees/<name>` has `HEAD` and `commondir`). Tests:
+  `a_repository_is_recognised_the_way_git_recognises_one` and `init_doctor.rs`'s
+  `the_hook_repairs_nothing_behind_a_git_directory_git_would_not_take`.
 - **The `c3 maintain` tests no longer read the machine's process table.** A pass skips an engine
   whose CLI is running ("grok skipped: in use"), and the integration tests drove that probe against
   the real machine: on 2026-11-23 six to nine of them failed whenever another session's real
