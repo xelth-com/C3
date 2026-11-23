@@ -10,8 +10,10 @@
 //! repair only ever APPENDS the missing section: no existing byte changes. The edit is the model
 //! repair's: a sibling temporary file,
 //! read back, the original re-read against the snapshot the edit was computed from, a rename over
-//! the original, links and hard links refused ([`crate::setup::repo_models::replace_file`]). The
-//! SessionStart hook does not do this, and nothing happens inside a C3 child (`C3_CHILD`).
+//! the original, links and hard links refused ([`crate::setup::repo_models::replace_file`]) - since
+//! 0.2.5 D4 all of it relative to directory handles reached from the repository root without
+//! following any component. The SessionStart hook does not do this, and nothing happens inside a
+//! C3 child (`C3_CHILD`).
 //!
 //! (0.2.5, S1) The same path replaces the template sentences that named the old folder `.eck/`
 //! ([`STATE_SENTENCES`]) in `01-c3-protocol.md` / `02-delegation.md`: only a line that is the old
@@ -152,20 +154,13 @@ pub fn repair_delegation_rule(repo_root: &Path) -> RuleRepair {
     let Some(new_content) = with_branches_section(content) else {
         return RuleRepair::default();
     };
-    let claude = repo_root.join(".claude");
-    let rules = claude.join("rules");
-    let dirs = [
-        (claude.as_path(), ".claude"),
-        (rules.as_path(), ".claude/rules"),
-    ];
     let edit = Edit {
         file: DELEGATION_RULE.to_string(),
-        path: &path,
-        dirs: &dirs,
+        root: repo_root,
         snapshot: &snapshot,
         new_content: new_content.as_bytes(),
     };
-    let result = match edit_refusal(edit.dirs, edit.path) {
+    let result = match edit_refusal(&edit) {
         Some(why) => Err(why),
         None => replace_file(&edit),
     };
@@ -308,8 +303,6 @@ pub struct StateSentenceRepair {
 /// without such a line is not touched. The caller keeps this out of a C3 child.
 pub fn repair_state_sentences(repo_root: &Path) -> StateSentenceRepair {
     let mut out = StateSentenceRepair::default();
-    let claude = repo_root.join(".claude");
-    let rules = claude.join("rules");
     for file in state_sentence_files() {
         let path = repo_root.join(file);
         let Ok(snapshot) = std::fs::read(&path) else {
@@ -321,18 +314,13 @@ pub fn repair_state_sentences(repo_root: &Path) -> StateSentenceRepair {
         let Some(new_content) = with_state_sentences(file, content) else {
             continue;
         };
-        let dirs = [
-            (claude.as_path(), ".claude"),
-            (rules.as_path(), ".claude/rules"),
-        ];
         let edit = Edit {
             file: file.to_string(),
-            path: &path,
-            dirs: &dirs,
+            root: repo_root,
             snapshot: &snapshot,
             new_content: new_content.as_bytes(),
         };
-        let result = match edit_refusal(edit.dirs, edit.path) {
+        let result = match edit_refusal(&edit) {
             Some(why) => Err(why),
             None => replace_file(&edit),
         };

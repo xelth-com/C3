@@ -649,3 +649,35 @@ swap -> xelth.com/C3 page after the tag.
   Store: 171 findings - 118 implemented, 13 wontfix, 1 rejected, 39 proposed (all routed to the
   running waves D1, D2, D4, S2, R6).
   Running: D4, D2, S2, R6 - all through the compiler turn. Waiting: D1 (after D4).
+- 2026-11-23 ~12:30 CET, wave R6 reported (3 items) and committed as 84dbca4 without a rebuild on
+  main (its three files are identical to the worker's verified tree: clippy clean, `maintain::`
+  100, c3-cli maintain 44), pushed. F38-2, F39-1, F39-2, F39-4 set to `implemented`.
+- 2026-11-23 ~12:35 CET, the CRM session (`9eck-com-1c`) reported C: at 9.5 GB free and falling.
+  Deleted the `target` directories of the five finished worker worktrees (they are locked by the
+  agent harness, so the worktrees themselves stay `parked`): C: 9.2 -> 20.9 GB free. From now on
+  a wave's `target` is deleted as soon as the wave is merged. `turn.sh` now stamps its HOLD line
+  when the turn is taken (it stamped the start of the wait). A release build is announced to the
+  peers before its turn.
+- CORRECTION, written 2026-11-23 09:18 (the machine's clock): the clock times in the entries above
+  from '~06:35 CET' on were ESTIMATED by the coordinator and run ahead of the real time by up to
+  3.5 hours (the entry dated '~12:30' was written at 08:58). The commit times are the anchors:
+  b9f665a 05:12, fdf193a 05:21, d37a397 06:36, 70ed824 07:16, aa71c6e 07:43, 84dbca4 08:58. From
+  here on entries carry the clock's time.
+- 2026-11-23 09:18: running - D4, D2, S2 (all three through the compiler turn, shared with the CRM
+  and the xelixir sessions), CI run 45134957899 for 84dbca4. Waiting: D1 (after D4).
+- 2026-11-23 09:40: CI for 84dbca4 (R6) GREEN on all three jobs. `cargo clean` on main (8.1 GB)
+  after the CRM session reported the disk again: C: 23 GB free. The three running workers hold
+  about 9 GB of `target` together.
+- 2026-11-23 10:00: a STALE compiler-turn file of this session blocked every session for about 15
+  minutes: the S2 worker's wrapper was killed (a background task ended) before its trap removed
+  the file. The S2 worker reported it instead of deleting it; the coordinator checked (pid gone,
+  no cargo / rustc running) and removed it. `turn.sh` now removes a stale turn of THIS session
+  family by itself (line names `c3-release-0.2.5`, pid gone, file older than a minute, no cargo or
+  rustc anywhere) and traps HUP too. Both peer sessions were told.
+- 2026-11-23 10:40: the xelixir session had waited for the compiler since 10:26 (its wrapper checks
+  RAM before it creates HOLD, C3's wrappers took the file first) and asked for one turn. `turn.sh`
+  got a pause (`scratchpad/turn.pause` holds an epoch time until which no C3 wrapper takes the
+  turn), installed by a RENAME - editing the script in place at 10:00 had broken wrappers that were
+  already waiting (bash reads a script as it runs; the S2 worker found it). Pause set until 10:55;
+  the two waiting compile jobs (S2 init_doctor, D2 ci_check) were stopped and their workers told
+  to rerun them.

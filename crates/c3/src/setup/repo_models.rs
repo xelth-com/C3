@@ -11,19 +11,24 @@
 //! before the rename and compared with the snapshot the edit was computed from (when it changed,
 //! the repair is dropped and the file left as it is), and the temporary file then REPLACES the
 //! original by rename - so a failed or interrupted repair never leaves a truncated file, and a
-//! second name of the file (a hard link) never sees the edit. The moment between that re-read and
-//! the rename itself remains (a decided boundary, F13-9: closing it needs a local process with
-//! write access to the repository, which can edit the files directly anyway). A file with more than
-//! one hard link, a link (symlink, junction) or another reparse point, and a file under a linked
-//! `.claude` / `.claude/agents` are not edited at all; the links are checked again immediately
-//! before the rename. Every repair that was not made is reported with its reason.
+//! second name of the file (a hard link) never sees the edit. A file with more than one hard link,
+//! a link (symlink, junction) or another reparse point, and a file under a linked `.claude` /
+//! `.claude/agents` are not edited at all; the file is checked again immediately before the rename.
+//! Every repair that was not made is reported with its reason.
+//!
+//! (0.2.5 D4, F13-9 - the "decided boundary" is withdrawn) Every step is relative to directory
+//! HANDLES: the repository root is opened once ([`crate::contain::Root::open_anchor`]), each
+//! directory on the way to the file is opened relative to its parent's handle without following it
+//! (a link refuses), the file is checked, read and re-read through handles opened without following
+//! it, and the temporary file is created, renamed onto the file and - on a failure - removed
+//! relative to the file's directory handle ([`crate::contain::publish`]). A directory swapped for a
+//! link between the last check and the rename cannot carry the replacement out of the repository.
 //!
 //! It is used from two places: `c3 doctor --fix` (which then re-reports what is left) and the
 //! `c3 hook` SessionStart line (automatic, default ON, off with `C3_REPO_MODELS=off` or
 //! `"repo_models": false` in `<codex home>/c3/config.json`). Inside a child C3 started
 //! (`C3_CHILD`) it does nothing at all.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use c3_core::claude::model_family;
@@ -214,14 +219,9 @@ fn refresh_repo_models_at(
             continue;
         };
         if let Some((new_content, old, new)) = rewrite_agent_model(content) {
-            let dirs = [
-                (claude_dir.as_path(), ".claude"),
-                (agents.as_path(), ".claude/agents"),
-            ];
             let edit = Edit {
                 file: format!(".claude/agents/{name}"),
-                path: &path,
-                dirs: &dirs,
+                root: repo_root,
                 snapshot: &snapshot,
                 new_content: new_content.as_bytes(),
             };
@@ -238,8 +238,7 @@ fn refresh_repo_models_at(
             {
                 let edit = Edit {
                     file: "AGENTS.md".to_string(),
-                    path: &agents_md,
-                    dirs: &[],
+                    root: repo_root,
                     snapshot: &snapshot,
                     new_content: new_content.as_bytes(),
                 };
@@ -251,19 +250,19 @@ fn refresh_repo_models_at(
     report
 }
 
-/// One planned edit: the file, the directories under the repository root that must be real
-/// directories for it, the bytes the edit was computed from and the new bytes.
+/// One planned edit: the file (repository-relative, `/`-separated - every directory on its way
+/// must be a real directory, named in a refusal by its repository-relative path), the repository
+/// root, the bytes the edit was computed from and the new bytes.
 pub(crate) struct Edit<'a> {
     pub(crate) file: String,
-    pub(crate) path: &'a Path,
-    pub(crate) dirs: &'a [(&'a Path, &'a str)],
+    pub(crate) root: &'a Path,
     pub(crate) snapshot: &'a [u8],
     pub(crate) new_content: &'a [u8],
 }
 
 /// Make one edit (or record why not) in `report`.
 fn apply(report: &mut RepairReport, edit: &Edit<'_>, old: String, new: String) {
-    let result = match edit_refusal(edit.dirs, edit.path) {
+    let result = match edit_refusal(edit) {
         Some(why) => Err(why),
         None => replace_file(edit),
     };
@@ -282,105 +281,157 @@ fn apply(report: &mut RepairReport, edit: &Edit<'_>, old: String, new: String) {
     }
 }
 
-/// Why `path` may not be edited, or `None` when it may: every directory of `dirs` must be a real
-/// directory (not a symlink or junction), the file a regular file that is not a link, with exactly
-/// one name (a second hard link would see the edit too).
-pub(crate) fn edit_refusal(dirs: &[(&Path, &str)], path: &Path) -> Option<String> {
-    for (dir, label) in dirs {
-        if !is_real_dir(dir) {
-            return Some(format!(
-                "{label} is {} or no directory, so the file may lie outside the repository - not edited",
-                link_words(dir)
-            ));
+/// (0.2.5 D4) The directory of `edit.file`, reached from the repository root's handle one
+/// component at a time without following any ([`crate::contain::open_child`]), and the file's name;
+/// `Err` is the refusal: a directory on the way that is a link, a reparse point or no directory.
+fn open_edit_dir(edit: &Edit<'_>) -> Result<(cap_std::fs::Dir, std::ffi::OsString), String> {
+    let root = crate::contain::Root::open_anchor(edit.root)
+        .map_err(|e| format!("the repository root {} - not edited", e.words()))?;
+    let parts: Vec<&str> = edit.file.split('/').filter(|p| !p.is_empty()).collect();
+    let Some((leaf, dirs)) = parts.split_last() else {
+        return Err("it names no file - not edited".to_string());
+    };
+    let mut dir = root
+        .dir()
+        .try_clone()
+        .map_err(|e| format!("the repository root cannot be opened ({e}) - not edited"))?;
+    let mut label = String::new();
+    for d in dirs {
+        if !label.is_empty() {
+            label.push('/');
         }
+        label.push_str(d);
+        dir = crate::contain::open_child(&dir, std::ffi::OsStr::new(d), false).map_err(|why| {
+            format!(
+                "{label} is {} or no directory, so the file may lie outside the repository - not edited",
+                step_link_words(&why)
+            )
+        })?;
     }
-    if !is_real_file(path) {
-        return Some(format!(
-            "it is {} or no regular file, so its target may lie outside the repository - not edited",
-            link_words(path)
-        ));
-    }
-    match link_count(path) {
-        Ok(1) => None,
-        Ok(n) => Some(format!(
-            "it has {n} hard links, so an edit would change the other names too - not edited"
-        )),
-        Err(e) => Some(format!("could not count its hard links ({e}) - not edited")),
+    Ok((dir, std::ffi::OsString::from(leaf)))
+}
+
+/// [`link_words`] from a refused step: a link names what it is, anything else both words.
+fn step_link_words(why: &crate::contain::Step) -> &'static str {
+    match why {
+        crate::contain::Step::Link { symlink } => reparse_words(*symlink, true),
+        _ => reparse_words(false, false),
     }
 }
 
-/// Replace `edit.path` with `edit.new_content` without writing through it: a sibling temporary
-/// file is written, synced and read back; the links are checked again and the original re-read and
-/// compared with `edit.snapshot`; then the temporary file is renamed over the original. On any
-/// failure the temporary file is removed and the original is untouched.
+/// (0.2.5 D4) The file `leaf` of `dir` opened without following it and checked on that handle: a
+/// regular file that is not a link or a reparse point, with exactly one name. Its handle is
+/// returned (for reading); `Err` is the refusal.
+fn open_edit_file(
+    dir: &cap_std::fs::Dir,
+    leaf: &std::ffi::OsStr,
+) -> Result<cap_std::fs::File, String> {
+    let f = crate::contain::open_file_in(dir, leaf).map_err(|why| {
+        format!(
+            "it is {} or no regular file, so its target may lie outside the repository - not edited",
+            step_link_words(&why)
+        )
+    })?;
+    let links = f
+        .metadata()
+        .map(|m| cap_fs_ext::MetadataExt::nlink(&m))
+        .map_err(|e| format!("could not count its hard links ({e}) - not edited"))?;
+    match links {
+        1 => Ok(f),
+        n => Err(format!(
+            "it has {n} hard links, so an edit would change the other names too - not edited"
+        )),
+    }
+}
+
+/// Why `edit.file` may not be edited, or `None` when it may: every directory on its way must be a
+/// real directory (not a symlink or junction), the file a regular file that is not a link, with
+/// exactly one name (a second hard link would see the edit too). (0.2.5 D4) Read through handles
+/// from the repository root, nothing followed.
+pub(crate) fn edit_refusal(edit: &Edit<'_>) -> Option<String> {
+    open_edit_dir(edit)
+        .and_then(|(dir, leaf)| open_edit_file(&dir, &leaf).map(|_| ()))
+        .err()
+}
+
+/// Replace `edit.file` with `edit.new_content` without writing through it: a sibling temporary
+/// file is written, synced and read back; the file is checked again and re-read and compared with
+/// `edit.snapshot`; then the temporary file is renamed over the original. On any failure the
+/// temporary file is removed (a removal that fails is named in the `Err`) and the original is
+/// untouched. (0.2.5 D4, F13-9) All of it relative to the file's directory HANDLE, reached from the
+/// repository root without following any component ([`open_edit_dir`], [`crate::contain::publish`]).
 pub(crate) fn replace_file(edit: &Edit<'_>) -> Result<(), String> {
-    let dir = edit
-        .path
-        .parent()
-        .ok_or_else(|| "it has no parent directory - not edited".to_string())?;
-    let name = edit
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
+    use std::io::Read;
+    let (dir, leaf) = open_edit_dir(edit)?;
+    let original = open_edit_file(&dir, &leaf)?;
+    // the replacement keeps the original's permission bits (Unix; on Windows only the read-only
+    // attribute would carry over, which the repair never had to keep)
+    #[cfg(unix)]
+    let permissions = original.metadata().ok().map(|m| m.permissions());
+    #[cfg(not(unix))]
+    let permissions = None;
+    drop(original);
+    let name = leaf.to_string_lossy().to_string();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let tmp = dir.join(format!(
-        ".{name}.c3-repair-{}-{nanos}.tmp",
-        std::process::id()
-    ));
-    let result = write_then_rename(edit, &tmp);
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
-}
-
-/// The body of [`replace_file`] (the caller removes `tmp` on an error).
-fn write_then_rename(edit: &Edit<'_>, tmp: &Path) -> Result<(), String> {
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(tmp)
-        .map_err(|e| format!("could not create the temporary file ({e}) - left as it was"))?;
-    f.write_all(edit.new_content)
-        .and_then(|()| f.sync_all())
-        .map_err(|e| format!("could not write the temporary file ({e}) - left as it was"))?;
-    drop(f);
-    #[cfg(unix)]
-    {
-        // the replacement keeps the original's permission bits
-        if let Ok(m) = std::fs::metadata(edit.path) {
-            let _ = std::fs::set_permissions(tmp, m.permissions());
+    let tmp = format!(".{name}.c3-repair-{}-{nanos}.tmp", std::process::id());
+    let tmp_os = std::ffi::OsString::from(&tmp);
+    let check = |stage: crate::contain::Stage| -> Result<(), String> {
+        if stage == crate::contain::Stage::BeforeCreate {
+            return Ok(());
         }
-    }
-    match std::fs::read(tmp) {
-        Ok(b) if b == edit.new_content => {}
-        Ok(_) => {
-            return Err(
-                "the temporary file did not read back as written - left as it was".to_string(),
-            )
+        match crate::contain::read_file_in(&dir, &tmp_os) {
+            Ok(b) if b == edit.new_content => {}
+            Ok(_) => {
+                return Err(
+                    "the temporary file did not read back as written - left as it was".to_string(),
+                )
+            }
+            Err(e) => {
+                return Err(format!(
+                    "could not read the temporary file back ({e}) - left as it was"
+                ))
+            }
         }
-        Err(e) => {
-            return Err(format!(
-                "could not read the temporary file back ({e}) - left as it was"
-            ))
+        // Immediately before the replace: the file once more, then its content against the
+        // snapshot the edit was computed from (an editor's save in between wins; the repair is
+        // dropped).
+        let mut f = open_edit_file(&dir, &leaf)?;
+        let mut now = Vec::new();
+        f.read_to_end(&mut now)
+            .map_err(|e| format!("could not re-read it ({e}) - left as it was"))?;
+        if now != edit.snapshot {
+            return Err("it changed while it was being repaired - left as it was".to_string());
         }
-    }
-    // Immediately before the replace: the links once more, then the content against the snapshot
-    // the edit was computed from (an editor's save in between wins; the repair is dropped).
-    if let Some(why) = edit_refusal(edit.dirs, edit.path) {
-        return Err(why);
-    }
-    match std::fs::read(edit.path) {
-        Ok(b) if b == edit.snapshot => {}
-        Ok(_) => return Err("it changed while it was being repaired - left as it was".to_string()),
-        Err(e) => return Err(format!("could not re-read it ({e}) - left as it was")),
-    }
-    std::fs::rename(tmp, edit.path)
-        .map_err(|e| format!("could not replace it ({e}) - left as it was"))
+        crate::contain::race_point("repair-replace");
+        Ok(())
+    };
+    crate::contain::publish(&crate::contain::Publish {
+        dir: &dir,
+        leaf: &leaf,
+        tmp: &tmp_os,
+        bytes: edit.new_content,
+        permissions,
+        check: &check,
+        race: "repair",
+    })
+    .map_err(|f| {
+        let msg = match &f.error {
+            crate::contain::PublishError::Check(why) => why.clone(),
+            crate::contain::PublishError::Create(e) => {
+                format!("could not create the temporary file ({e}) - left as it was")
+            }
+            crate::contain::PublishError::Write(e) => {
+                format!("could not write the temporary file ({e}) - left as it was")
+            }
+            crate::contain::PublishError::Rename(e) => {
+                format!("could not replace it ({e}) - left as it was")
+            }
+        };
+        f.with_cleanup(msg)
+    })
 }
 
 /// (0.2.5 R2, F12-3) How a refusal names what `p` is, read without following it: `a link (a
@@ -420,70 +471,6 @@ pub(crate) fn is_link(m: &std::fs::Metadata) -> bool {
     {
         m.file_type().is_symlink()
     }
-}
-
-/// A directory that is itself there, not a link to one (`symlink_metadata` does not follow a
-/// symlink; a Windows junction is a reparse point).
-pub(crate) fn is_real_dir(p: &Path) -> bool {
-    std::fs::symlink_metadata(p)
-        .map(|m| m.file_type().is_dir() && !is_link(&m))
-        .unwrap_or(false)
-}
-
-/// A regular file that is itself there, not a link to one.
-fn is_real_file(p: &Path) -> bool {
-    std::fs::symlink_metadata(p)
-        .map(|m| m.file_type().is_file() && !is_link(&m))
-        .unwrap_or(false)
-}
-
-/// How many names (hard links) the file at `p` has, read without following a link.
-#[cfg(unix)]
-fn link_count(p: &Path) -> std::io::Result<u64> {
-    use std::os::unix::fs::MetadataExt;
-    Ok(std::fs::symlink_metadata(p)?.nlink())
-}
-
-/// How many names (hard links) the file at `p` has (`GetFileInformationByHandle`'s
-/// `nNumberOfLinks`, the file opened without following a reparse point).
-#[cfg(windows)]
-fn link_count(p: &Path) -> std::io::Result<u64> {
-    use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::AsRawHandle;
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    #[allow(non_snake_case)]
-    #[repr(C)]
-    struct ByHandleFileInformation {
-        dwFileAttributes: u32,
-        ftCreationTime: [u32; 2],
-        ftLastAccessTime: [u32; 2],
-        ftLastWriteTime: [u32; 2],
-        dwVolumeSerialNumber: u32,
-        nFileSizeHigh: u32,
-        nFileSizeLow: u32,
-        nNumberOfLinks: u32,
-        nFileIndexHigh: u32,
-        nFileIndexLow: u32,
-    }
-    extern "system" {
-        fn GetFileInformationByHandle(
-            file: *mut std::ffi::c_void,
-            info: *mut ByHandleFileInformation,
-        ) -> i32;
-    }
-    let f = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(p)?;
-    // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is a valid value of this plain C struct.
-    let mut info: ByHandleFileInformation = unsafe { std::mem::zeroed() };
-    // SAFETY: `f` is an open file handle for the duration of the call and `info` points at a
-    // writable struct of the layout the function fills.
-    let ok = unsafe { GetFileInformationByHandle(f.as_raw_handle(), &mut info) };
-    if ok == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(u64::from(info.nNumberOfLinks))
 }
 
 /// The roster entries `AGENTS.md` may follow: the model id of each ACTIVE entry that is neither
@@ -761,14 +748,16 @@ mod tests {
         let (base, repo) = repo_with_agents("words");
         let file = repo.join(".claude").join("agents").join("w.md");
         std::fs::write(&file, PINNED).unwrap();
+        let edit = |file: &str| Edit {
+            file: file.to_string(),
+            root: &repo,
+            snapshot: b"",
+            new_content: b"",
+        };
         // a plain directory and file: no refusal at all
-        let agents = repo.join(".claude").join("agents");
-        assert_eq!(
-            edit_refusal(&[(agents.as_path(), ".claude/agents")], &file),
-            None
-        );
+        assert_eq!(edit_refusal(&edit(".claude/agents/w.md")), None);
         // a missing file: the refusal names both possibilities
-        let why = edit_refusal(&[], &repo.join("none.md")).unwrap();
+        let why = edit_refusal(&edit("none.md")).unwrap();
         assert!(
             why.starts_with(
                 "it is a link (a symlink or junction), a reparse point or no regular file"
@@ -988,15 +977,9 @@ mod tests {
         let path = agents.join("w.md");
         let edited = "---\nname: w\nmodel: claude-opus-4-8\n---\nthe operator's new line\n";
         std::fs::write(&path, edited).unwrap();
-        let claude = repo.join(".claude");
-        let dirs = [
-            (claude.as_path(), ".claude"),
-            (agents.as_path(), ".claude/agents"),
-        ];
         let edit = Edit {
             file: ".claude/agents/w.md".into(),
-            path: &path,
-            dirs: &dirs,
+            root: &repo,
             snapshot: PINNED.as_bytes(),
             new_content: b"---\nname: w\nmodel: opus\n---\nbody\n",
         };
@@ -1035,6 +1018,71 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), PINNED);
         assert_eq!(names_in(&agents), vec!["w.md".to_string()]);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (0.2.5 D4, F13-9) THE REPAIR RACE: right before the rename (after the last check and the
+    // re-read, `repair-replace`) `.claude/agents` - and, in a second round, its parent `.claude` - is
+    // swapped for a link to an outside directory holding the same pinned file. The replacement never
+    // lands outside (the outside file keeps its bytes, no temporary file appears there) and none is
+    // left anywhere: on Windows the swap itself is refused (the agents directory's handle is held,
+    // which pins it and every ancestor); elsewhere it happens and the repair completes in the
+    // ORIGINAL directory - the one the handle names, now under its aside name.
+    #[test]
+    fn a_directory_swapped_for_a_link_before_the_replace_never_receives_the_repair() {
+        for swap in [".claude/agents", ".claude"] {
+            let (base, repo) = repo_with_agents("race-repair");
+            let agents = repo.join(".claude").join("agents");
+            std::fs::write(agents.join("w.md"), PINNED).unwrap();
+            let outside = base.join("outside");
+            let twin = if swap == ".claude" {
+                outside.join("agents")
+            } else {
+                outside.clone()
+            };
+            std::fs::create_dir_all(&twin).unwrap();
+            std::fs::write(twin.join("w.md"), PINNED).unwrap();
+            let swapped_dir = repo.join(swap);
+            let hook = c3_core::test_hooks::set_thread_hook(
+                crate::contain::RACE_HOOK,
+                &format!(
+                    "repair-replace|{}|{}",
+                    swapped_dir.display(),
+                    outside.display()
+                ),
+            );
+            let r = refresh_repo_models_at(&repo, &[]);
+            drop(hook);
+            let mut aside_name = swapped_dir.file_name().unwrap().to_os_string();
+            aside_name.push(".c3-race-orig");
+            let aside = swapped_dir.with_file_name(aside_name);
+            let swapped = aside.exists();
+            if cfg!(windows) {
+                assert!(
+                    !swapped,
+                    "{swap}: a held directory and its ancestors cannot be renamed"
+                );
+            }
+            assert_eq!(r.fixes.len(), 1, "{swap}: {r:?}");
+            let original = match (swapped, swap) {
+                (false, _) => agents.clone(),
+                (true, ".claude") => aside.join("agents"),
+                (true, _) => aside.clone(),
+            };
+            assert_eq!(
+                std::fs::read_to_string(original.join("w.md")).unwrap(),
+                "---\nname: w\nmodel: opus\n---\nbody\n",
+                "{swap}: the repair is in the original directory"
+            );
+            assert_eq!(std::fs::read_to_string(twin.join("w.md")).unwrap(), PINNED);
+            assert_eq!(names_in(&twin), vec!["w.md".to_string()], "{swap}");
+            assert_eq!(names_in(&original), vec!["w.md".to_string()], "{swap}");
+            if swapped {
+                let _ = std::fs::remove_dir(&swapped_dir)
+                    .or_else(|_| std::fs::remove_file(&swapped_dir));
+            }
+            assert_eq!(std::fs::read_to_string(twin.join("w.md")).unwrap(), PINNED);
+            let _ = std::fs::remove_dir_all(&base);
+        }
     }
 
     // (0.2.5, F02-1 / F02-2) The ordinary repair replaces the file by rename: the new bytes are in

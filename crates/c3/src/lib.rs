@@ -58,4 +58,6 @@ pub mod setup;
 
 pub mod state_dir;
 
+pub(crate) mod contain;
+
 pub mod budget;

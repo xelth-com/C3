@@ -366,6 +366,36 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   of the rest of the id or the plan's vendor. Test:
   `a_roster_id_with_a_lab_token_is_matched_through_the_catalog_spelling` (the host-only case has no
   alias; `kimi-k3.1-pro` still works).
+- **What C3 does inside a reviewer's worktree and inside the repository can no longer be redirected
+  by a directory swapped for a link (F32-1, F24-1, F29-2, F18-5, F27-2, F16-5, F13-9, F28-1).** For a
+  user nothing changes, except that the windows are gone: staging into the throwaway worktree (both
+  the files written and the brief, `handoffs/` and `state.md` read), the post-checkout sweep of links
+  that lead out, the worktree's removal, the repository repair's file replacement, the rules-file
+  rewrite and the `--diff` patch now work relative to directory handles opened once and verified on
+  the handle (the new module `contain`, on the `cap-std` crate), never by a path name checked first
+  and resolved again - a directory replaced by a junction or symlink after it was checked can no
+  longer send a write, a read or a removal outside, and the three "decided boundaries" (a local
+  process racing the window) are withdrawn. What it means in detail: every path below a root is
+  opened one component at a time without following any (a link refuses - also one that stays
+  inside, where it was followed before for the brief and `handoffs/`; such an entry is now skipped
+  and counted, a linked brief refuses the run as before); a staged or repaired file is written to a
+  new temporary name and renamed relative to its directory's handle, and a temporary file whose
+  removal fails is reported instead of ignored; the removal unlinks and deletes through the handles
+  and then runs only `git worktree prune` (no `git worktree remove --force`, no `remove_dir_all` on
+  a path); the patch is always written to a temporary file first and placed without replacing
+  anything - a hard link, or on a file system without hard links a claim of the name (an empty file
+  created exclusively, which a sibling waits for) replaced by a rename - so no partial patch is ever
+  left under its name. On Windows the protection rests on the handles C3 holds: a
+  directory opened by cap-std cannot be renamed or deleted, nor can any of its ancestors, while the
+  handle is open. Tests: `contain::tests::cap_std_refuses_a_link_as_a_path_component` (the proof:
+  a junction, and a directory symlink where one can be made, refuses as a path component, pointing
+  out or in; a root that is a link is refused; a held directory and its ancestors cannot be renamed
+  on Windows), and the race tests driven by the new hook `CODEX_CONSULT_TEST_CONTAIN_RACE` (a
+  directory swapped for a link between validation and use) for staging a file and publishing it,
+  reading the brief and `handoffs/`, descending in the walk and replacing a repository file, plus
+  the patch placement without hard links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`,
+  `CODEX_CONSULT_TEST_CONTAIN_WRITE_FAIL`). `c3_core::test_hooks::set_thread_hook` lets an
+  in-process test set a hook for its own thread only.
 - **The `c3 maintain` tests no longer read the machine's process table.** A pass skips an engine
   whose CLI is running ("grok skipped: in use"), and the integration tests drove that probe against
   the real machine: on 2026-11-23 six to nine of them failed whenever another session's real

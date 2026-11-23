@@ -55,6 +55,13 @@ unicode-normalization = "0.1"
 # .gitignore. Blocking, no async runtime.
 ignore = "0.4"
 globset = "0.4"
+# cap-std + cap-fs-ext: (0.2.5 D4) contained file operations - everything C3 writes, reads, walks
+# or removes inside a reviewer's throwaway worktree, the repository or a task's handoffs happens
+# relative to an open directory handle (`cap_std::fs::Dir`, Bytecode Alliance), never by a path
+# name checked earlier (`crate::contain`). cap-fs-ext adds the no-follow directory open and the
+# no-follow open option the component-by-component walk needs. Blocking, no async runtime.
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
 # surrealdb + tokio: the derived context index (milestone 8), behind the `index-surreal`
 # feature (opt-in; absent from the default build). `kv-surrealkv` is the embedded
 # single-writer store (per-project `.c3/index/`); `protocol-ws` compiles the `ws://`

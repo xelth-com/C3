@@ -333,38 +333,16 @@ fn skip_staging(p: &Path) -> bool {
     })
 }
 
-/// (R5, F18-5) What a staging source is, read WITHOUT following it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SourceKind {
-    Absent,
-    /// A symlink / junction / reparse point, or a path whose canonical form leaves the repository
-    /// (a link on its way): never read.
-    Linked,
-    Dir,
-    File,
-    Other,
-}
-
-fn source_kind(repo: &Path, p: &Path) -> SourceKind {
-    let Ok(meta) = std::fs::symlink_metadata(p) else {
-        return SourceKind::Absent;
-    };
-    if worktree::is_link(&meta) {
-        return SourceKind::Linked;
-    }
-    let inside = std::fs::canonicalize(p)
-        .ok()
-        .zip(std::fs::canonicalize(repo).ok())
-        .is_some_and(|(c, r)| c.starts_with(r));
-    if !inside {
-        return SourceKind::Linked;
-    }
-    if meta.is_dir() {
-        SourceKind::Dir
-    } else if meta.is_file() {
-        SourceKind::File
-    } else {
-        SourceKind::Other
+/// (R5, F18-5 / 0.2.5 D4) How a staging source that could not be reached through the repository's
+/// handles counts: a link on the way (any component, the entry itself) is skipped and counted, an
+/// entry that is not there or not of the asked kind is simply not staged, anything else refuses the
+/// run (`Err` with the words).
+fn source_step(e: crate::contain::StepError, shown: &Path) -> Result<bool, String> {
+    use crate::contain::Step;
+    match e.why {
+        Step::Link { .. } => Ok(true),
+        Step::Missing | Step::NotDir | Step::NotFile | Step::BadPath => Ok(false),
+        why => Err(format!("{} {why}", shown.display())),
     }
 }
 
@@ -383,6 +361,13 @@ fn source_kind(repo: &Path, p: &Path) -> SourceKind {
 /// ([`ReviewTree::links_skipped`]) - nothing outside the repository is copied into a worktree.
 /// `Err(Capability)` when the worktree cannot be made, `Err(Refused)` when staging cannot be done
 /// safely ([`SetupError`]); either way nothing was started.
+///
+/// (0.2.5 D4, F29-2 / F18-5) The sources are reached through HANDLES: the repository is opened once
+/// ([`crate::contain::Root::open_anchor`]), `handoffs/` and `state.md` are opened from it one
+/// component at a time without following any (a link anywhere on the way - one that stays inside
+/// the repository included - is skipped and counted), and the files are read through handles
+/// opened without following them; the brief likewise ([`worktree::brief_bytes`]). Nothing checked
+/// first is opened again by its name afterwards.
 pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<ReviewTree, SetupError> {
     let wt = ThrowawayWorktree::create(s.repo_root, plan.checkout()).map_err(|e| {
         SetupError::Capability(format!(
@@ -401,10 +386,19 @@ pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<Review
     if let Some(cr) = &collab_rel {
         let task_dir = s.collab_root.join(s.task);
         let handoffs = task_dir.join("handoffs");
-        match source_kind(s.repo_root, &handoffs) {
-            SourceKind::Dir => {
+        let state = task_dir.join("state.md");
+        let repo = crate::contain::Root::open_anchor(s.repo_root).map_err(|e| {
+            refused(
+                "the task's handoffs",
+                format!("the repository {} {}", s.repo_root.display(), e.words()),
+            )
+        })?;
+        let task_rel = Path::new(cr).join(s.task);
+        match repo.open_dir(&task_rel.join("handoffs"), false) {
+            Ok(src) => {
                 let st = wt
                     .stage_dir(
+                        &src,
                         &handoffs,
                         &format!("{cr}/{}/handoffs", s.task),
                         &skip_staging,
@@ -413,16 +407,21 @@ pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<Review
                 links_skipped += st.links_skipped;
                 handoffs_staged = st.files > 0;
             }
-            SourceKind::Linked => links_skipped += 1,
-            _ => {}
+            Err(e) => {
+                if source_step(e, &handoffs).map_err(|e| refused("the task's handoffs", e))? {
+                    links_skipped += 1;
+                }
+            }
         }
-        let state = task_dir.join("state.md");
-        match source_kind(s.repo_root, &state) {
-            SourceKind::File => wt
-                .stage_file(&state, &format!("{cr}/{}/state.md", s.task))
+        match repo.read(&task_rel.join("state.md")) {
+            Ok(bytes) => wt
+                .stage_bytes(&bytes, &format!("{cr}/{}/state.md", s.task))
                 .map_err(|e| refused("the task's state.md", e))?,
-            SourceKind::Linked => links_skipped += 1,
-            _ => {}
+            Err(e) => {
+                if source_step(e, &state).map_err(|e| refused("the task's state.md", e))? {
+                    links_skipped += 1;
+                }
+            }
         }
         collab = Some(wt.path().join(cr));
     }
@@ -949,79 +948,162 @@ pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result
     }
 }
 
-/// (R5, F19-3) Put `bytes` at `path` without ever overwriting a file: an existing regular file with
-/// the SAME bytes is reused (a panel sibling, or an earlier run, rendered the same patch); one with
-/// other bytes, or anything that is not a regular file (a link, a directory), is an `Err`. The bytes
-/// go into a new temp file beside it (exclusive create) which is then hard-linked to the name - an
-/// atomic create that fails when the name exists, so a sibling never reads a half-written file; on
-/// a file system without hard links the name itself is created exclusively.
-fn place_patch(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-    let shown = path.display().to_string();
-    let reuse = || -> Result<(), String> {
-        let m = std::fs::symlink_metadata(path)
-            .map_err(|e| format!("{shown} cannot be checked ({e})"))?;
-        if worktree::is_link(&m) || !m.is_file() {
-            return Err(format!(
-                "{shown} exists and is not a regular file; it is never reused or overwritten"
-            ));
+/// (0.2.5 D4) The test hook that makes the patch placement behave as on a file system without hard
+/// links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`, any value): the fallback placement is then proved.
+pub(crate) const PATCH_NO_HARDLINK_HOOK: &str = "CODEX_CONSULT_TEST_PATCH_NO_HARDLINK";
+
+/// The existing patch file `leaf` of `dir` reused when it holds exactly `bytes` (read through a
+/// handle opened without following it); anything else is an `Err`. A name another placement is
+/// still putting in place - an EMPTY claim on a file system without hard links
+/// ([`place_without_link`]) - is waited for up to two seconds.
+fn reuse_patch(
+    dir: &cap_std::fs::Dir,
+    leaf: &std::ffi::OsStr,
+    bytes: &[u8],
+    shown: &str,
+) -> Result<(), String> {
+    use crate::contain::Step;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match crate::contain::read_file_in(dir, leaf) {
+            Ok(b) if b == bytes => return Ok(()),
+            Ok(b) if b.is_empty() && std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "{shown} already holds other bytes; a patch file is never overwritten"
+                ))
+            }
+            Err(Step::Link { .. }) | Err(Step::NotFile) => {
+                return Err(format!(
+                    "{shown} exists and is not a regular file; it is never reused or overwritten"
+                ))
+            }
+            Err(e) => return Err(format!("{shown} cannot be read ({e})")),
         }
-        match std::fs::read(path) {
-            Ok(b) if b == bytes => Ok(()),
-            Ok(_) => Err(format!(
-                "{shown} already holds other bytes; a patch file is never overwritten"
-            )),
-            Err(e) => Err(format!("{shown} cannot be read ({e})")),
-        }
-    };
-    if std::fs::symlink_metadata(path).is_ok() {
-        return reuse();
     }
-    let dir = path
-        .parent()
-        .ok_or_else(|| format!("{shown} has no directory"))?;
-    let _ = std::fs::create_dir_all(dir);
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let tmp = dir.join(format!(
+}
+
+/// (0.2.5 D4, F28-1) Place the complete temporary file `tmp` of `dir` under `leaf` WITHOUT a hard
+/// link and without replacing anything that is not this call's own, relative to the directory's
+/// handle: the name is CLAIMED by an exclusive create of an empty file (`AlreadyExists` when it is
+/// taken), then the temporary file is renamed onto the claim. A sibling that meets the empty claim
+/// waits for it ([`reuse_patch`]); when the rename fails the claim is removed again (a removal that
+/// fails is named in the error). (A rename that refuses to replace exists on Windows only as a
+/// rename of a path the process's current directory would complete - not used.)
+fn place_without_link(
+    dir: &cap_std::fs::Dir,
+    tmp: &std::ffi::OsStr,
+    leaf: &std::ffi::OsStr,
+) -> std::io::Result<()> {
+    let mut o = cap_std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    drop(dir.open_with(leaf, &o)?);
+    crate::contain::race_point("patch-claim");
+    dir.rename(tmp, dir, leaf)
+        .map_err(|e| match dir.remove_file(leaf) {
+            Ok(()) => e,
+            Err(e2) => std::io::Error::new(
+                e.kind(),
+                format!("{e}; the claimed name could not be removed again ({e2})"),
+            ),
+        })
+}
+
+/// (R5, F19-3) Put `bytes` at `dir/name` without ever overwriting a file: an existing regular file
+/// with the SAME bytes is reused (a panel sibling, or an earlier run, rendered the same patch); one
+/// with other bytes, or anything that is not a regular file (a link, a directory), is an `Err`.
+///
+/// (0.2.5 D4, F28-1) Through a handle on the handoffs directory, with a temporary file on EVERY
+/// file system: the bytes go into a new temporary file (an exclusive create relative to the
+/// directory's handle), synced, and are then placed under the name without replacing anything - a
+/// hard link relative to the handle (fails when the name exists); where the file system has no hard
+/// links, [`place_without_link`]. The final name never holds partial bytes: on every error path
+/// what this call created is removed again, and a removal that fails is named in the `Err` (or, when
+/// the patch itself is in place, said on stderr).
+fn place_patch(dir_path: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    use std::ffi::OsStr;
+    let shown = dir_path.join(name).display().to_string();
+    let _ = std::fs::create_dir_all(dir_path);
+    let root = crate::contain::Root::open_anchor(dir_path)
+        .map_err(|e| format!("{} {}", dir_path.display(), e.words()))?;
+    let dir = root.dir();
+    let leaf = OsStr::new(name);
+    match crate::contain::entry(dir, leaf) {
+        Ok(Some(_)) => return reuse_patch(dir, leaf, bytes, &shown),
+        Ok(None) => {}
+        Err(e) => return Err(format!("{shown} cannot be checked ({e})")),
+    }
+    let tmp_name = format!(
         "{}.{}.tmp",
         name.trim_end_matches(".patch"),
         uuid::Uuid::new_v4().simple()
-    ));
-    let written = (|| -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()
-    })();
+    );
+    let tmp = OsStr::new(&tmp_name);
+    let remove_tmp = || match dir.remove_file(tmp) {
+        Ok(()) => None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => Some(e),
+    };
+    let noted = |msg: String, cleanup: Option<std::io::Error>| match cleanup {
+        None => msg,
+        Some(e) => format!("{msg}; its temporary file {tmp_name} could not be removed ({e})"),
+    };
+    let mut o = cap_std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    let mut f = dir
+        .open_with(tmp, &o)
+        .map_err(|e| format!("{shown} could not be written ({e})"))?;
+    let written = crate::contain::write_hook(&mut f, bytes).and_then(|()| f.sync_all());
+    drop(f);
     if let Err(e) = written {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(format!("{shown} could not be written ({e})"));
+        return Err(noted(
+            format!("{shown} could not be written ({e})"),
+            remove_tmp(),
+        ));
     }
-    let linked = std::fs::hard_link(&tmp, path);
-    let _ = std::fs::remove_file(&tmp);
-    match linked {
+    crate::contain::race_point("patch-place");
+    let linked = if c3_core::test_hooks::hook(PATCH_NO_HARDLINK_HOOK).is_some() {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "hard links refused (test hook)",
+        ))
+    } else {
+        dir.hard_link(tmp, dir, leaf)
+    };
+    let placed = match linked {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => reuse(),
-        Err(_) => {
-            // no hard links here: create the name itself exclusively
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-            {
-                Ok(mut f) => f
-                    .write_all(bytes)
-                    .and_then(|_| f.sync_all())
-                    .map_err(|e| format!("{shown} could not be written ({e})")),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => reuse(),
-                Err(e) => Err(format!("{shown} could not be written ({e})")),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
+        // no hard links on this file system: place it without one
+        Err(_) => place_without_link(dir, tmp, leaf),
+    };
+    let warn_left = |cleanup: Option<std::io::Error>| {
+        if let Some(e) = cleanup {
+            eprintln!(
+                "codex-consult: the patch {shown} is in place, but its temporary file {tmp_name} could not be removed ({e})"
+            );
+        }
+    };
+    match placed {
+        Ok(()) => {
+            warn_left(remove_tmp());
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let cleanup = remove_tmp();
+            match reuse_patch(dir, leaf, bytes, &shown) {
+                Ok(()) => {
+                    warn_left(cleanup);
+                    Ok(())
+                }
+                Err(m) => Err(noted(m, cleanup)),
             }
         }
+        Err(e) => Err(noted(
+            format!("{shown} could not be placed ({e})"),
+            remove_tmp(),
+        )),
     }
 }
 
@@ -1043,8 +1125,10 @@ pub fn write_patch(
     let (safe, redactions) = crate::pack::redact::redact(&String::from_utf8_lossy(&raw));
     let bytes = safe.into_bytes();
     let sha = c3_core::sha256_hex(&bytes);
-    let path = plan.dir.join(format!("{}.{}.patch", plan.stem, &sha[..8]));
-    place_patch(&path, &bytes).map_err(|e| format!("the -Diff patch could not be written: {e}"))?;
+    let name = format!("{}.{}.patch", plan.stem, &sha[..8]);
+    let path = plan.dir.join(&name);
+    place_patch(&plan.dir, &name, &bytes)
+        .map_err(|e| format!("the -Diff patch could not be written: {e}"))?;
     plan.rel = shown_path(repo_root, &path);
     plan.path = path;
     plan.sha256 = sha;
@@ -1698,6 +1782,192 @@ mod tests {
             std::fs::read_to_string(outside.join("sentinel.txt")).unwrap(),
             "OUTSIDE-SECRET\n"
         );
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    /// Undo a race hook's swap of `dir` (the link removed, the aside directory renamed back).
+    fn unswap(dir: &Path) {
+        let mut aside_name = dir.file_name().unwrap().to_os_string();
+        aside_name.push(".c3-race-orig");
+        let aside = dir.with_file_name(aside_name);
+        if aside.exists() {
+            let _ = std::fs::remove_dir(dir).or_else(|_| std::fs::remove_file(dir));
+            std::fs::rename(&aside, dir).unwrap();
+        }
+    }
+
+    // (0.2.5 D4, F29-2 / F18-5) THE READ RACE: a staging source directory is swapped for a link to
+    // an outside directory holding files of the same names. (a) After the brief's directory was
+    // opened (`read-open`): on Windows the swap is refused (the handle is held); elsewhere it
+    // happens and the brief is read from the ORIGINAL directory - the staged brief holds the live
+    // bytes. (b) Before the walk reaches it (`read-walk`): the walk meets the link and the run is
+    // refused (preflight-class); nothing outside is read. (c) `handoffs/` swapped after it was
+    // opened, before a file is read (`stage-read`): the inside bytes are staged, never the outside
+    // ones. In every case no outside byte reaches the worktree.
+    #[test]
+    fn a_staging_source_swapped_for_a_link_is_never_read_through() {
+        let r = repo("race-read");
+        let outside = r.parent().unwrap().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("brief.md"), "OUTSIDE-BRIEF\n").unwrap();
+        std::fs::write(outside.join("01-claude-x.md"), "OUTSIDE-HANDOFF\n").unwrap();
+        let docs = r.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("brief.md"), "INSIDE-BRIEF\n").unwrap();
+        let plan = plan_isolation(&r, "kimi", "framing", "", true)
+            .unwrap()
+            .unwrap();
+        let no_collab = r.parent().unwrap().join("collab");
+        let bp = docs.join("brief.md");
+        let run = |collab: &Path, brief: &str| {
+            setup_review_tree(
+                &plan,
+                &StageInputs {
+                    repo_root: &r,
+                    collab_root: collab,
+                    task: "t",
+                    brief_ref: brief,
+                    brief_path: (!brief.is_empty()).then_some(bp.as_path()),
+                    engine: "kimi",
+                },
+            )
+        };
+        let hook_on = |point: &str, dir: &Path| {
+            c3_core::test_hooks::set_thread_hook(
+                crate::contain::RACE_HOOK,
+                &format!("{point}|{}|{}", dir.display(), outside.display()),
+            )
+        };
+        // (a)
+        let h = hook_on("read-open", &docs);
+        let t = run(&no_collab, "docs/brief.md").unwrap_or_else(|e| panic!("(a) {e:?}"));
+        drop(h);
+        if cfg!(windows) {
+            assert!(
+                !r.join("docs.c3-race-orig").exists(),
+                "(a) held: not renamed"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(t.path().join("docs").join("brief.md")).unwrap(),
+            "INSIDE-BRIEF\n",
+            "(a) read from the directory that was opened"
+        );
+        assert!(!walk_has(t.path(), "OUTSIDE"), "(a)");
+        drop(t);
+        unswap(&docs);
+        // (b)
+        let h = hook_on("read-walk", &docs);
+        let got = run(&no_collab, "docs/brief.md");
+        drop(h);
+        let swapped = r.join("docs.c3-race-orig").exists();
+        match got {
+            Err(SetupError::Refused(m)) if swapped => {
+                assert!(m.contains("resolves outside the repository"), "(b) {m}");
+                assert!(crate::panel::run::is_preflight_refusal(&m), "(b) {m}");
+            }
+            Ok(t) if !swapped => {
+                assert!(!walk_has(t.path(), "OUTSIDE"), "(b) not swapped");
+            }
+            Err(e) => panic!("(b) swapped={swapped}: {e:?}"),
+            Ok(t) => panic!(
+                "(b) a brief behind a swapped-in link was staged: {:?}",
+                std::fs::read_to_string(t.path().join("docs").join("brief.md"))
+            ),
+        }
+        unswap(&docs);
+        // (c)
+        let h_dir = r.join(".collab").join("t").join("handoffs");
+        std::fs::create_dir_all(&h_dir).unwrap();
+        std::fs::write(h_dir.join("01-claude-x.md"), "INSIDE-HANDOFF\n").unwrap();
+        let h = hook_on("stage-read", &h_dir);
+        let t = run(&r.join(".collab"), "").unwrap_or_else(|e| panic!("(c) {e:?}"));
+        drop(h);
+        if cfg!(windows) {
+            assert!(
+                !r.join(".collab/t/handoffs.c3-race-orig").exists(),
+                "(c) held"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(t.path().join(".collab/t/handoffs/01-claude-x.md")).unwrap(),
+            "INSIDE-HANDOFF\n"
+        );
+        assert!(!walk_has(t.path(), "OUTSIDE"), "(c)");
+        drop(t);
+        unswap(&h_dir);
+        assert_eq!(
+            std::fs::read_to_string(outside.join("brief.md")).unwrap(),
+            "OUTSIDE-BRIEF\n"
+        );
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5 D4, F28-1) A patch on a file system without hard links (the test hook) is still put in
+    // place from a COMPLETE temporary file: a write that fails half-way leaves neither the patch nor
+    // a temporary file; the placement then puts the whole patch under its name; a sibling with the
+    // same bytes reuses it; two placements racing on a fresh name both succeed with one whole file;
+    // other bytes under the name are never overwritten. No temporary file is left at any point.
+    #[test]
+    fn a_patch_without_hard_links_is_placed_whole_and_nothing_partial_is_left() {
+        let r = repo("nolink");
+        std::fs::write(r.join("app.txt"), "two\n").unwrap();
+        let handoffs = r.join(".collab/t/handoffs");
+        std::fs::create_dir_all(&handoffs).unwrap();
+        let collab = r.join(".collab");
+        let names = |d: &Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            v.sort();
+            v
+        };
+        let _nolink = c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1");
+        {
+            let _fail = c3_core::test_hooks::set_thread_hook(crate::contain::WRITE_FAIL_HOOK, "1");
+            let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+            let err = write_patch(&mut p, &r, &collab).unwrap_err();
+            assert!(err.contains("injected write failure"), "{err}");
+            assert!(names(&handoffs).is_empty(), "{:?}", names(&handoffs));
+        }
+        let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        write_patch(&mut p, &r, &collab).unwrap();
+        let bytes = std::fs::read(&p.path).unwrap();
+        assert_eq!(p.sha256, c3_core::sha256_hex(&bytes));
+        let name = p.path.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(names(&handoffs), vec![name.clone()]);
+        // (a panel member shares the panel's first handoff number, so the same stem)
+        let mut p2 = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        write_patch(&mut p2, &r, &collab).unwrap();
+        assert_eq!(p2.path, p.path, "a sibling reuses the file");
+        // two placements racing on a fresh name
+        std::fs::remove_file(&p.path).unwrap();
+        let racers: Vec<_> = (0..2)
+            .map(|_| {
+                let (dir, name, bytes) = (handoffs.clone(), name.clone(), bytes.clone());
+                std::thread::spawn(move || {
+                    let _h = c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1");
+                    place_patch(&dir, &name, &bytes)
+                })
+            })
+            .collect();
+        for t in racers {
+            assert_eq!(t.join().unwrap(), Ok(()));
+        }
+        assert_eq!(std::fs::read(&p.path).unwrap(), bytes);
+        assert_eq!(names(&handoffs), vec![name.clone()]);
+        // other bytes under the name are never overwritten
+        std::fs::remove_file(&p.path).unwrap();
+        std::fs::write(&p.path, "somebody else's bytes\n").unwrap();
+        let err = place_patch(&handoffs, &name, &bytes).unwrap_err();
+        assert!(err.contains("never overwritten"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&p.path).unwrap(),
+            "somebody else's bytes\n"
+        );
+        assert_eq!(names(&handoffs), vec![name]);
         let _ = std::fs::remove_dir_all(r.parent().unwrap());
     }
 

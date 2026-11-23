@@ -48,14 +48,66 @@ pub fn mode_on() -> bool {
     }
 }
 
+thread_local! {
+    /// (0.2.5 D4) The hooks an in-process test set for ITS OWN thread ([`set_thread_hook`]).
+    static THREAD_HOOKS: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// (0.2.5 D4) The guard of a hook set for the current thread only ([`set_thread_hook`]); the hook
+/// is gone when it drops.
+#[must_use = "the thread hook is removed when this guard drops"]
+pub struct ThreadHook {
+    name: String,
+}
+
+impl Drop for ThreadHook {
+    fn drop(&mut self) {
+        THREAD_HOOKS.with(|h| {
+            let mut h = h.borrow_mut();
+            if let Some(i) = h.iter().rposition(|(n, _)| *n == self.name) {
+                h.remove(i);
+            }
+        });
+    }
+}
+
+/// (0.2.5 D4) Set a `CODEX_CONSULT_TEST_*` hook for the CURRENT THREAD only, until the returned
+/// guard drops: what an in-process (cargo unit) test uses to steer one call without touching the
+/// process environment, which every other test running in parallel shares - no mode gate is set and
+/// no other thread sees it. [`hook`] honours it without [`mode_on`]: the gate exists so that an
+/// ENVIRONMENT variable cannot change production behaviour by accident, and a thread hook never
+/// comes from the environment - only test code calls this.
+pub fn set_thread_hook(name: &str, value: &str) -> ThreadHook {
+    debug_assert!(
+        name.starts_with("CODEX_CONSULT_TEST_") && name != MODE_VAR,
+        "set_thread_hook() is for CODEX_CONSULT_TEST_* variables other than the mode gate"
+    );
+    THREAD_HOOKS.with(|h| h.borrow_mut().push((name.to_string(), value.to_string())));
+    ThreadHook {
+        name: name.to_string(),
+    }
+}
+
 /// Read a `CODEX_CONSULT_TEST_*` hook variable, honoured only when [`mode_on`]. Returns `None` when
 /// the variable is not set. When it IS set but the mode is off, the hook is ignored (returns
-/// `None`) and the run warns once on stderr that it saw a test hook.
+/// `None`) and the run warns once on stderr that it saw a test hook. (0.2.5 D4) A hook set for the
+/// current thread ([`set_thread_hook`]) is returned first.
 pub fn hook(name: &str) -> Option<String> {
     debug_assert!(
         name.starts_with("CODEX_CONSULT_TEST_") && name != MODE_VAR,
         "hook() is for CODEX_CONSULT_TEST_* variables other than the mode gate"
     );
+    let local = THREAD_HOOKS.with(|h| {
+        h.borrow()
+            .iter()
+            .rev()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+    });
+    if local.is_some() {
+        return local;
+    }
     let raw = std::env::var(name).ok()?;
     if mode_on() {
         return Some(raw);
@@ -160,6 +212,21 @@ mod tests {
         assert_eq!(test_mode_warning(), Some(TEST_MODE_WARNING));
         std::env::remove_var(MODE_VAR);
         assert_eq!(test_mode_warning(), None);
+    }
+
+    // (0.2.5 D4) a thread hook is seen by its own thread only, without the mode gate, and is gone
+    // once its guard drops.
+    #[test]
+    fn a_thread_hook_is_seen_by_its_own_thread_only() {
+        const NAME: &str = "CODEX_CONSULT_TEST_THREAD_HOOK_PROBE";
+        assert_eq!(hook(NAME), None);
+        {
+            let _g = set_thread_hook(NAME, "here");
+            assert_eq!(hook(NAME).as_deref(), Some("here"));
+            let other = std::thread::spawn(|| hook(NAME)).join().unwrap();
+            assert_eq!(other, None, "another thread does not see it");
+        }
+        assert_eq!(hook(NAME), None, "gone after the guard dropped");
     }
 
     #[test]
