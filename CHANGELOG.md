@@ -9,6 +9,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-24
+
 ### Added
 
 - **`c3 finish` runs the repository's own checks first.** CI sat red for a week on a formatting
