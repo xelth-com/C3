@@ -1,0 +1,303 @@
+codex-consult: detached run 1b07d11f (detach id 1b07d11f-7f83-4e2a-adae-3f3e63f6a8e4) - pid 9552 on LAPTOP-9SGIHQ03, started 2026-11-24T17:42:33+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-1b07d11f.status.json
+Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - entry 3 of 17 for -Provider ZAI-claude (engine applied)
+codex-consult: usable reply - ZAI-claude :: glm-5.4 [claude], mode new, thread 04a8fd0a-9df0-4004-addf-7fda531553ed (source: events), wall 1254.1 s
+warning    : the main working tree changed during the run (5 files: CHANGELOG.md, crates/c3-cli/tests/kimi_engine.rs, crates/c3/src/providers.rs, crates/c3/src/state_dir.rs, crates/c3/src/state_dir/tests.rs) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+warning    : the live collab directory changed during the run (3 files: .collab/release-0.2.5/handoffs/60-grok-run-dirs-review-grok.events.jsonl, .collab/release-0.2.5/handoffs/60-grok-run-dirs-review-grok.md, .collab/release-0.2.5/handoffs/60-grok-run-dirs-review-grok.reply.json) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+verdict    : HOLD - run_dirs refuses linked task directories as claimed, but c3 consult, c3 panel and a detached consult hand it a collab root that the resolver has already canonicalized, so a linked default .collab whose target exists is still followed there and the CHANGELOG sentence 'a link at any of them refuses the run' is false on that path.
+findings   : 0 blocker, 1 major, 2 minor, 1 note -> F61-1..F61-4 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 not-checked, F10-4 not-checked, F10-5 not-checked, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F13-9 not-checked, F14-1 not-checked, F14-2 not-checked, F14-3 not-checked, F14-4 not-checked, F14-5 not-checked, F15-1 not-checked, F15-2 not-checked, F15-3 not-checked, F15-5 not-checked, F15-6 not-checked, F16-1 not-checked, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-5 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 not-checked, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 not-checked, F18-2 not-checked, F18-3 not-checked, F18-4 not-checked, F18-5 not-checked, F18-6 not-checked, F18-7 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F19-4 not-checked, F19-5 not-checked, F19-6 not-checked, F20-1 not-checked, F20-2 not-checked, F20-3 not-checked, F20-4 not-checked, F20-5 not-checked, F20-6 not-checked, F24-1 not-checked, F24-2 not-checked, F24-4 not-checked, F27-1 not-checked, F27-2 not-checked, F27-3 not-checked, F28-1 not-checked, F28-2 not-checked, F28-3 not-checked, F29-1 not-checked, F29-2 not-checked, F29-3 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F30-4 not-checked, F30-5 not-checked, F30-6 not-checked, F31-1 not-checked, F31-2 not-checked, F31-3 not-checked, F31-4 not-checked, F31-5 not-checked, F31-6 not-checked, F32-1 not-checked, F32-2 not-checked, F32-3 not-checked, F32-4 not-checked, F32-5 not-checked, F36-1 not-checked, F36-2 not-checked, F36-3 not-checked, F36-4 not-checked, F36-5 not-checked, F36-6 not-checked, F36-7 not-checked, F36-8 not-checked, F38-1 not-checked, F38-2 not-checked, F39-1 not-checked, F39-2 not-checked, F39-4 not-checked, F43-1 not-checked, F43-2 not-checked, F43-3 not-checked, F43-5 not-checked, F43-6 not-checked, F43-7 not-checked, F43-8 not-checked, F44-1 not-checked, F44-2 not-checked, F44-3 not-checked, F45-1 not-checked, F45-2 not-checked, F45-3 not-checked, F45-4 not-checked, F45-5 not-checked, F45-6 not-checked, F45-7 not-checked, F45-8 not-checked, F45-9 not-checked, F46-1 not-checked, F46-2 not-checked, F46-3 not-checked, F46-4 not-checked, F46-5 not-checked, F46-6 not-checked, F46-7 not-checked, F46-8 not-checked, F47-1 not-checked, F47-2 not-checked, F47-3 fixed, F47-4 not-checked, F48-1 fixed, F48-2 not-checked, F48-3 not-checked, F48-4 fixed, F48-5 not-checked, F51-1 not-checked, F51-2 not-checked, F51-3 not-checked, F51-4 not-checked, F51-5 not-checked, F51-6 not-checked, F52-1 not-checked, F52-2 not-checked, F52-4 not-checked, F53-1 not-checked, F53-2 not-checked, F53-3 not-checked, F53-4 not-checked, F53-5 not-checked, F53-6 not-checked, F53-7 not-checked, F57-1 not-checked, F57-2 not-checked, F57-3 not-checked, F57-4 not-checked, F57-5 not-checked, F57-7 not-checked, F57-8 not-checked, F57-9 not-checked, F57-10 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\61-claudecode-run-dirs-review-glm54.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\61-claudecode-run-dirs-review-glm54.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\61-claudecode-run-dirs-review-glm54.events.jsonl
+
+**Verdict: HOLD.** `run_dirs` checks what it is handed. The gap is upstream of it, on the main commands.
+
+## 1. Links below a collab root
+
+- **The collab root itself is still followed by `c3 consult`, `c3 panel` and a detached consult** (major). They hand `begin_run` the root from `resolve_collab_root*` (`crates/c3/src/providers.rs:2562`), which canonicalizes an existing path. A default `.collab` that is a link to an existing directory outside the repository arrives as that target: both classifiers answer `None`, the "outside" branch opens it with `Dir::open_ambient_dir` (`crates/c3/src/state_dir.rs:1794-1799`), and the run writes its records there. No refusal, no `--collab-dir` needed. Only `c3 work` (`crates/c3/src/work/mod.rs:191`) passes the un-resolved spelling and refuses. So `CHANGELOG.md:752` and `CHANGELOG.md:755` are false for the main commands. A dangling link is refused; a link into the repository is resolved and walked.
+- **One directory is not checked: a work run's record directory** (minor, `crates/c3/src/work/record.rs:503-510`). `<task>/work/<NN>-<provider>-<model>` is taken by path (`exists()`, then `create_dir_all`) below the `work/` that was checked. A link there with that predictable name is not counted by `record::run_dirs` (no `run.json` at its target), so `allocate` returns it and `run.json` and the run's git diff are written through it. Static, not a swap.
+- **`..` after a link** (minor, `crates/c3/src/state_dir.rs:1863-1877`). `lexical` resolves `..` by text. `c3 work --collab-dir link/../.collab` with `link` pointing elsewhere: `repo_relative_normal` answers `Some(".collab")`, `run_dirs` creates and checks `<repo>/.collab/t/work`, and the run writes by path into `<target>/../.collab/`, outside the repository.
+- Case, drive-letter case, a trailing separator, `..` without a link, 8.3 names, a verbatim-prefixed path: classified correctly by reading (`crates/c3-core/src/paths.rs:11`, `fs_name`, the canonical fallback). Not executed.
+
+## 2. Legitimate setups
+
+Nothing else breaks by reading: a repository behind a link (the root is an anchor), an absolute `--collab-dir` inside the repository, a linked worktree. One note: `kind_of` (`crates/c3/src/contain.rs:84-97`) counts any Windows reparse point as a link, and the no-follow walk now covers the default `.collab` chain. A repository under a cloud-sync root whose directories carry placeholder tags would be refused where 0.2.4 ran: the accepted limitation of F43-8, made wider. Unverified.
+
+## 3. Error paths
+
+Nothing found. A link can only exist below components that exist, so a link refusal leaves nothing new behind. Every handle is dropped when `run_dirs` returns. Messages are repo-relative inside the repository and absolute outside.
+
+## 4. The test
+
+The four refusals (`crates/c3/src/state_dir/tests.rs:922`, `932`, `939`, `958`) fail without the change: the old `create_dir_all` followed the link and returned `Ok`. The two controls (`944`, `952`) pass with and without it. The root-link assertion (`939`) is honest only for the spelling `c3 work` passes. The resolved spelling, which the `.c3` test does cover (`tests.rs:821-828`), is not asserted and returns `Ok`. The `958` assertion does not pin the named path.
+
+## Requested checks
+
+- **RC1** (workspace-write, 3 min, repository root): at `tests.rs:939`, while `.collab2` is still the link, also call `begin_run(&r, &crate::providers::resolve_collab_root(&r, ".collab2"), "t", &["handoffs"])`; run `cargo test -p c3 state_dir::tests::a_linked_task_directory -- --nocapture`. The first finding of section 1 holds if this call returns `Ok` and `outside/t/handoffs` exists.
+- **RC2** (workspace-write, 5 min, a test beside `crates/c3/src/work/record.rs`): in a scratch repository make `.collab/t/work` real and `.collab/t/work/01-x-y` a link to an empty outside directory; call `record::allocate(&work_root, "x", "y")`, then `write_record` on its result. The second finding of section 1 holds if `outside/run.json` appears.
+- **RC3** (read-only, 1 min, a machine with OneDrive Files On-Demand): `fsutil reparsepoint query "<OneDrive folder holding a repository>"`. The section 2 note is real if a tag is printed for a directory.
+
+### Findings
+
+- **F61-1** [major] `crates/c3/src/providers.rs:2562`, `crates/c3/src/consult/orchestrate/mod.rs:1515`, `crates/c3/src/panel/run.rs:256`, `crates/c3/src/consult/detach.rs:561`, `crates/c3/src/state_dir.rs:1794`, `crates/c3/src/state_dir/tests.rs:939`, `CHANGELOG.md:752`, `CHANGELOG.md:755` - c3 consult, c3 panel and a detached consult hand begin_run a collab root that resolve_collab_root* has already canonicalized. A default .collab that is a link to an existing directory outside the repository therefore reaches run_dirs as that target, is treated as an outside anchor, and receives the run's records. The refusal the CHANGELOG promises ('a link at any of them refuses the run'; such a setup 'must name the real place with --collab-dir') holds only for the un-resolved spelling, which only c3 work passes. Trigger: The repository's .collab is a symlink or junction (tracked content that arrived with a clone, or a local one) whose target exists outside the repository, and the operator runs c3 consult, c3 panel or c3 consult --detach with the default collab directory. Evidence: read-code: resolve_collab_root_with ends with std::fs::canonicalize(&joined).map(dunce_simplify).unwrap_or(joined): an existing link at the collab root is replaced by its target before any caller sees it.; read-code: these run starts take collab_root from resolve_collab_root(_moving) and pass it unchanged to begin_run / run_dirs.; read-code: folder_link_problem looks only at .c3 and .eck; for a path outside the repository split_state_path and repo_relative_normal both answer None.; read-code: with both None the root is create_dir_all'ed and opened with Dir::open_ambient_dir (following); only the task directory and dirs are opened without following.; read-code: c3 work builds the collab root itself without canonicalize, so it alone hands run_dirs the link and gets the refusal.; read-code: the root-link assertion calls begin_run with the raw .collab2 path only; unlike the .c3 test at 821-828 it never goes through resolve_collab_root.; inferred: both sentences describe the raw-spelling behaviour, which the consult and panel paths do not take. Verify: RC1: at tests.rs:939 call begin_run with crate::providers::resolve_collab_root(&r, ".collab2") while .collab2 is still the link; the call returns Ok and outside/t/handoffs appears. Remedy: Hand begin_run the un-resolved spelling at the three consult/panel call sites (run_dirs already classifies it and refuses the link), or keep the given collab_dir beside the resolved root and refuse when the lexical path lies in the repository but the resolved one does not. Add the resolved spelling to the test, as the .c3 test does.
+- **F61-2** [minor] `crates/c3/src/work/record.rs:503`, `crates/c3/src/work/record.rs:505`, `crates/c3/src/work/record.rs:373`, `crates/c3/src/work/mod.rs:1253`, `crates/c3/src/work/mod.rs:1279`, `crates/c3/src/state_dir.rs:1802` - begin_run checks <task>/work, but a work run's record directory <task>/work/<NN>-<provider>-<model> is taken by path in record::allocate (exists(), then create_dir_all). A link there with that predictable name is not counted by record::run_dirs (its target has no run.json), so allocate returns the link path and run.json and the run's git diff are written through it, outside the repository. Trigger: A fresh work run (next sequence 01) on a task whose .collab/<task>/work/01-<provider>-<model> is a symlink or junction, arriving with a clone, to an existing directory without run.json. Evidence: read-code: begin_run is given ["work"]; record::allocate then picks the record directory and write_record writes into it.; read-code: allocate computes next from record::run_dirs, skips creation when dir.exists() (true through a link) and returns the link path.; read-code: a numbered entry counts only when its run.json exists, so a planted link to a directory without run.json leaves next at 1.; read-code: write_record writes <rec_dir>/run.json by path (write_text_atomic). Verify: RC2: allocate on a work root whose 01-x-y is a link to an empty outside directory, then write_record; outside/run.json appears. Remedy: Open or create the record directory through the same no-follow walk (for example let run_dirs take the allocated id as a second level below work/) and refuse a link there before run.json is written.
+- **F61-3** [minor] `crates/c3/src/state_dir.rs:1868`, `crates/c3/src/state_dir.rs:1851`, `crates/c3/src/work/mod.rs:191` - lexical() resolves '..' by text while the file system applies it to the target of a preceding link. For a collab root handed to run_dirs un-resolved (c3 work), 'link/../.collab' with link pointing elsewhere is classified as the repository's own .collab: run_dirs creates and checks <repo>/.collab/t/work while the run writes by path into <link target>/../.collab, outside the repository. Trigger: c3 work --collab-dir "link/../.collab" where <repo>/link is a symlink or junction to a directory outside the repository. Evidence: read-code: a ParentDir component pops the previous Normal component without consulting the file system.; read-code: repo_relative_normal returns the text-relative result first, before any canonical comparison.; read-code: c3 work keeps the given spelling for collab_root, task_dir and work_root, so its later writes go through the link. Verify: In a scratch repository with a link l to an outside directory, call begin_run(&r, &r.join("l/../.collab"), "t", &["work"]): it returns Ok and creates <repo>/.collab/t/work while the parent of l's target receives .collab/t/work/.admission.lock. Remedy: Compare the lexically resolved collab root with its physically resolved form (canonicalize the longest existing ancestor) and refuse or use the physical form when they differ, or make c3 work resolve its collab root the way the consult commands do.
+- **F61-4** [note] `crates/c3/src/contain.rs:94`, `crates/c3/src/state_dir.rs:1790` - The no-follow walk treats every Windows reparse point as a link and now covers every component from the repository root down to the default .collab and the task directories below it. A repository under a cloud-sync root whose directories carry placeholder tags would be refused ('a reparse point ... e.g. a cloud-sync placeholder') where 0.2.4 started the run. Trigger: A repository under an OneDrive-style Files On-Demand root (or another non-link directory reparse filter) with the default .collab collab root; c3 consult. Evidence: read-code: kind_of returns Kind::Link for any entry with the reparse attribute, and verified_dir applies it to the opened handle.; read-code: open_child through run_dir is now used for the whole .collab chain, which create_dir_all made before this commit.; assumed: not checked whether such directories carry a reparse tag; no such root on this machine. Verify: RC3: fsutil reparsepoint query on an OneDrive directory inside a repository. Remedy: If directories under such roots carry tags, treat non-name-surrogate tags as directories in the walk (as Rust's is_symlink does), or state the limitation for the default collab root in the CHANGELOG.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside this diff (run_dirs and its test); not re-verified.
+- F02-2 - not-checked - Outside this diff; not re-verified.
+- F02-3 - not-checked - Outside this diff; not re-verified.
+- F02-4 - not-checked - Outside this diff; not re-verified.
+- F02-5 - not-checked - Outside this diff; not re-verified.
+- F02-6 - not-checked - Outside this diff; not re-verified.
+- F02-7 - not-checked - Outside this diff; not re-verified.
+- F02-8 - not-checked - Outside this diff; not re-verified.
+- F02-9 - not-checked - Outside this diff; not re-verified.
+- F02-10 - not-checked - Outside this diff; not re-verified.
+- F02-11 - not-checked - Outside this diff; not re-verified.
+- F02-12 - not-checked - Outside this diff; not re-verified.
+- F02-13 - not-checked - Outside this diff; not re-verified.
+- F02-14 - not-checked - Outside this diff; not re-verified.
+- F02-15 - not-checked - Outside this diff; not re-verified.
+- F02-16 - not-checked - Outside this diff; not re-verified.
+- F02-17 - not-checked - Outside this diff; not re-verified.
+- F02-18 - not-checked - Outside this diff; not re-verified.
+- F02-19 - not-checked - Outside this diff; not re-verified.
+- F02-20 - not-checked - Outside this diff; not re-verified.
+- F02-21 - not-checked - Outside this diff; not re-verified.
+- F03-1 - not-checked - Outside this diff; not re-verified.
+- F03-2 - not-checked - Outside this diff; not re-verified.
+- F03-3 - not-checked - Outside this diff; not re-verified.
+- F03-4 - not-checked - Outside this diff; not re-verified.
+- F03-5 - not-checked - Outside this diff; not re-verified.
+- F03-6 - not-checked - Outside this diff; not re-verified.
+- F04-1 - not-checked - Outside this diff; not re-verified.
+- F04-2 - not-checked - Outside this diff; not re-verified.
+- F04-3 - not-checked - Outside this diff; not re-verified.
+- F04-4 - not-checked - Outside this diff; not re-verified.
+- F04-5 - not-checked - Outside this diff; not re-verified.
+- F04-6 - not-checked - Outside this diff; not re-verified.
+- F04-7 - not-checked - Outside this diff; not re-verified.
+- F04-8 - not-checked - Outside this diff; not re-verified.
+- F04-9 - not-checked - Outside this diff; not re-verified.
+- F10-1 - not-checked - Outside this diff; not re-verified.
+- F10-2 - not-checked - Outside this diff; not re-verified.
+- F10-3 - not-checked - Outside this diff; not re-verified.
+- F10-4 - not-checked - Outside this diff; not re-verified.
+- F10-5 - not-checked - Outside this diff; not re-verified.
+- F10-7 - not-checked - Outside this diff; not re-verified.
+- F11-1 - not-checked - Outside this diff; not re-verified.
+- F11-2 - not-checked - Outside this diff; not re-verified.
+- F11-3 - not-checked - Outside this diff; not re-verified.
+- F11-4 - not-checked - Outside this diff; not re-verified.
+- F11-5 - not-checked - Outside this diff; not re-verified.
+- F11-6 - not-checked - Outside this diff; not re-verified.
+- F11-7 - not-checked - Outside this diff; not re-verified.
+- F11-8 - not-checked - Outside this diff; not re-verified.
+- F11-9 - not-checked - Outside this diff; not re-verified.
+- F11-10 - not-checked - Outside this diff; not re-verified.
+- F11-11 - not-checked - Outside this diff; not re-verified.
+- F11-12 - not-checked - Outside this diff; not re-verified.
+- F12-1 - not-checked - Outside this diff; not re-verified.
+- F12-2 - not-checked - Outside this diff; not re-verified.
+- F12-3 - not-checked - Outside this diff; not re-verified.
+- F12-4 - not-checked - Outside this diff; not re-verified.
+- F13-1 - not-checked - Outside this diff; not re-verified.
+- F13-2 - not-checked - Outside this diff; not re-verified.
+- F13-3 - not-checked - Outside this diff; not re-verified.
+- F13-4 - not-checked - Outside this diff; not re-verified.
+- F13-5 - not-checked - Outside this diff; not re-verified.
+- F13-6 - not-checked - Outside this diff; not re-verified.
+- F13-7 - not-checked - Outside this diff; not re-verified.
+- F13-8 - not-checked - Outside this diff; not re-verified.
+- F13-9 - not-checked - Outside this diff; not re-verified.
+- F14-1 - not-checked - Outside this diff; not re-verified.
+- F14-2 - not-checked - Outside this diff; not re-verified.
+- F14-3 - not-checked - Outside this diff; not re-verified.
+- F14-4 - not-checked - Outside this diff; not re-verified.
+- F14-5 - not-checked - Outside this diff; not re-verified.
+- F15-1 - not-checked - Outside this diff; not re-verified.
+- F15-2 - not-checked - Outside this diff; not re-verified.
+- F15-3 - not-checked - Outside this diff; not re-verified.
+- F15-5 - not-checked - Outside this diff; not re-verified.
+- F15-6 - not-checked - Outside this diff; not re-verified.
+- F16-1 - not-checked - Outside this diff; not re-verified.
+- F16-2 - not-checked - Outside this diff; not re-verified.
+- F16-3 - not-checked - Outside this diff; not re-verified.
+- F16-4 - not-checked - Outside this diff; not re-verified.
+- F16-5 - not-checked - Outside this diff; not re-verified.
+- F16-6 - not-checked - Outside this diff; not re-verified.
+- F16-7 - not-checked - Outside this diff; not re-verified.
+- F16-8 - not-checked - Outside this diff; not re-verified.
+- F16-9 - not-checked - Outside this diff; not re-verified.
+- F16-10 - not-checked - Outside this diff; not re-verified.
+- F17-1 - not-checked - Outside this diff; not re-verified.
+- F17-2 - not-checked - Outside this diff; not re-verified.
+- F17-3 - not-checked - Outside this diff; not re-verified.
+- F17-4 - not-checked - Outside this diff; not re-verified.
+- F17-5 - not-checked - Outside this diff; not re-verified.
+- F17-6 - not-checked - Outside this diff; not re-verified.
+- F17-7 - not-checked - Outside this diff; not re-verified.
+- F17-8 - not-checked - Outside this diff; not re-verified.
+- F17-9 - not-checked - Outside this diff; not re-verified.
+- F17-10 - not-checked - Outside this diff; not re-verified.
+- F18-1 - not-checked - Outside this diff; not re-verified.
+- F18-2 - not-checked - Outside this diff; not re-verified.
+- F18-3 - not-checked - Outside this diff; not re-verified.
+- F18-4 - not-checked - Outside this diff; not re-verified.
+- F18-5 - not-checked - Outside this diff; not re-verified.
+- F18-6 - not-checked - Outside this diff; not re-verified.
+- F18-7 - not-checked - Outside this diff; not re-verified.
+- F19-1 - not-checked - Outside this diff; not re-verified.
+- F19-2 - not-checked - Outside this diff; not re-verified.
+- F19-3 - not-checked - Outside this diff; not re-verified.
+- F19-4 - not-checked - Outside this diff; not re-verified.
+- F19-5 - not-checked - Outside this diff; not re-verified.
+- F19-6 - not-checked - Outside this diff; not re-verified.
+- F20-1 - not-checked - Outside this diff; not re-verified.
+- F20-2 - not-checked - Outside this diff; not re-verified.
+- F20-3 - not-checked - Outside this diff; not re-verified.
+- F20-4 - not-checked - Outside this diff; not re-verified.
+- F20-5 - not-checked - Outside this diff; not re-verified.
+- F20-6 - not-checked - Outside this diff; not re-verified.
+- F24-1 - not-checked - Outside this diff; not re-verified.
+- F24-2 - not-checked - Outside this diff; not re-verified.
+- F24-4 - not-checked - Outside this diff; not re-verified.
+- F27-1 - not-checked - Outside this diff; not re-verified.
+- F27-2 - not-checked - Outside this diff; not re-verified.
+- F27-3 - not-checked - Outside this diff; not re-verified.
+- F28-1 - not-checked - Outside this diff; not re-verified.
+- F28-2 - not-checked - Outside this diff; not re-verified.
+- F28-3 - not-checked - Outside this diff; not re-verified.
+- F29-1 - not-checked - Outside this diff; not re-verified.
+- F29-2 - not-checked - Outside this diff; not re-verified.
+- F29-3 - not-checked - Outside this diff; not re-verified.
+- F30-1 - not-checked - Outside this diff; not re-verified.
+- F30-2 - not-checked - Outside this diff; not re-verified.
+- F30-3 - not-checked - Outside this diff; not re-verified.
+- F30-4 - not-checked - Outside this diff; not re-verified.
+- F30-5 - not-checked - Outside this diff; not re-verified.
+- F30-6 - not-checked - Outside this diff; not re-verified.
+- F31-1 - not-checked - Outside this diff; not re-verified.
+- F31-2 - not-checked - Outside this diff; not re-verified.
+- F31-3 - not-checked - Outside this diff; not re-verified.
+- F31-4 - not-checked - Outside this diff; not re-verified.
+- F31-5 - not-checked - Outside this diff; not re-verified.
+- F31-6 - not-checked - Outside this diff; not re-verified.
+- F32-1 - not-checked - Outside this diff; not re-verified.
+- F32-2 - not-checked - Outside this diff; not re-verified.
+- F32-3 - not-checked - Outside this diff; not re-verified.
+- F32-4 - not-checked - Outside this diff; not re-verified.
+- F32-5 - not-checked - Outside this diff; not re-verified.
+- F36-1 - not-checked - Outside this diff; not re-verified.
+- F36-2 - not-checked - Outside this diff; not re-verified.
+- F36-3 - not-checked - Outside this diff; not re-verified.
+- F36-4 - not-checked - Outside this diff; not re-verified.
+- F36-5 - not-checked - The collab path normaliser it concerns was read only where run_dirs uses it; the rest not re-verified.
+- F36-6 - not-checked - Outside this diff (the legacy branch of begin_run is unchanged); not re-verified.
+- F36-7 - not-checked - Outside this diff; not re-verified.
+- F36-8 - not-checked - Outside this diff; not re-verified.
+- F38-1 - not-checked - Outside this diff; not re-verified.
+- F38-2 - not-checked - Outside this diff; not re-verified.
+- F39-1 - not-checked - Outside this diff; not re-verified.
+- F39-2 - not-checked - Outside this diff; not re-verified.
+- F39-4 - not-checked - Outside this diff; not re-verified.
+- F43-1 - not-checked - Outside this diff; not re-verified.
+- F43-2 - not-checked - Outside this diff; not re-verified.
+- F43-3 - not-checked - Outside this diff; not re-verified.
+- F43-5 - not-checked - Outside this diff; not re-verified.
+- F43-6 - not-checked - Outside this diff; not re-verified.
+- F43-7 - not-checked - Not re-verified as a whole; this commit adds another overstatement at CHANGELOG.md:752 (finding 1).
+- F43-8 - not-checked - Not re-verified. This commit widens the scope of its accepted limitation (non-link reparse points count as links) to the default .collab chain; see finding 4.
+- F44-1 - not-checked - Outside this diff; not re-verified.
+- F44-2 - not-checked - Outside this diff; not re-verified.
+- F44-3 - not-checked - Outside this diff; not re-verified.
+- F45-1 - not-checked - Outside this diff; not re-verified.
+- F45-2 - not-checked - Outside this diff; not re-verified.
+- F45-3 - not-checked - Outside this diff; not re-verified.
+- F45-4 - not-checked - Outside this diff; not re-verified.
+- F45-5 - not-checked - Outside this diff; not re-verified.
+- F45-6 - not-checked - Outside this diff; not re-verified.
+- F45-7 - not-checked - Outside this diff; not re-verified.
+- F45-8 - not-checked - Outside this diff; not re-verified.
+- F45-9 - not-checked - Outside this diff; not re-verified.
+- F46-1 - not-checked - Outside this diff; not re-verified.
+- F46-2 - not-checked - Outside this diff; not re-verified.
+- F46-3 - not-checked - Outside this diff; not re-verified.
+- F46-4 - not-checked - Outside this diff; not re-verified.
+- F46-5 - not-checked - Outside this diff; not re-verified.
+- F46-6 - not-checked - Outside this diff; not re-verified.
+- F46-7 - not-checked - Outside this diff; not re-verified.
+- F46-8 - not-checked - Outside this diff; not re-verified.
+- F47-1 - not-checked - Outside this diff; not re-verified.
+- F47-2 - not-checked - Outside this diff (the folder move); not re-verified. The same check-then-act class is the brief's known case for run_dirs.
+- F47-3 - fixed - By reading only: lexical applies fs_name to every component (crates/c3/src/state_dir.rs:1863-1894), which the classification run_dirs relies on uses. Not executed.
+- F47-4 - not-checked - Outside this diff; not re-verified.
+- F48-1 - fixed - By reading only: begin_run calls folder_link_problem first (crates/c3/src/state_dir.rs:1702, 188-244) and tests.rs:813-848 covers the raw and the resolved spelling; not executed. The same class stays open for the default .collab root (finding 1).
+- F48-2 - not-checked - Outside this diff; not re-verified.
+- F48-3 - not-checked - Outside this diff; not re-verified.
+- F48-4 - fixed - By reading only: split_by_identity (state_dir.rs:1944), the alias part of folder_link_problem (216-242) and fs_name classify short and link spellings before run_dirs walks. Not executed on Windows.
+- F48-5 - not-checked - Outside this diff (the folder move); not re-verified.
+- F51-1 - not-checked - Outside this diff; not re-verified.
+- F51-2 - not-checked - Outside this diff; not re-verified.
+- F51-3 - not-checked - Outside this diff; not re-verified.
+- F51-4 - not-checked - Outside this diff; not re-verified.
+- F51-5 - not-checked - Outside this diff; not re-verified.
+- F51-6 - not-checked - Outside this diff; not re-verified.
+- F52-1 - not-checked - Outside this diff; not re-verified.
+- F52-2 - not-checked - Outside this diff; not re-verified.
+- F52-4 - not-checked - Outside this diff; not re-verified.
+- F53-1 - not-checked - Outside this diff; not re-verified.
+- F53-2 - not-checked - Outside this diff; not re-verified.
+- F53-3 - not-checked - Outside this diff; not re-verified.
+- F53-4 - not-checked - Outside this diff; not re-verified.
+- F53-5 - not-checked - Outside this diff; not re-verified.
+- F53-6 - not-checked - Outside this diff; not re-verified.
+- F53-7 - not-checked - Outside this diff; not re-verified.
+- F57-1 - not-checked - Outside this diff; not re-verified.
+- F57-2 - not-checked - Outside this diff; not re-verified.
+- F57-3 - not-checked - Outside this diff; not re-verified.
+- F57-4 - not-checked - Outside this diff; not re-verified.
+- F57-5 - not-checked - Outside this diff; not re-verified.
+- F57-7 - not-checked - Outside this diff; not re-verified.
+- F57-8 - not-checked - Outside this diff; not re-verified.
+- F57-9 - not-checked - Outside this diff; not re-verified.
+- F57-10 - not-checked - Outside this diff; not re-verified.
+
+## Verdict: HOLD
+
+run_dirs refuses linked task directories as claimed, but c3 consult, c3 panel and a detached consult hand it a collab root that the resolver has already canonicalized, so a linked default .collab whose target exists is still followed there and the CHANGELOG sentence 'a link at any of them refuses the run' is false on that path.
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, not-checked) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+- **F32-1** (prior, not-checked) `crates/c3/src/engines/worktree.rs:248` - Stage creation and publication use pathnames after validation, so a replaced directory component can send staged bytes outside the worktree and leave a temporary file there.
+- **F57-1** (prior, not-checked) `crates/c3/src/maintain/web.rs:209` - Changing a page's URL and public flag while retaining its name can publish IDs from the previously non-public page in telemetry.
+- **F57-2** (prior, not-checked) `crates/c3-core/src/quota.rs:941` - An uninterpretable nested tool inventory counts as positive switch evidence for a Codex smoke turn.
+- **F57-3** (prior, not-checked) `crates/c3/src/maintain/mod.rs:740` - Pending recovery can record the pending target version as verified after smoking a different installed version.
+- **F57-4** (prior, not-checked) `crates/c3/src/state_dir.rs:745` - A live lock creator can return success after another process reclaimed its still-empty file and acquired the same move lock.
+- **F57-5** (prior, not-checked) `crates/c3/src/consult/reviewed.rs:1451` - Two different patches can publish successfully at one short-hash path, leaving one consultation's full digest bound to the other consultation's bytes.
+- **F57-6** (prior, not-checked) `crates/c3/src/state_dir.rs:1544` - A linked task directory below a real project collab directory can redirect handoff directory creation and consultation output.
+
+### Unproven scenarios
+
+- No test or command was run: every conclusion comes from reading the code at 8087bad.
+- Finding 1's clone-borne case needs a link that survives the clone (Linux and macOS; on Windows only a junction made locally or a symlink-enabled clone).
+- Whether cloud-sync (OneDrive-style) directories carry a reparse tag: no such root on this machine (RC3).
+- Not read: state_dir.rs outside lines 140-275 and 1690-2294, contain.rs outside 30-445, the panel, work and detached flows beyond their begin_run call sites, and FilesStore::commit file paths with sub-directories.
+- The '.. after a link' spelling was traced for c3 work only; the detached work background was not traced past detach::background.
+
+### First-run checklist (observable)
+
+_(none)_

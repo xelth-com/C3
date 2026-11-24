@@ -753,18 +753,32 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   repository (a `--collab-dir` elsewhere) is the operator's own anchor - created by path and
   followed as given (F52-3) - while the task directory and `handoffs/` below it are not followed.
   A setup that reached its task directory through a link must name the real place with
-  `--collab-dir`. A run whose collab directory names `.eck/` while neither folder exists is refused instead of
+  `--collab-dir`. (F60-1, found by the diff review of this entry) The collab directory itself is
+  covered because the commands' resolver no longer resolves a link BELOW the repository root: a
+  `.collab` (or `.c3/collab`) that is a link used to be canonicalised to its target first, read as
+  a directory outside the repository and followed by `c3 consult`, a panel and a detached run
+  (`c3 work` already refused it). The path now stays as it is named
+  (`state_dir::linked_below_root`), so the run start meets the link and refuses; a reading command
+  still reads through it. (F60-2) The same when the path is spelled so that it is not a textual
+  prefix of the repository root - a verbatim `\\?\` path, an 8.3 short name, the repository
+  reached through a link above its root. (F61-3) `c3 work` resolves `.` and `..` in its collab
+  path by text before it uses it, the way the path is classified: `--collab-dir link/../.collab`
+  was checked as the repository's `.collab` while, where the file system applies `..` to a link's
+  target (not on Windows), the run wrote beside that target. A run whose collab directory names `.eck/` while neither folder exists is refused instead of
   creating a new `.eck/` (C3 never creates it again). What remains: the run's later writes (the
   handoff, the reply, the events, the lock, the ledger) still go by path into the directories
   checked at the start - a component swapped for a link AFTER the check, while the run writes, is
   not caught; binding every write of a run to those handles is not in this release. Tests:
   `a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing` (the task
   directory, `handoffs/` and `work/` as links under `.c3/collab` and, under the move lock,
-  `.eck/collab`; a panel member's check; a normal start; a linked task directory under `.collab/`
-  still followed), the c3-cli tests
+  `.eck/collab`; a panel member's check; a normal start; under `.collab/` a linked task directory,
+  a linked `handoffs/` and a linked collab root refused - also through the commands' resolver, a
+  link above the repository root and a verbatim path; a linked `.c3/collab`; a task directory
+  linked below an anchor outside the repository), the c3-cli tests
   `a_linked_task_directory_in_the_project_folder_refuses_the_run_and_writes_nothing_there` (a kimi
   consultation and `--detach`, the task directory and `handoffs/` as junctions; a normal run lands
-  its reply), `a_panel_with_a_linked_task_directory_in_the_project_folder_is_refused`,
+  its reply), `a_linked_collab_root_refuses_the_run_and_writes_nothing_there` (the default
+  `.collab` and `.c3/collab` as junctions, a consultation and `--detach`), `a_panel_with_a_linked_task_directory_in_the_project_folder_is_refused`,
   `a_linked_task_directory_in_the_project_folder_refuses_the_work_run` (Windows and Unix).
 - **One table of the Unicode format characters.** The untracked-file names of a `--diff` patch
   (`consult/reviewed.rs`) and the branch name of the red-CI line (`ci_check.rs`) each had their own

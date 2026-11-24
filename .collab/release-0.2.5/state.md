@@ -1096,7 +1096,7 @@ swap -> xelth.com/C3 page after the tag.
   collab root; only a collab root outside the repository is followed itself) - clippy clean,
   state_dir tests 30, c3 lib 961, kimi_engine 25; work and panel_light_required running.
 
-## 2026-11-24 17:50 - the uniform task-directory rule, verified and committed
+## 2026-11-24 17:34 - the uniform task-directory rule, verified and committed (8087bad)
 
 - The coordinator's own reading of F57-6 (not a reviewer's finding): wave A3 refused a linked task
   directory only inside C3's project folder; the default `.collab/` is tracked content and can
@@ -1111,3 +1111,31 @@ swap -> xelth.com/C3 page after the tag.
   moved to GLM-5.4 by the SessionStart repair of the running build (it follows the roster).
 - Next: push, CI, the dev build of the new head, brief 58 with the new commit named, the delta
   pass at 19:11 (the ChatGPT 5-hour window resets 19:10).
+
+## 2026-11-24 18:15 - two cheap diff reviews of 8087bad before Astra's pass found a real hole; fixed
+
+- While waiting for the ChatGPT window (19:10) the commit 8087bad was given to two reviewers in
+  new threads (`--rev HEAD --diff 4b21f1e..HEAD`, brief 59): grok :: grok-4.7 (handoff 60, n=41)
+  and ZAI-claude :: glm-5.4 (handoff 61, n=42 - the first review by the model seated today). Both
+  HOLD, both with the same major, found independently.
+- **F60-1 / F61-1 (major, real):** `c3 consult`, a panel and a detached run take the collab root
+  from `resolve_collab_root`, which CANONICALISED it. A `.collab` (or `.c3/collab`) that is a link
+  out of the repository arrived at `run_dirs` as its target, read as a directory outside the
+  repository - the operator's own anchor - and was followed. The refusal of 8087bad held only for
+  `c3 work` and for the unit test, which called `begin_run` with the unresolved path. Fix: the
+  resolver keeps a path with a link BELOW the repository root as it is named
+  (`state_dir::linked_below_root`); `repo_relative_normal` does the same for a spelling that is not
+  a textual prefix of the root (F60-2: a link above the root, a verbatim path, an 8.3 name).
+- F60-3: the CHANGELOG's tests clause corrected. F61-3: `c3 work` resolves `.`/`..` in its collab
+  path by text before use (the check and the write name one directory). F61-2 rejected (the
+  allocation loop skips an existing name, it never returns it). F61-4 decided: the accepted
+  limitation F43-8 (every reparse point is a link), now also on the `.collab` chain; an ordinary
+  process here reads the OneDrive root as a plain directory.
+- Tests: the unit test asserts the resolver's result and the refusal for `.collab2`, a linked
+  `.c3/collab3`, the repository reached through a link above its root, a verbatim path; new c3-cli
+  test `a_linked_collab_root_refuses_the_run_and_writes_nothing_there` (`.collab` and `.c3/collab`
+  as junctions; a consultation and `--detach`; exit 1, no kimi turn, nothing at the target).
+- Verified in the foreground: fmt clean, clippy -D warnings clean, c3 lib 961, c3-core 256,
+  c3-cli kimi_engine 26, work 30, panel_light_required 6.
+- Findings store: 242 - 225 implemented, 15 decided (wontfix), 2 rejected, none proposed.
+- CI for 8087bad (run 45438780916): see the next entry.

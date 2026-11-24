@@ -939,7 +939,51 @@ fn a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing
     let err = begin_run(&r, &c2, "t", &["handoffs"]).unwrap_err();
     assert!(err.contains(".collab2 is a link"), "{err}");
     empty(&err);
+    // (F60-1) the commands' resolver keeps the link as it is named - its canonical form would
+    // read as a directory outside the repository, the operator's own anchor, and be followed
+    let resolved = crate::providers::resolve_collab_root(&r, ".collab2");
+    assert_eq!(resolved, r.join(".collab2"), "the link is not resolved");
+    let err = begin_run(&r, &resolved, "t", &["handoffs"]).unwrap_err();
+    assert!(err.contains(".collab2 is a link"), "{err}");
+    empty(&err);
+    // ... the same for a collab root that is a link inside a real `.c3`
+    let inner = path(&r).join("collab3");
+    assert!(dir_link(&inner, &outside));
+    let resolved = crate::providers::resolve_collab_root(&r, ".c3/collab3");
+    assert_eq!(resolved, inner, "the link is not resolved");
+    let err = begin_run(&r, &resolved, "t", &["handoffs"]).unwrap_err();
+    assert!(err.contains(".c3/collab3 is a link"), "{err}");
+    empty(&err);
+    drop_link(&inner);
+    // (F60-2) nor does a spelling that is not a textual prefix of the repository root decide it:
+    // the repository reached through a link ABOVE its root ...
+    let alias = r.with_extension("alias");
+    assert!(dir_link(&alias, &r));
+    let err = begin_run(&r, &alias.join(".collab2"), "t", &["handoffs"]).unwrap_err();
+    assert!(err.contains(".collab2 is a link"), "{err}");
+    empty(&err);
+    assert_eq!(
+        crate::providers::resolve_collab_root(&r, &alias.join(".collab2").to_string_lossy()),
+        r.join(".collab2")
+    );
+    drop_link(&alias);
+    // ... and a verbatim path
+    #[cfg(windows)]
+    {
+        let verbatim = PathBuf::from(format!(r"\\?\{}", c2.display()));
+        let err = begin_run(&r, &verbatim, "t", &["handoffs"]).unwrap_err();
+        assert!(err.contains(".collab2 is a link"), "{err}");
+        empty(&err);
+    }
     drop_link(&c2);
+    // a real collab root is resolved as before: canonical
+    let real = crate::providers::resolve_collab_root(&r, ".collab");
+    assert_eq!(
+        real,
+        std::fs::canonicalize(r.join(".collab"))
+            .map(crate::providers::dunce_simplify)
+            .unwrap()
+    );
     // a normal start under `.collab/` makes real directories
     begin_run(&r, &c, "n", &["handoffs"]).unwrap();
     assert!(real_dir(&c.join("n")) && real_dir(&c.join("n").join("handoffs")));

@@ -1750,7 +1750,9 @@ pub fn begin_run(
 /// tracked content and so can arrive with a clone, than under `.c3/`):
 /// - inside the repository (the default `.collab/`): every component from the repository root
 ///   down to the collab root, then the task directory and each of `dirs`, is created when missing
-///   and opened without following it - a link at any of them refuses the run;
+///   and opened without following it - a link at any of them refuses the run. (F60-1) That holds
+///   for the collab root itself only because the path arrives here as it is NAMED: the commands'
+///   resolver does not resolve a link below the repository root ([`linked_below_root`]);
 /// - outside the repository (a `--collab-dir` elsewhere): the collab root ITSELF is the operator's
 ///   own anchor, created by path and followed as given (F52-3); the task directory and each of
 ///   `dirs` below it are opened without following them, and a link there refuses.
@@ -1853,14 +1855,88 @@ fn repo_relative_normal(repo_root: &Path, p: &Path) -> Option<String> {
     if let Some(r) = c3_core::paths::repo_relative(&root, &abs) {
         return Some(r);
     }
+    // (0.2.5, F60-2) a link BELOW the repository root never decides where a path lies: a spelling
+    // that is not a textual prefix of the root (a verbatim `\\?\` path, an 8.3 name or a link above
+    // the root) is taken as it is named, not through a canonical form that followed the link
+    if let Some(named) = linked_below_root(repo_root, &abs) {
+        return c3_core::paths::repo_relative(&root, &lexical(&named));
+    }
     let croot = canonical_prefix(&root)?;
     let cabs = canonical_prefix(&abs)?;
     c3_core::paths::repo_relative(&croot, &cabs)
 }
 
+/// (0.2.5, F60-1/F60-2) `p` (a relative path against `repo_root`) spelled from the repository root
+/// AS IT IS NAMED, when a component of it below the root is a link (a symlink, a junction or
+/// another reparse point): the repository root joined with the names after the shortest prefix of
+/// the path that IS the repository root - by text, else by canonical form (an 8.3 short name, a
+/// verbatim `\\?\` spelling, a link ABOVE the root). `None` when no prefix of the path is the
+/// repository root, or nothing on it below the root is a link.
+///
+/// Why: a canonical form follows every link. A collab root that is a link out of the repository
+/// would read as a directory OUTSIDE it - the operator's own anchor, which a run follows - and the
+/// run's records would go wherever a link that arrived with a clone points. The commands' resolver
+/// ([`crate::providers::resolve_collab_root`]) and [`repo_relative_normal`] keep such a path as it
+/// is named, so every run start meets the link itself and refuses it ([`run_dirs`],
+/// [`open_write_dir`]); a reader still reads through it by path.
+pub fn linked_below_root(repo_root: &Path, p: &Path) -> Option<PathBuf> {
+    let abs = lexical(&if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        repo_root.join(p)
+    });
+    let root = lexical(repo_root);
+    let rel = match c3_core::paths::repo_relative(&root, &abs) {
+        Some(r) => r,
+        None => named_below(&canonical_prefix(&root)?, &abs)?,
+    };
+    let mut cur = repo_root.to_path_buf();
+    let (mut linked, mut gone) = (false, false);
+    for part in rel.split('/').filter(|s| !s.is_empty()) {
+        cur.push(part);
+        if linked || gone {
+            continue;
+        }
+        match std::fs::symlink_metadata(&cur) {
+            Ok(m) => linked = is_link(&m),
+            // nothing there: nothing below it exists, so nothing below it is a link
+            Err(_) => gone = true,
+        }
+    }
+    linked.then_some(cur)
+}
+
+/// The names of `abs` after its SHORTEST prefix whose canonical form is `croot`, `/`-separated;
+/// `None` when no existing prefix of it is that directory.
+fn named_below(croot: &Path, abs: &Path) -> Option<String> {
+    let mut prefixes: Vec<&Path> = abs.ancestors().collect();
+    prefixes.reverse();
+    for pre in prefixes {
+        // a prefix that does not exist: no longer one does
+        let c = std::fs::canonicalize(pre).ok()?;
+        if crate::providers::dunce_simplify(c) == croot {
+            let rest = abs.strip_prefix(pre).ok()?;
+            let names: Vec<String> = rest
+                .components()
+                .filter_map(|c| match c {
+                    Component::Normal(n) => Some(n.to_string_lossy().to_string()),
+                    _ => None,
+                })
+                .collect();
+            return Some(names.join("/"));
+        }
+    }
+    None
+}
+
 /// `p` with `.` dropped and `..` taking the previous component away (never above the root), and
 /// (R7b, F47-3) each name as the file system resolves it ([`fs_name`]).
-fn lexical(p: &Path) -> PathBuf {
+/// (0.2.5, F61-3) `c3 work` takes its collab path through this before it uses it: a collab path
+/// is CLASSIFIED by text ([`repo_relative_normal`]), while the file system applies `..` to the
+/// target of a link before it (on Windows the path API resolves it by text already) - so
+/// `link/../.collab` was checked as the repository's `.collab` and written beside the link's
+/// target. By text in both, the directory a run start checks is the directory the run writes.
+pub(crate) fn lexical(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in p.components() {
         match c {

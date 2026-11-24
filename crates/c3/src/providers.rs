@@ -2528,7 +2528,9 @@ pub fn dunce_simplify(p: PathBuf) -> PathBuf {
 /// (0.2.5, S2 F36-4) It NEVER moves C3's project folder: a collab path inside it follows a move
 /// already made, and a `.c3/...` spelling on a repository that has not moved reads the legacy path
 /// ([`crate::state_dir::collab_dir`]). The default for every command; only a real consultation or
-/// work start uses [`resolve_collab_root_moving`].
+/// work start uses [`resolve_collab_root_moving`]. The result is canonical, EXCEPT (0.2.5, F60-1)
+/// when a component of the path below the repository root is a link: then it is the path as named
+/// from the repository root ([`crate::state_dir::linked_below_root`]), never the link's target.
 pub fn resolve_collab_root(repo_root: &Path, collab_dir: &str) -> PathBuf {
     resolve_collab_root_with(repo_root, collab_dir, false)
 }
@@ -2558,6 +2560,14 @@ fn resolve_collab_root_with(repo_root: &Path, collab_dir: &str, may_move: bool) 
     } else {
         crate::state_dir::collab_dir(repo_root, joined)
     };
+    // (0.2.5, F60-1) a link on the collab path BELOW the repository root is never resolved here.
+    // Its canonical form would read as a directory outside the repository - the operator's own
+    // anchor, which a run follows - and the run's records would go where a link that arrived with
+    // a clone points. Kept as it is named, every run start meets the link itself and refuses it
+    // (`state_dir::run_dirs`); a reader reads through it by path, as before.
+    if let Some(named) = crate::state_dir::linked_below_root(repo_root, &joined) {
+        return named;
+    }
     // GetFullPath-like normalisation
     std::fs::canonicalize(&joined)
         .map(dunce_simplify)

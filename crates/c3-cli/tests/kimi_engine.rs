@@ -1705,3 +1705,52 @@ fn a_linked_task_directory_in_the_project_folder_refuses_the_run_and_writes_noth
     assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
     let _ = std::fs::remove_dir_all(&e.work);
 }
+
+/// (0.2.5, F60-1) The collab root ITSELF a junction to an empty directory elsewhere - the default
+/// `.collab`, or `.c3/collab` in a real `.c3`: the commands' resolver keeps the link as it is named
+/// (its canonical form would read as a directory outside the repository, the operator's own
+/// anchor, and be followed), so a consultation and a `--detach` start are refused in one line that
+/// names the junction; no kimi turn starts and nothing appears at the junction's target.
+#[test]
+fn a_linked_collab_root_refuses_the_run_and_writes_nothing_there() {
+    let e = setup("linked-collab-root");
+    let target = e.work.join("elsewhere");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::create_dir_all(e.repo.join(".c3")).unwrap();
+    // the scratch repository comes with a real `.collab/t/handoffs`
+    std::fs::remove_dir_all(e.repo.join(".collab")).unwrap();
+    for (link, name, dir) in [
+        (e.repo.join(".collab"), ".collab", None),
+        (
+            e.repo.join(".c3").join("collab"),
+            ".c3/collab",
+            Some(".c3/collab"),
+        ),
+    ] {
+        assert!(junction(&link, &target), "mklink /J {}", link.display());
+        for detach in [false, true] {
+            let mut extra = vec!["--engine", "kimi", "--model", "kimi-code/k3"];
+            if let Some(d) = dir {
+                extra.extend(["--collab-dir", d]);
+            }
+            if detach {
+                extra.push("--detach");
+            }
+            let o = e.consult(&extra, &[("FAKE_KIMI_TOOLCALL", "1")]);
+            let t = text(&o);
+            assert_eq!(o.status.code(), Some(1), "{name} detach={detach}: {t}");
+            assert!(
+                t.contains(&format!("{name} is a link")) && t.contains("nothing was started"),
+                "{name} detach={detach}: {t}"
+            );
+            assert!(e.turns().is_empty(), "no kimi turn started: {t}");
+            assert_eq!(
+                std::fs::read_dir(&target).unwrap().count(),
+                0,
+                "nothing at the junction's target ({name} detach={detach}): {t}"
+            );
+        }
+        std::fs::remove_dir(&link).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&e.work);
+}

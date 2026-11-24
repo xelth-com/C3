@@ -199,6 +199,9 @@ fn prepare_paths_with(o: &Options, may_move: bool) -> Result<(PathBuf, PathBuf, 
     } else {
         crate::state_dir::collab_dir(&repo_root, collab_root)
     };
+    // (0.2.5, F61-3) `.` and `..` by text, the way the path is classified: the directory the run
+    // start checks is the directory the run writes into
+    let collab_root = crate::state_dir::lexical(&collab_root);
     let task_dir = collab_root.join(task);
     Ok((repo_root, collab_root, task_dir))
 }
