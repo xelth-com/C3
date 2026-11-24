@@ -1423,3 +1423,207 @@ fn a_prose_first_reply_is_repaired_on_a_resume_turn() {
         "the repaired reply is structured"
     );
 }
+
+// ------------------------------------------- (0.2.5 D7) a resumed thread runs at its parent's path
+
+/// Two paths name the same location: their parents compared canonically (the worktree itself is
+/// gone after a run), their names without regard to case.
+fn same_location(a: &str, b: &str) -> bool {
+    let (a, b) = (Path::new(a), Path::new(b));
+    let parent = |p: &Path| p.parent().and_then(|d| std::fs::canonicalize(d).ok());
+    let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_lowercase());
+    parent(a).is_some() && parent(a) == parent(b) && name(a).is_some() && name(a) == name(b)
+}
+
+/// A handoff of task `t`.
+fn handoff(e: &Env, name: &str) -> String {
+    std::fs::read_to_string(e.repo.join(".collab").join("t").join("handoffs").join(name))
+        .unwrap_or_default()
+}
+
+/// The worktree path a handoff's `Isolation:` line names.
+fn isolation_path(handoff: &str) -> String {
+    handoff
+        .split("Isolation: the reviewer ran in a throwaway git worktree `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// A usable first kimi run on a new thread: (its session, the worktree path its ledger entry
+/// names, the cwd its turn ran in).
+fn first_run(e: &Env) -> (String, String, String) {
+    let o = e.consult(
+        &["--engine", "kimi", "--model", "kimi-code/k3"],
+        &[("FAKE_KIMI_TOOLCALL", "1")],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    let last = e.last();
+    let session = last["thread"].as_str().unwrap_or("").to_string();
+    assert!(is_session(&session), "{last}");
+    (
+        session,
+        last["worktree"]["path"].as_str().unwrap_or("").to_string(),
+        turns[0]["cwd"].as_str().unwrap_or("").to_string(),
+    )
+}
+
+fn resume_run(e: &Env) -> Output {
+    e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--mode",
+            "resume",
+        ],
+        &[("FAKE_KIMI_TOOLCALL", "1")],
+    )
+}
+
+#[test]
+fn a_resumed_thread_runs_at_the_worktree_path_of_the_run_it_resumes() {
+    // (0.2.5 D7) kimi binds a session to the directory it was created in (the fake does too, with
+    // the real CLI's refusal): a resume makes its throwaway worktree at the path of the run it
+    // resumes, so the thread continues. Both handoffs and both ledger entries name that one path,
+    // and it is gone after each run.
+    let e = setup("resume-same-path");
+    let (session, path1, cwd1) = first_run(&e);
+    assert!(
+        same_location(&path1, &cwd1),
+        "the ledger names the worktree the turn ran in: {path1} vs {cwd1}"
+    );
+    assert!(
+        std::fs::symlink_metadata(&path1).is_err(),
+        "removed after the first run: {path1}"
+    );
+    let h1 = isolation_path(&handoff(&e, "01-kimi-reply.md"));
+    assert!(same_location(&h1, &path1), "{h1} vs {path1}");
+
+    let o = resume_run(&e);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(
+        turns[0]["resume"],
+        session.as_str(),
+        "the turn resumes the thread: {:?}",
+        turns[0]
+    );
+    let cwd2 = turns[0]["cwd"].as_str().unwrap_or("");
+    assert!(
+        same_location(cwd2, &cwd1),
+        "the resume ran at the parent's worktree path: {cwd2} vs {cwd1}"
+    );
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "{last}\n{t}"
+    );
+    assert_eq!(last["thread"], session.as_str(), "{last}");
+    let path2 = last["worktree"]["path"].as_str().unwrap_or("");
+    assert!(
+        same_location(path2, &path1),
+        "both ledger entries name one path: {path2} vs {path1}"
+    );
+    let h2 = isolation_path(&handoff(&e, "02-kimi-reply.md"));
+    assert!(
+        same_location(&h2, &h1),
+        "both handoffs name one path: {h2} vs {h1}"
+    );
+    assert!(
+        std::fs::symlink_metadata(path2).is_err(),
+        "removed after the resume: {path2}"
+    );
+}
+
+#[test]
+fn a_resume_while_a_directory_sits_at_its_worktree_path_is_refused() {
+    // (0.2.5 D7) the parent's worktree path is taken (a live run of the thread, a crashed run's
+    // leftover): the resume refuses before any reviewer starts, in one line naming the path and
+    // what to do; the directory is left exactly as it was and no worktree is registered.
+    let e = setup("resume-taken");
+    let (_, path, _) = first_run(&e);
+    std::fs::create_dir_all(&path).unwrap();
+    let left = Path::new(&path).join("left.txt");
+    std::fs::write(&left, "a leftover\n").unwrap();
+    let o = resume_run(&e);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{t}");
+    assert!(
+        t.contains(&format!(
+            "the kimi seat is not usable: the worktree path {path} of the thread it resumes is taken"
+        )),
+        "{t}"
+    );
+    assert!(
+        t.contains("nothing was started") && t.contains("`c3 doctor --fix`"),
+        "{t}"
+    );
+    assert!(
+        e.turns().is_empty(),
+        "no kimi turn started: {:?}",
+        e.turns()
+    );
+    assert_eq!(e.ledger().len(), 1, "nothing more reached the ledger");
+    assert_eq!(std::fs::read_to_string(&left).unwrap(), "a leftover\n");
+    let list = git_out(&e.repo, &["worktree", "list", "--porcelain"]);
+    assert!(!list.contains("c3-kimi-wt"), "{list}");
+    std::fs::remove_dir_all(&path).unwrap();
+}
+
+#[test]
+fn a_resume_of_a_parent_without_a_worktree_path_gets_a_fresh_path_and_the_hint() {
+    // (0.2.5 D7) a parent entry without a recorded worktree path (an older build): the resume runs
+    // in a fresh path as before; kimi refuses the session made elsewhere, and the bridge's failure
+    // text adds what to do - start a new thread.
+    let e = setup("resume-unknown-dir");
+    let (session, _, cwd1) = first_run(&e);
+    let sessions = e.repo.join(".collab").join("t").join("sessions.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&sessions).unwrap()).unwrap();
+    let removed = v["codex"]["consults"][0]["worktree"]
+        .as_object_mut()
+        .and_then(|w| w.remove("path"));
+    assert!(removed.is_some(), "the first run recorded its path: {v}");
+    std::fs::write(&sessions, v.to_string()).unwrap();
+
+    let o = resume_run(&e);
+    let t = text(&o);
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}\n{t}");
+    assert_eq!(turns[0]["resume"], session.as_str(), "{:?}", turns[0]);
+    let cwd2 = turns[0]["cwd"].as_str().unwrap_or("");
+    assert!(
+        cwd2.contains("c3-kimi-wt") && !same_location(cwd2, &cwd1),
+        "a fresh path: {cwd2} vs {cwd1}"
+    );
+    assert!(std::fs::symlink_metadata(cwd2).is_err(), "removed: {cwd2}");
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.contains(&format!(
+            "failed to run prompt: Session \"{session}\" was created under a different directory."
+        )),
+        "{outcome}\n{t}"
+    );
+    assert!(
+        outcome.contains(&format!(
+            "The thread {session} was started where its directory is not known"
+        )) && outcome.contains("start a new thread (--mode new)"),
+        "{outcome}"
+    );
+    let h = handoff(&e, "02-kimi-reply.md");
+    assert!(
+        h.contains("was started where its directory is not known"),
+        "the handoff's failure text carries it: {h}"
+    );
+}

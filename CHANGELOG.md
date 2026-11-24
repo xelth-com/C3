@@ -487,6 +487,33 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **A kimi thread can be resumed: the resumed run works at its parent's worktree path (found in a
+  live run).** A kimi review runs in a throwaway git worktree whose path was random per run
+  (`<temp>/c3-kimi-wt-<32 hex>`), and the kimi CLI binds a session to the directory it was created
+  in, so every `--mode resume` of a kimi thread failed at once with `Session "<id>" was created under
+  a different directory.` - already so in 0.2.4. The ledger's `worktree` record now names the
+  worktree's directory (`path`), and a run that RESUMES a thread of a worktree-isolated engine (kimi,
+  agy; a panel member too) makes its throwaway worktree at the path of the run it resumes. That path
+  is taken only when it has C3's own shape - directly under the current system temp directory
+  (compared canonically), named `c3-kimi-wt-` and 32 lower-case hex digits; another path gives a
+  fresh one and a run warning that the parent's path could not be reused. The path must be free: its
+  directory is made exclusively, and when anything is there (a live run of the same thread, a
+  crashed run's leftover) the seat is refused before any reviewer starts, in one line that names the
+  path and says what to do (`c3 doctor --fix` removes a leftover; a live run must finish first) -
+  nothing there is removed or reused. A parent entry without a recorded path (an older build) gets a
+  fresh path as before; when kimi then refuses the session, the failure text adds that the thread
+  was started where its directory is not known and a new thread is needed (`--mode new`). `--mode
+  new` is unchanged, kimi and agy have no fork, and the claude engine's frozen tree is not touched
+  (Claude Code resumes across directories). The fake kimi CLI of the tests binds its sessions to
+  their directory like the real one. Tests: `a_resumed_thread_runs_at_the_worktree_path_of_the_run_it_resumes`,
+  `a_resume_while_a_directory_sits_at_its_worktree_path_is_refused`,
+  `a_resume_of_a_parent_without_a_worktree_path_gets_a_fresh_path_and_the_hint`,
+  `a_reusable_worktree_path_has_exactly_c3s_shape`,
+  `create_at_uses_a_free_path_and_refuses_an_existing_one`,
+  `a_failed_checkout_at_a_claimed_path_leaves_nothing_there`,
+  `a_resume_takes_the_parent_worktree_path_only_when_it_has_c3s_shape`,
+  `a_taken_resume_path_refuses_the_seat_and_a_free_one_is_used`,
+  `a_different_directory_refusal_carries_the_resume_note`.
 - **Two takers of a stale move lock can no longer both hold it (found by the acceptance review).**
   The lock that keeps the move of `.eck/` to `.c3/` single is taken over when its owner is gone:
   the taker read the record, judged it stale, read it again and removed the file - two separate
@@ -548,6 +575,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   each is the first suspect, so the job now excludes the workspace, the temp directories and the
   toolchain from Defender before it builds (`continue-on-error`: an experiment, not a proven cure;
   the hangs stay recorded as open).
+- **A patch is still placed when Windows refuses the rename for an instant.** Renaming the
+  patch's temporary file onto a name that a virus scanner or an indexer holds open fails on
+  Windows with "access denied" - seen on 2026-11-24 on an earlier build's empty claim written a
+  moment before, where it failed the placement and with it the run. That one failure is now tried
+  again (six tries, 50 ms apart) before it is reported; every other error is reported at once.
 - **A hung CI step fails with its log, and the steps after it still run (F38-1).** The per-crate
   test steps of the `ci` workflow ran with `if: success() || failure()` under a job-level limit
   only: a step that hung was cancelled with the whole job, its log was lost and the remaining

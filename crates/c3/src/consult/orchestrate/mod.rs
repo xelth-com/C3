@@ -1195,6 +1195,16 @@ impl Context {
             .unwrap_or_else(|| self.repo_root.clone())
     }
 
+    /// (0.2.5 D7) The sentence a kimi "created under a different directory" failure adds: this run
+    /// resumes a thread whose worktree path is not known or could not be reused
+    /// ([`super::reviewed::IsolationPlan::resume_note`]); `""` otherwise.
+    pub(crate) fn resume_note(&self) -> String {
+        self.isolation
+            .as_ref()
+            .map(|p| p.resume_note.clone())
+            .unwrap_or_default()
+    }
+
     /// (R5, F18-1) The fingerprint the run's records name as REVIEWED - the handoff's `Reviewed:`
     /// line, the ledger's `base_commit` / `reviewed_revision` / `tree_sha256`, every new finding's
     /// `source`: under `--rev` the throwaway worktree's (its sha, taken right after the staging),
@@ -2565,7 +2575,7 @@ fn build_context(
     // refuses here, nothing started), the engine's own isolation (kimi), or a claude diff-review /
     // acceptance (a frozen worktree of HEAD). (R5, F19-1) Under `--rev` the http engine builds its
     // pack from that worktree - never from the live tree.
-    let isolation = super::reviewed::plan_isolation(
+    let mut isolation = super::reviewed::plan_isolation(
         &repo_root,
         &engine_name,
         &o.purpose,
@@ -2713,6 +2723,26 @@ fn build_context(
                 println!("WARNING: {w}");
             }
             run_warnings.push(w);
+        }
+    }
+    // (0.2.5 D7) A run that RESUMES a thread of a worktree-isolated engine (kimi, agy; a panel
+    // member too) makes its throwaway worktree at the path of the parent run's worktree: such an
+    // engine binds its session to the directory it was made in (kimi refuses a session "created
+    // under a different directory"). A path of another shape is not used (a fresh path and a run
+    // warning); a parent without a recorded path gets a fresh path as before. Whether the path is
+    // free is decided when the worktree is made (a taken path refuses the seat before launch).
+    // `--mode new` (and the resume -> new fallback above) is unchanged; these engines have no fork.
+    if let Some(iso) = isolation.as_mut() {
+        if spec.worktree_isolated && effective_mode == "resume" && !parent_thread.is_empty() {
+            let parent_entry = ledger_entries.iter().rfind(|e| e.thread == parent_thread);
+            if let Some(w) =
+                super::reviewed::plan_resume_worktree(iso, &parent_thread, parent_entry)
+            {
+                if !o.dry_run {
+                    println!("WARNING: {w}");
+                }
+                run_warnings.push(w);
+            }
         }
     }
     // (B1) `--diff <range>`: every revision it names must be a commit git knows (refused here,
@@ -4728,6 +4758,7 @@ fn run_primary_turn(
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
                 on_kill,
+                resume_note: ctx.resume_note(),
             };
             let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
             let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);

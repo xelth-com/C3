@@ -1,7 +1,7 @@
 # Handoff 56 - Claude: acceptance of C3 0.2.5, second run
 
-Date: 2026-11-24. Scope: `git diff v0.2.4 HEAD` on `main` - 29 commits, about 48 000 added lines
-in 148 files outside `.collab/`. A NEW thread. You run in a throwaway checkout of the head of
+Date: 2026-11-24. Scope: `git diff v0.2.4 HEAD` on `main` - 31 commits, about 48 000 added lines
+in 150 files outside `.collab/`. A NEW thread. You run in a throwaway checkout of the head of
 `main` (the commit this brief is in, version 0.2.5); that tree is the release.
 
 **Your first run (handoff 55) was stopped after four minutes by the bridge's quota budget** - the
@@ -47,9 +47,9 @@ every item in prose and names the finding ids.
 Three rounds by six other models (gpt-6.2-sol, grok-4.7, muse-spark contributor, glm-5.3,
 kimi k3.1-pro, deepseek) - about 40 consultations in this task, 225 findings in
 `.collab/release-0.2.5/findings.json`: 210 implemented, 14 wontfix, 1 rejected, none open.
-`state.md` is the coordinator's log with every decision. **No other model has read the last three
-code commits** - `e599f27` (waves R7a, R7b, R8: the fixes of the last review round), `d476520`
-and `0f52246` (below). You are their first reader.
+`state.md` is the coordinator's log with every decision. **No other model has read the last four
+code commits** - `e599f27` (waves R7a, R7b, R8: the fixes of the last review round), `d476520`,
+`0f52246` and the head commit itself (wave D7, below). You are their first reader.
 
 ## Since your first run
 
@@ -80,6 +80,25 @@ and `0f52246` (below). You are their first reader.
   (127.0.0.0/8, ::1, `localhost` - the parser's host) and ONLY in test mode
   (`CODEX_CONSULT_TEST_MODE=1`), the rule the telemetry intake already follows. **This is a new
   product exception - judge it.**
+- **The head commit (wave D7): a resumed thread runs at its parent's worktree path.** Seen live
+  today with this release's build and the real kimi CLI: a new thread was usable, its
+  `--mode resume` failed at once - kimi: `Session "..." was created under a different directory.`
+  A kimi review runs in a throwaway worktree whose path was random per run, and kimi binds a
+  session to its directory (so in 0.2.4 too a kimi thread could never be resumed). Now a run that
+  resumes a thread of a worktree-isolated engine (kimi, agy) gets its worktree at the path the
+  parent run recorded (`worktree.path` in the ledger) - only when that path has C3's own shape
+  (directly under the temp directory, `c3-kimi-wt-` + 32 hex), and only when it is free: the
+  directory is claimed by an exclusive create, anything already there refuses the run before a
+  reviewer starts and is never removed (`ThrowawayWorktree::create_at`, `reusable_worktree_path`
+  in `engines/worktree.rs`; `plan_resume_worktree` in `consult/reviewed.rs`). Tests:
+  `kimi_engine.rs::a_resumed_thread_runs_at_the_worktree_path_of_the_run_it_resumes`,
+  `a_resume_while_a_directory_sits_at_its_worktree_path_is_refused`,
+  `a_resume_of_a_parent_without_a_worktree_path_gets_a_fresh_path_and_the_hint` (the fake kimi now
+  binds a session to its directory like the real one). **A path taken from a ledger record is
+  created and later removed - judge the shape rule and the claim.**
+- **The head commit: the patch's rename is tried again on "access denied".** On Windows the rename
+  onto an existing name failed once when something held the file open for an instant; that one
+  error is retried six times, 50 ms apart (`rename_onto`, `consult/reviewed.rs`).
 - A test fixture named `<U+202E>txt.exe` was quarantined by Windows Defender in the middle of the
   test (by the name alone); that, not Git for Windows, was the "git cannot read a name with
   U+202E" of earlier notes. The fixture is `a<U+202E>b.txt` now.
@@ -154,8 +173,9 @@ and `0f52246` (below). You are their first reader.
 
 - **agy:** no live run in this release at all - the plan is out of quota until 2026-11-28. Its
   worktree isolation and the name-only step classifier (wave R8) ran against fake CLIs only.
-- **kimi:** no live run after the rule that a housekeeping file in its working directory fails the
-  run; resuming a thread from another directory was verified live for Claude Code only.
+- **kimi:** one live new-thread run with this release's build today (usable, nothing written in
+  its worktree). The resume fix of wave D7 had NOT run against the real CLI when this brief was
+  handed over - only against the fake that now mimics the directory rule.
 - **`c3 maintain`:** no real pass with this build - no catalog swap, no CLI update with a rollback.
   The next pass is due 2026-11-26 and will be watched.
 - **The move of `.eck/` to `.c3/`** has run in tests only; this repository's own move happens at
@@ -176,12 +196,15 @@ and `0f52246` (below). You are their first reader.
   `panel_light_required` 5, `mcp_integration` 3, `claude_engine` 19, `kimi_engine` 21; again at
   `d476520`: `init_doctor`, `ci_check`, `telemetry_parity` 12, `snapshot_partb`, `finish`; at
   `0f52246`: `wave6_live_diffs` 6 - all passed.
-- CI (Windows, Linux, Linux with `index-surreal`): green for `e599f27` and `adac2ed`; `d476520`
-  green on both Linux jobs, its Windows job failed once (the launcher probe above; the rerun was
-  running when this brief was handed over); `0f52246` and the head were running. The tag waits for
-  a green run of the tagged commit. (You have no network: `gh` is not available to you.)
-- The head differs from `0f52246` by this brief, the coordinator's records and one step of the CI
-  workflow (the Windows job excludes its build and scratch directories from the virus scanner).
+- CI (Windows, Linux, Linux with `index-surreal`): green for `e599f27`, `adac2ed`, `55ea230` and
+  `681af51`; `d476520` failed once on Windows (the launcher probe above) and was green on the
+  rerun; `0f52246` and the head were running when this brief was handed over. The tag waits for a
+  green run of the tagged commit. (You have no network: `gh` is not available to you.)
+- The head commit holds wave D7 and the rename retry (code), this brief and the coordinator's
+  records. On it, in the foreground: clippy clean, `c3` library tests 946 passed, `kimi_engine` 24;
+  in the worker's tree `compat_wave2b` 21 and `panel_light_required` 5. `681af51` before it
+  changed only the CI workflow (the Windows job excludes its build and scratch directories from
+  the virus scanner).
 
 ## Questions
 
@@ -198,8 +221,8 @@ and `0f52246` (below). You are their first reader.
 - **Q5.** What leaves the machine: the `--diff` patch, the reviewer prompt's lists of paths,
   telemetry's model names, the catalog fetch, and now plain http to a loopback host in test mode.
   Name any private string that still goes out, or any way that exception reaches another host.
-- **Q6.** The last three code commits (`e599f27`, `d476520`, `0f52246`): do they do what their
-  CHANGELOG entries say? Look hardest at what no test on this machine could run: agy in a
+- **Q6.** The last four code commits (`e599f27`, `d476520`, `0f52246`, the head): do they do what
+  their CHANGELOG entries say? Look hardest at what no test on this machine could run: agy in a
   worktree, the claim-free patch placement, the deadline stop's rounds, the `.c3/layout` marker
   and the lock rules of the move.
 - **Q7.** Anything in "Decided, not fixed" or "NOT covered" that you would not release with.

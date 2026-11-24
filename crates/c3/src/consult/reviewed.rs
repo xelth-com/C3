@@ -16,6 +16,8 @@
 //! * The warnings: a brief that names a git range given to an engine without a shell and without
 //!   `--diff` ([`named_ranges`]); `--rev` resuming a thread recorded on another revision
 //!   ([`resume_revision_warning`]).
+//! * (0.2.5 D7) A resume of a worktree-isolated engine's thread makes its worktree at the parent
+//!   run's recorded path ([`plan_resume_worktree`]; the ledger's `worktree.path`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -56,6 +58,13 @@ pub struct IsolationPlan {
     /// The full sha at plan time; `""` when HEAD does not resolve (a repository without commits -
     /// making the worktree then fails the run as a capability failure, as it always did for kimi).
     pub sha: String,
+    /// (0.2.5 D7) Where the worktree is made when this run RESUMES a thread of a worktree-isolated
+    /// engine: the parent run's worktree path ([`plan_resume_worktree`]); `None` = a fresh random
+    /// path.
+    pub at: Option<PathBuf>,
+    /// (0.2.5 D7) The sentence a kimi "created under a different directory" failure adds when this
+    /// run resumes a thread whose worktree path is not known or could not be reused (`""`: none).
+    pub resume_note: String,
 }
 
 impl IsolationPlan {
@@ -137,6 +146,8 @@ pub fn plan_isolation(
             reason: Reason::Rev,
             rev: rev.trim().to_string(),
             sha: resolve_rev(repo, rev)?,
+            at: None,
+            resume_note: String::new(),
         }));
     }
     if engine == "http" {
@@ -147,6 +158,8 @@ pub fn plan_isolation(
             reason: Reason::Engine,
             rev: "HEAD".into(),
             sha: head(),
+            at: None,
+            resume_note: String::new(),
         }));
     }
     if engine == "claude" && FROZEN_HEAD_PURPOSES.contains(&purpose) {
@@ -154,6 +167,8 @@ pub fn plan_isolation(
             reason: Reason::FrozenHead,
             rev: "HEAD".into(),
             sha: head(),
+            at: None,
+            resume_note: String::new(),
         }));
     }
     Ok(None)
@@ -371,12 +386,20 @@ fn source_step(e: crate::contain::StepError, shown: &Path) -> Result<bool, Strin
 /// the repository included - is skipped and counted), and the files are read through handles
 /// opened without following them; the brief likewise ([`worktree::brief_bytes`]). Nothing checked
 /// first is opened again by its name afterwards.
+///
+/// (0.2.5 D7) A run that resumes a thread of a worktree-isolated engine makes the worktree at the
+/// parent run's path ([`IsolationPlan::at`]); a path that is taken refuses the seat before anything
+/// starts ([`worktree::occupied_refusal`]) - nothing there is removed or reused.
 pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<ReviewTree, SetupError> {
-    let wt = ThrowawayWorktree::create(s.repo_root, plan.checkout()).map_err(|e| {
-        SetupError::Capability(format!(
-            "the reviewer's throwaway worktree could not be created: {e}"
-        ))
-    })?;
+    let wt = ThrowawayWorktree::create_at(s.repo_root, plan.checkout(), plan.at.as_deref())
+        .map_err(|e| match e {
+            worktree::CreateError::Occupied(p) => {
+                SetupError::Refused(worktree::occupied_refusal(s.engine, &p))
+            }
+            worktree::CreateError::Failed(e) => SetupError::Capability(format!(
+                "the reviewer's throwaway worktree could not be created: {e}"
+            )),
+        })?;
     let label = plan.label();
     let refused = |what: &str, why: String| {
         SetupError::Refused(worktree::staging_refusal(s.engine, what, &label, &why))
@@ -531,13 +554,65 @@ impl ReviewTree {
     }
 }
 
-/// The ledger's `worktree` record of a run that read a throwaway worktree: `{reason, rev, sha}`.
-pub fn ledger_worktree_value(plan: &IsolationPlan, sha: &str) -> serde_json::Value {
-    serde_json::json!({
+/// The ledger's `worktree` record of a run that read a throwaway worktree: `{reason, rev, sha}`,
+/// and (0.2.5 D7) `path` - the worktree's directory, when it was made: a run that resumes this
+/// run's thread makes its own worktree there ([`plan_resume_worktree`]).
+pub fn ledger_worktree_value(
+    plan: &IsolationPlan,
+    sha: &str,
+    path: Option<&Path>,
+) -> serde_json::Value {
+    let mut v = serde_json::json!({
         "reason": plan.reason.token(),
         "rev": plan.rev,
         "sha": if sha.is_empty() { plan.sha.as_str() } else { sha },
-    })
+    });
+    if let Some(p) = path {
+        v["path"] = serde_json::Value::String(p.to_string_lossy().to_string());
+    }
+    v
+}
+
+/// (0.2.5 D7) The worktree path a run that RESUMES `parent_thread` of a worktree-isolated engine
+/// (kimi, agy) makes its throwaway worktree at: the parent run's (its ledger entry's
+/// `worktree.path`), because such an engine binds its session to the directory it was made in
+/// (kimi: `Session "<id>" was created under a different directory.`). Sets [`IsolationPlan::at`]
+/// when the recorded path has C3's shape ([`worktree::reusable_worktree_path`]; whether it is free
+/// is decided when the worktree is made). A path of another shape is not used: the run gets a fresh
+/// path and the returned run warning says the parent's path could not be reused. A parent without
+/// a recorded path (an older build, or a parent that did not run isolated) gets a fresh path as
+/// before, without a warning. In both fallbacks [`IsolationPlan::resume_note`] is the sentence a
+/// kimi "different directory" failure adds: start a new thread.
+pub fn plan_resume_worktree(
+    plan: &mut IsolationPlan,
+    parent_thread: &str,
+    parent: Option<&c3_core::ledger::LedgerEntry>,
+) -> Option<String> {
+    let recorded = parent
+        .and_then(|e| e.extra.get("worktree"))
+        .and_then(|w| w.get("path"))
+        .and_then(|p| p.as_str())
+        .filter(|p| !p.is_empty());
+    let Some(recorded) = recorded else {
+        plan.resume_note = format!(
+            "The thread {parent_thread} was started where its directory is not known (its run recorded no worktree path), so it cannot be resumed: start a new thread (--mode new)."
+        );
+        return None;
+    };
+    match worktree::reusable_worktree_path(recorded) {
+        Ok(p) => {
+            plan.at = Some(p);
+            None
+        }
+        Err(why) => {
+            plan.resume_note = format!(
+                "The thread {parent_thread} was started in {recorded}, which could not be reused, so it cannot be resumed: start a new thread (--mode new)."
+            );
+            Some(format!(
+                "the parent's worktree path {recorded} could not be reused ({why}): the resumed thread {parent_thread} runs in a fresh throwaway worktree, where the engine may not find its session"
+            ))
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------- --diff
@@ -1364,6 +1439,34 @@ fn place_patch(
     place_patch_in(&dir, dir_path, name, bytes)
 }
 
+/// How often [`rename_onto`] tries, and how long it waits between tries.
+const RENAME_TRIES: u32 = 6;
+const RENAME_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The one rename of a patch's temporary file onto its name, relative to the directory handle.
+/// On Windows a rename onto a name that a virus scanner or an indexer holds open for an instant
+/// fails with "access denied" (seen on 2026-11-24 on a file written a moment before): that one
+/// failure is tried again [`RENAME_TRIES`] times, [`RENAME_PAUSE`] apart, before it is reported.
+/// Every other error is returned at once.
+fn rename_onto(
+    dir: &cap_std::fs::Dir,
+    tmp: &std::ffi::OsStr,
+    leaf: &std::ffi::OsStr,
+) -> std::io::Result<()> {
+    let mut last = None;
+    for attempt in 0..RENAME_TRIES {
+        if attempt > 0 {
+            std::thread::sleep(RENAME_PAUSE);
+        }
+        match dir.rename(tmp, dir, leaf) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::other("the rename was not tried")))
+}
+
 /// [`place_patch`] in the open handoffs directory `dir` (`dir_path` names it in messages).
 fn place_patch_in(
     dir: &cap_std::fs::Dir,
@@ -1421,7 +1524,7 @@ fn place_patch_in(
                 return Ok(());
             }
             // an earlier build's empty claim: replaced by the one rename
-            AtName::Empty => dir.rename(tmp, dir, leaf),
+            AtName::Empty => rename_onto(dir, tmp, leaf),
             AtName::Missing => {
                 let linked = if c3_core::test_hooks::hook(PATCH_NO_HARDLINK_HOOK).is_some() {
                     Err(std::io::Error::new(
@@ -1442,7 +1545,7 @@ fn place_patch_in(
                     // replaces - a foreign file with OTHER bytes that appears at this
                     // content-addressed name between them is replaced (a sibling's file has the
                     // same bytes). With hard links the name is judged again instead.
-                    Err(_) => dir.rename(tmp, dir, leaf),
+                    Err(_) => rename_onto(dir, tmp, leaf),
                 }
             }
         };
@@ -2214,9 +2317,14 @@ mod tests {
         assert!(tree
             .isolation_line(&p)
             .contains(&format!("of revision {first} (--rev {};", &first[..9])));
-        let v = ledger_worktree_value(&p, tree.sha());
+        let v = ledger_worktree_value(&p, tree.sha(), Some(tree.path()));
         assert_eq!(v["reason"], "rev");
         assert_eq!(v["sha"], first.as_str());
+        // (0.2.5 D7) the worktree's directory, for a run that resumes this run's thread
+        assert_eq!(v["path"], wt.to_string_lossy().as_ref());
+        assert!(ledger_worktree_value(&p, tree.sha(), None)
+            .get("path")
+            .is_none());
 
         // a change in the LIVE tree is not the worktree's; the reviewer's writes are
         std::fs::write(r.join("app.txt"), "live edit\n").unwrap();
@@ -2601,6 +2709,159 @@ mod tests {
             serde_json::json!({"reason": "rev", "rev": "topic", "sha": other}),
         );
         assert!(resume_revision_warning("fork", "t-1", Some(&e), other, "topic").is_none());
+    }
+
+    /// A ledger entry whose `worktree` record names `path` (none: no `path` key).
+    fn entry_with_worktree(path: Option<&str>) -> c3_core::ledger::LedgerEntry {
+        let mut e = c3_core::ledger::LedgerEntry {
+            n: 1,
+            thread: "session_1".into(),
+            ..Default::default()
+        };
+        let mut w = serde_json::json!({"reason": "engine", "rev": "HEAD", "sha": "a".repeat(40)});
+        if let Some(p) = path {
+            w["path"] = serde_json::Value::String(p.to_string());
+        }
+        e.extra.insert("worktree".into(), w);
+        e
+    }
+
+    fn engine_plan() -> IsolationPlan {
+        IsolationPlan {
+            reason: Reason::Engine,
+            rev: "HEAD".into(),
+            sha: "a".repeat(40),
+            at: None,
+            resume_note: String::new(),
+        }
+    }
+
+    // (0.2.5 D7) A resume of a worktree-isolated engine's thread takes the parent run's worktree
+    // path when it has C3's shape; a path of another shape gives a fresh path, a run warning and the
+    // kimi failure's sentence; a parent without a recorded path a fresh path and the sentence only.
+    #[test]
+    fn a_resume_takes_the_parent_worktree_path_only_when_it_has_c3s_shape() {
+        let own = std::env::temp_dir().join(format!(
+            "{}{}",
+            worktree::THROWAWAY_WORKTREE_PREFIX,
+            uuid::Uuid::new_v4().simple()
+        ));
+        let own_s = own.to_string_lossy().to_string();
+        let mut p = engine_plan();
+        let parent = entry_with_worktree(Some(&own_s));
+        assert_eq!(
+            plan_resume_worktree(&mut p, "session_1", Some(&parent)),
+            None
+        );
+        assert_eq!(p.at.as_deref(), Some(own.as_path()));
+        assert!(p.resume_note.is_empty(), "{}", p.resume_note);
+
+        // another shape (here: not under the system temp directory) is not used
+        let base = repo("resume-shape");
+        let elsewhere = base
+            .join(format!(
+                "{}{}",
+                worktree::THROWAWAY_WORKTREE_PREFIX,
+                uuid::Uuid::new_v4().simple()
+            ))
+            .to_string_lossy()
+            .to_string();
+        let mut p = engine_plan();
+        let parent = entry_with_worktree(Some(&elsewhere));
+        let w = plan_resume_worktree(&mut p, "session_1", Some(&parent))
+            .expect("a run warning for a path that cannot be reused");
+        assert!(
+            w.contains(&format!(
+                "the parent's worktree path {elsewhere} could not be reused"
+            )),
+            "{w}"
+        );
+        assert!(
+            w.contains("not directly under the system temp directory"),
+            "{w}"
+        );
+        assert!(p.at.is_none());
+        assert!(p.resume_note.contains("--mode new"), "{}", p.resume_note);
+
+        // no recorded path (an older build, or a parent that did not run isolated): a fresh path,
+        // no warning, and the sentence a kimi "different directory" failure adds
+        for parent in [Some(entry_with_worktree(None)), None] {
+            let mut p = engine_plan();
+            assert_eq!(
+                plan_resume_worktree(&mut p, "session_1", parent.as_ref()),
+                None
+            );
+            assert!(p.at.is_none());
+            assert!(
+                p.resume_note
+                    .contains("was started where its directory is not known")
+                    && p.resume_note.contains("start a new thread (--mode new)"),
+                "{}",
+                p.resume_note
+            );
+        }
+        let _ = std::fs::remove_dir_all(base.parent().unwrap());
+    }
+
+    // (0.2.5 D7) A resume whose worktree path is taken (a live run of that thread, a crashed run's
+    // leftover) is refused before anything starts, in one preflight-class line naming the path and
+    // what to do; what sits there is left untouched. Once the path is free, the worktree is made
+    // exactly there, and removed again when the tree drops.
+    #[test]
+    fn a_taken_resume_path_refuses_the_seat_and_a_free_one_is_used() {
+        let r = repo("resume-at");
+        let at = std::env::temp_dir().join(format!(
+            "{}{}",
+            worktree::THROWAWAY_WORKTREE_PREFIX,
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&at).unwrap();
+        std::fs::write(at.join("left.txt"), "a leftover\n").unwrap();
+        let mut plan = plan_isolation(&r, "kimi", "framing", "", true)
+            .unwrap()
+            .unwrap();
+        plan.at = Some(at.clone());
+        let inputs = StageInputs {
+            repo_root: &r,
+            collab_root: &r.join(".collab"),
+            task: "t",
+            brief_ref: "",
+            brief_path: None,
+            engine: "kimi",
+        };
+        match setup_review_tree(&plan, &inputs) {
+            Err(SetupError::Refused(m)) => {
+                assert!(
+                    m.contains(&format!(
+                        "the worktree path {} of the thread it resumes is taken",
+                        at.display()
+                    )),
+                    "{m}"
+                );
+                assert!(m.contains("`c3 doctor --fix`"), "{m}");
+                assert!(m.contains("nothing was started"), "{m}");
+                assert!(!m.contains('\n'), "one line: {m}");
+                assert!(crate::panel::run::is_preflight_refusal(&m), "{m}");
+            }
+            Err(e) => panic!("expected the typed refusal, got {e:?}"),
+            Ok(t) => panic!("a taken path was used: {}", t.path().display()),
+        }
+        assert_eq!(
+            std::fs::read_to_string(at.join("left.txt")).unwrap(),
+            "a leftover\n",
+            "what sits at the path is untouched"
+        );
+        std::fs::remove_dir_all(&at).unwrap();
+        // the path is free now: the worktree is made exactly there and removed on drop
+        let tree = setup_review_tree(&plan, &inputs).unwrap();
+        assert_eq!(tree.path(), at.as_path());
+        assert!(tree.path().join("app.txt").is_file());
+        drop(tree);
+        assert!(
+            std::fs::symlink_metadata(&at).is_err(),
+            "removed after the run"
+        );
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
     }
 
     // (0.2.5 D1, F27-3) The collab comparison exempts exactly the patch the run wrote and its

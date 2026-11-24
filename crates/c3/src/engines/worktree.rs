@@ -14,6 +14,11 @@
 //! Who gets one (`consult::reviewed`): the kimi engine always (it has no tool-restriction flag, so
 //! it must never run in the real checkout), every local-cwd engine under `c3 consult --rev <rev>`,
 //! and a claude-engine reviewer on a `diff-review` / `acceptance` purpose (a frozen tree of HEAD).
+//!
+//! (0.2.5 D7) A run that resumes a thread of a worktree-isolated engine makes its worktree at the
+//! path of the run it resumes ([`ThrowawayWorktree::create_at`]: only a path of C3's own shape,
+//! [`reusable_worktree_path`], and only when it is free - the engine binds its session to that
+//! directory).
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -110,6 +115,94 @@ pub struct ThrowawayWorktree {
     root: Option<Root>,
 }
 
+/// (0.2.5 D7) Why a throwaway worktree was not made ([`ThrowawayWorktree::create_at`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreateError {
+    /// The path it was asked for is taken: something (a directory, a file, a link) is there - a
+    /// live run of the same thread, or a crashed run's leftover. Nothing was made, nothing was
+    /// removed.
+    Occupied(PathBuf),
+    /// The worktree could not be made (the words say why).
+    Failed(String),
+}
+
+impl CreateError {
+    /// The failure in words.
+    pub fn words(&self) -> String {
+        match self {
+            CreateError::Occupied(p) => format!("the path {} is taken", p.display()),
+            CreateError::Failed(why) => why.clone(),
+        }
+    }
+}
+
+/// (0.2.5 D7) Whether two existing directories are the same one: both canonicalised (each must
+/// resolve), compared without the verbatim prefix and, on Windows, without regard to case.
+fn same_existing_dir(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| -> Option<String> {
+        let c = std::fs::canonicalize(p).ok()?;
+        let mut s = c.to_string_lossy().replace('\\', "/");
+        if let Some(r) = s.strip_prefix("//?/") {
+            s = r.to_string();
+        }
+        let s = s.trim_end_matches('/').to_string();
+        Some(if cfg!(windows) { s.to_lowercase() } else { s })
+    };
+    matches!((norm(a), norm(b)), (Some(x), Some(y)) if x == y)
+}
+
+/// (0.2.5 D7) Whether `recorded` - the throwaway worktree path a run recorded - has the shape C3
+/// gives one, so a run that RESUMES that run's thread may make its own worktree at the same path (a
+/// worktree-isolated engine binds its session to the directory it was made in): an absolute path
+/// without a `.` or `..` component, directly under the CURRENT system temp directory (its parent
+/// compared canonically) and named [`THROWAWAY_WORKTREE_PREFIX`] followed by 32 lower-case hex
+/// digits ([`crate::setup::branches::is_throwaway_name`]). `Ok` is the path exactly as recorded (the
+/// directory the engine saw); `Err` says why it is not reusable. Whether the path is FREE is decided
+/// when the worktree is made ([`ThrowawayWorktree::create_at`]).
+pub fn reusable_worktree_path(recorded: &str) -> Result<PathBuf, String> {
+    if recorded.is_empty() {
+        return Err("no path was recorded".into());
+    }
+    let p = PathBuf::from(recorded);
+    if !p.is_absolute() {
+        return Err("it is not an absolute path".into());
+    }
+    if p.components().any(|c| {
+        matches!(
+            c,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    }) {
+        return Err("it holds a `.` or `..` component".into());
+    }
+    let named = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(crate::setup::branches::is_throwaway_name);
+    if !named {
+        return Err(format!(
+            "its name is not `{THROWAWAY_WORKTREE_PREFIX}` followed by 32 lower-case hex digits"
+        ));
+    }
+    let under_temp = p
+        .parent()
+        .is_some_and(|d| same_existing_dir(d, &std::env::temp_dir()));
+    if !under_temp {
+        return Err("it is not directly under the system temp directory".into());
+    }
+    Ok(p)
+}
+
+/// (0.2.5 D7) The pre-start refusal of a resuming seat whose worktree path is taken: one line that
+/// names the path and what to do, in preflight-class wording (" is not usable:"), so a panel
+/// re-seats an optional seat from its reserve exactly as for a preflight refusal.
+pub fn occupied_refusal(engine: &str, path: &Path) -> String {
+    format!(
+        "the {engine} seat is not usable: the worktree path {} of the thread it resumes is taken (a live run of that thread, or a crashed run's leftover); nothing was started - a live run must finish first, and `c3 doctor --fix` removes a crashed run's leftover",
+        path.display()
+    )
+}
+
 /// How a failed creation's clean-up ended, in words.
 fn removal_words(r: Result<(), String>) -> String {
     match r {
@@ -127,31 +220,106 @@ impl ThrowawayWorktree {
         Self::create_with(repo, rev, crate::setup::branches::record_throwaway_owner)
     }
 
+    /// (0.2.5 D7) [`ThrowawayWorktree::create`] at a GIVEN path: the worktree path of the run whose
+    /// thread this run resumes (a worktree-isolated engine binds its session to the directory it
+    /// was made in - kimi refuses a session "created under a different directory"). `at` must have
+    /// C3's shape ([`reusable_worktree_path`]) and must be FREE: its directory is made exclusively,
+    /// so anything already there - a live run of that thread, or a crashed run's leftover - is
+    /// [`CreateError::Occupied`] and is never removed or reused from here; then `git worktree add`
+    /// checks the revision out into that (empty) directory. `None` is a fresh random path, exactly
+    /// as [`ThrowawayWorktree::create`]. Everything after the checkout (the owner record, the
+    /// outside-link sweep, the removal when the guard drops) is the same.
+    pub fn create_at(
+        repo: &Path,
+        rev: &str,
+        at: Option<&Path>,
+    ) -> Result<ThrowawayWorktree, CreateError> {
+        Self::create_inner(
+            repo,
+            rev,
+            at,
+            crate::setup::branches::record_throwaway_owner,
+        )
+    }
+
     /// [`ThrowawayWorktree::create`] with the owner recorder given (a test injects a failing one).
     fn create_with(
         repo: &Path,
         rev: &str,
         record_owner: fn(&Path) -> Result<(), String>,
     ) -> Result<ThrowawayWorktree, String> {
-        let sha = resolve_commit(repo, rev)?;
+        Self::create_inner(repo, rev, None, record_owner).map_err(|e| e.words())
+    }
+
+    /// The one creation: at a fresh random path (`at` = `None`) or at a given one
+    /// ([`ThrowawayWorktree::create_at`]).
+    fn create_inner(
+        repo: &Path,
+        rev: &str,
+        at: Option<&Path>,
+        record_owner: fn(&Path) -> Result<(), String>,
+    ) -> Result<ThrowawayWorktree, CreateError> {
+        let sha = resolve_commit(repo, rev).map_err(CreateError::Failed)?;
         // (R5, F18-2) the live repository's index is only read: no optional lock, no refresh
-        let main_dirty =
-            !git_capture(repo, &["--no-optional-locks", "status", "--porcelain"])?.is_empty();
-        let run_id = uuid::Uuid::new_v4().simple().to_string();
-        let path = std::env::temp_dir().join(format!("{THROWAWAY_WORKTREE_PREFIX}{run_id}"));
+        let main_dirty = !git_capture(repo, &["--no-optional-locks", "status", "--porcelain"])
+            .map_err(CreateError::Failed)?
+            .is_empty();
+        let (path, claimed) = match at {
+            None => {
+                let run_id = uuid::Uuid::new_v4().simple().to_string();
+                (
+                    std::env::temp_dir().join(format!("{THROWAWAY_WORKTREE_PREFIX}{run_id}")),
+                    false,
+                )
+            }
+            Some(given) => {
+                let p = reusable_worktree_path(&given.to_string_lossy()).map_err(|why| {
+                    CreateError::Failed(format!(
+                        "the worktree path {} cannot be reused: {why}",
+                        given.display()
+                    ))
+                })?;
+                // (D7) the path is CLAIMED by making its directory exclusively: whatever already
+                // exists there (a directory, a file, a link - dangling or not) is not ours and is
+                // left exactly as it is
+                match std::fs::create_dir(&p) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        return Err(CreateError::Occupied(p));
+                    }
+                    Err(e) => {
+                        return Err(CreateError::Failed(format!(
+                            "its directory {} could not be made ({e})",
+                            p.display()
+                        )));
+                    }
+                }
+                (p, true)
+            }
+        };
         let path_s = path.to_string_lossy().to_string();
-        git_capture(repo, &["worktree", "add", "--detach", &path_s, &sha])?;
+        if let Err(e) = git_capture(repo, &["worktree", "add", "--detach", &path_s, &sha]) {
+            // (D7) the empty directory this call made - and only it - is removed again
+            let left = match claimed.then(|| std::fs::remove_dir(&path)) {
+                Some(Err(re)) if re.kind() != std::io::ErrorKind::NotFound => format!(
+                    "; the directory {} made for it was left in place ({re})",
+                    path.display()
+                ),
+                _ => String::new(),
+            };
+            return Err(CreateError::Failed(format!("{e}{left}")));
+        }
         // (0.2.5 D4) The worktree's directory is opened once, WITHOUT following it, and verified on
         // that handle: everything C3 does in it from here on is relative to this handle.
         let root = match Root::open(&path) {
             Ok(r) => r,
             Err(e) => {
                 let removal = removal_words(remove_worktree_dir(repo, &path, None, &REAL_REMOVAL));
-                return Err(format!(
+                return Err(CreateError::Failed(format!(
                     "its directory {} {}; {removal}",
                     path.display(),
                     e.words()
-                ));
+                )));
             }
         };
         // Name this process as its owner (in the worktree's git admin directory, not its files), so
@@ -162,9 +330,9 @@ impl ThrowawayWorktree {
         if let Err(why) = record_owner(&path) {
             let removal =
                 removal_words(remove_worktree_dir(repo, &path, Some(root), &REAL_REMOVAL));
-            return Err(format!(
+            return Err(CreateError::Failed(format!(
                 "its owner record could not be written ({why}); {removal}"
-            ));
+            )));
         }
         // (R5, F18-6) right after the checkout: a link the revision carries whose target lies
         // outside the worktree is removed (never followed, never descended), so a reviewer cannot
@@ -176,9 +344,9 @@ impl ThrowawayWorktree {
             Err(why) => {
                 let removal =
                     removal_words(remove_worktree_dir(repo, &path, Some(root), &REAL_REMOVAL));
-                return Err(format!(
+                return Err(CreateError::Failed(format!(
                     "a link of the checked-out revision that leads outside the worktree could not be removed ({why}); {removal}"
-                ));
+                )));
             }
         };
         Ok(ThrowawayWorktree {
@@ -1857,6 +2025,8 @@ mod tests {
             reason: crate::consult::reviewed::Reason::Engine,
             rev: "HEAD".into(),
             sha: head.clone(),
+            at: None,
+            resume_note: String::new(),
         };
         let collab = repo.join(".collab");
         let got = crate::consult::reviewed::setup_review_tree(
@@ -1951,6 +2121,8 @@ mod tests {
             reason: crate::consult::reviewed::Reason::Engine,
             rev: "HEAD".into(),
             sha: head,
+            at: None,
+            resume_note: String::new(),
         };
         let collab = repo.join(".collab");
         let tree = crate::consult::reviewed::setup_review_tree(
@@ -2292,6 +2464,8 @@ mod tests {
             reason: crate::consult::reviewed::Reason::Rev,
             rev: first[..9].to_string(),
             sha: first.clone(),
+            at: None,
+            resume_note: String::new(),
         };
         let collab = repo.join(".collab");
         let tree = crate::consult::reviewed::setup_review_tree(
@@ -2481,5 +2655,154 @@ mod tests {
             none.ends_with("review the code as it is at that revision."),
             "{none}"
         );
+    }
+
+    /// A path of C3's throwaway shape (directly under the system temp directory, the prefix and a
+    /// fresh 32-hex id) that does not exist yet.
+    fn c3_shaped_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{THROWAWAY_WORKTREE_PREFIX}{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    // (0.2.5 D7) The shape rule of a reusable worktree path: exactly C3's own shape - directly under
+    // the system temp directory (compared canonically), the prefix and 32 lower-case hex digits, an
+    // absolute path without `.` / `..` - is taken as recorded; a path outside temp, a wrong prefix, a
+    // wrong length, upper-case hex, a relative path or one with `..` is refused, each saying why.
+    #[test]
+    fn a_reusable_worktree_path_has_exactly_c3s_shape() {
+        let ok = c3_shaped_path();
+        assert_eq!(
+            reusable_worktree_path(&ok.to_string_lossy()),
+            Ok(ok.clone())
+        );
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let temp = std::env::temp_dir();
+        // outside temp: one directory deeper (an existing directory, so only the place is wrong)
+        let base = brief_repo("shape");
+        let outside = base.join(format!("{THROWAWAY_WORKTREE_PREFIX}{id}"));
+        let why = reusable_worktree_path(&outside.to_string_lossy()).unwrap_err();
+        assert!(
+            why.contains("not directly under the system temp directory"),
+            "{why}"
+        );
+        // a parent that does not exist is not the temp directory either
+        let missing = temp
+            .join(format!("no-such-{id}"))
+            .join(format!("{THROWAWAY_WORKTREE_PREFIX}{id}"));
+        assert!(reusable_worktree_path(&missing.to_string_lossy()).is_err());
+        // the name: a wrong prefix, a wrong length (31 and 33), upper-case hex, a user's suffix
+        for name in [
+            format!("c3-kimi-wx-{id}"),
+            format!("{THROWAWAY_WORKTREE_PREFIX}{}", &id[1..]),
+            format!("{THROWAWAY_WORKTREE_PREFIX}{id}0"),
+            format!("{THROWAWAY_WORKTREE_PREFIX}{}", id.to_uppercase()),
+            format!("{THROWAWAY_WORKTREE_PREFIX}notes"),
+        ] {
+            let why = reusable_worktree_path(&temp.join(&name).to_string_lossy()).unwrap_err();
+            assert!(why.contains("its name is not"), "{name}: {why}");
+        }
+        // a relative path, a `..` detour that lands in temp again, and nothing recorded
+        let rel = reusable_worktree_path(&format!("{THROWAWAY_WORKTREE_PREFIX}{id}")).unwrap_err();
+        assert!(rel.contains("not an absolute path"), "{rel}");
+        let detour = temp
+            .join("sub")
+            .join("..")
+            .join(format!("{THROWAWAY_WORKTREE_PREFIX}{id}"));
+        let why = reusable_worktree_path(&detour.to_string_lossy()).unwrap_err();
+        assert!(why.contains("`..`"), "{why}");
+        assert!(reusable_worktree_path("").is_err());
+        let _ = std::fs::remove_dir_all(base.parent().unwrap());
+    }
+
+    // (0.2.5 D7) `create_at` makes the worktree exactly at a free C3-shaped path (and the path can
+    // be used again once the guard removed it); an EXISTING path - a directory with content, a
+    // file - is `Occupied`, nothing is made and what sits there is untouched; a path of another
+    // shape is a plain failure that makes nothing.
+    #[test]
+    fn create_at_uses_a_free_path_and_refuses_an_existing_one() {
+        let repo = brief_repo("create-at");
+        let at = c3_shaped_path();
+        let mut wt = ThrowawayWorktree::create_at(&repo, "HEAD", Some(&at)).unwrap();
+        assert_eq!(wt.path(), at.as_path());
+        assert!(at.join("committed.md").is_file());
+        assert!(at.join(".git").is_file(), "a linked worktree");
+        assert_eq!(wt.remove(), Ok(()));
+        assert!(std::fs::symlink_metadata(&at).is_err(), "removed");
+        // the same path again, once free
+        let wt2 = ThrowawayWorktree::create_at(&repo, "HEAD", Some(&at)).unwrap();
+        assert_eq!(wt2.path(), at.as_path());
+        drop(wt2);
+        assert!(std::fs::symlink_metadata(&at).is_err());
+
+        // an existing directory (a live run's worktree, a crashed run's leftover)
+        std::fs::create_dir_all(&at).unwrap();
+        std::fs::write(at.join("left.txt"), "keep me\n").unwrap();
+        match ThrowawayWorktree::create_at(&repo, "HEAD", Some(&at)) {
+            Err(CreateError::Occupied(p)) => assert_eq!(p, at),
+            Err(e) => panic!("expected Occupied, got {e:?}"),
+            Ok(wt) => panic!("an existing path was used: {}", wt.path().display()),
+        }
+        assert_eq!(
+            std::fs::read_to_string(at.join("left.txt")).unwrap(),
+            "keep me\n"
+        );
+        let list = git_capture(&repo, &["worktree", "list", "--porcelain"]).unwrap();
+        assert!(!list.contains(THROWAWAY_WORKTREE_PREFIX), "{list}");
+        std::fs::remove_dir_all(&at).unwrap();
+        // an existing (empty) file at the path
+        std::fs::write(&at, "").unwrap();
+        assert_eq!(
+            ThrowawayWorktree::create_at(&repo, "HEAD", Some(&at)).err(),
+            Some(CreateError::Occupied(at.clone()))
+        );
+        assert!(at.is_file(), "the file is untouched");
+        std::fs::remove_file(&at).unwrap();
+
+        // another shape: a plain failure, nothing is made there
+        let elsewhere = repo.parent().unwrap().join(format!(
+            "{THROWAWAY_WORKTREE_PREFIX}{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        match ThrowawayWorktree::create_at(&repo, "HEAD", Some(&elsewhere)) {
+            Err(CreateError::Failed(why)) => {
+                assert!(why.contains("cannot be reused"), "{why}")
+            }
+            other => panic!(
+                "expected a failure, got {:?}",
+                other.map(|w| w.path.clone())
+            ),
+        }
+        assert!(std::fs::symlink_metadata(&elsewhere).is_err());
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+    }
+
+    // (0.2.5 D7) When `git worktree add` fails at a claimed path (here: git still has a worktree
+    // registered there whose directory is gone), the empty directory the claim made is removed
+    // again - nothing is left at the path.
+    #[test]
+    fn a_failed_checkout_at_a_claimed_path_leaves_nothing_there() {
+        let repo = brief_repo("create-at-fails");
+        let at = c3_shaped_path();
+        git_capture(
+            &repo,
+            &["worktree", "add", "--detach", &at.to_string_lossy(), "HEAD"],
+        )
+        .unwrap();
+        std::fs::remove_dir_all(&at).unwrap();
+        match ThrowawayWorktree::create_at(&repo, "HEAD", Some(&at)) {
+            Err(CreateError::Failed(why)) => assert!(!why.contains("left in place"), "{why}"),
+            other => panic!(
+                "expected a failure, got {:?}",
+                other.map(|w| w.path.clone())
+            ),
+        }
+        assert!(
+            std::fs::symlink_metadata(&at).is_err(),
+            "the claimed directory was removed again"
+        );
+        let _ = git_capture(&repo, &["worktree", "prune"]);
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 }

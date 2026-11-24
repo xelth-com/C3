@@ -936,3 +936,20 @@ swap -> xelth.com/C3 page after the tag.
   `c3 consult --task release-0.2.5 --purpose acceptance --mode new --brief
   .collab/release-0.2.5/handoffs/56-claude-acceptance-2.md --reply-name acceptance-2 --rev HEAD
   --detach` with the build of the head.
+
+## 2026-11-24 13:33 - a live kimi observation with the 0.2.5 build: resume is broken (pre-existing); wave D7
+
+- While the ChatGPT window is closed I ran the kimi observation of the tech-debt list, task
+  smoke-kimi, build of 681af51 (scratchpad/bin/c3-review5.exe), kimi-code/kimi-for-coding:
+  1. `--mode new --rev HEAD`: usable reply in 15.7 s (handoffs/03-kimi-live-1.md). The real CLI
+     in its throwaway worktree wrote nothing there - the "housekeeping file fails the run" rule
+     did not trip. That observation is closed.
+  2. `--mode resume`: FAILED at once - kimi: "Session ... was created under a different
+     directory." (handoffs/05-kimi-live-2.md). The worktree path is random per run, and kimi binds
+     a session to its directory. v0.2.4 had the same random path (engines/kimi.rs:173 there), so a
+     kimi thread could never be resumed - not a regression of 0.2.5, but a defect.
+- Wave D7 (worktree-agent-ab347e154aaa57462, opus): a run that resumes a thread of a
+  worktree-isolated engine (kimi, agy) gets its worktree at the parent run's path (C3's own shape
+  only, the path must be free); the fake kimi CLI learns the real one's directory rule.
+- CI commit 681af51 pushed: the Windows job excludes its build and scratch directories from the
+  virus scanner (an experiment against the launcher-start flake).

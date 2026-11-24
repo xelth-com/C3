@@ -201,8 +201,19 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
                 iso.sha, ctx.o.purpose
             ),
         };
+        // (0.2.5 D7) a resume of a worktree-isolated engine's thread: at the parent run's path
+        let at = iso
+            .at
+            .as_ref()
+            .map(|p| {
+                format!(
+                    " (made at {}, the worktree path of the thread it resumes)",
+                    p.display()
+                )
+            })
+            .unwrap_or_default();
         out.push(format!(
-            "worktree    : a throwaway git worktree of {what}; the brief and the task's handoffs copied in, removed after the run"
+            "worktree    : a throwaway git worktree of {what}; the brief and the task's handoffs copied in, removed after the run{at}"
         ));
     }
     if let Some(d) = &ctx.diff {

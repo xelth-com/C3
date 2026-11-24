@@ -360,6 +360,7 @@ fn run_codex_secondary(
                 kick_path: secondary_kick.clone(),
                 on_running,
                 on_kill,
+                resume_note: ctx.resume_note(),
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, r.turn.outcome),
@@ -1188,6 +1189,7 @@ fn run_engine_secondary(
                 kick_path: None,
                 on_running: None,
                 on_kill: None,
+                resume_note: ctx.resume_note(),
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, kimi_detail(&r.turn)),

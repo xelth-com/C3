@@ -70,6 +70,28 @@ pub struct KimiEngine {
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
     /// Told around every tree kill of a turn (`SpawnRequest::on_kill`).
     pub on_kill: Option<super::subprocess::KillHook>,
+    /// (0.2.5 D7) The sentence a turn that fails with the CLI's "created under a different
+    /// directory" refusal adds to its failure text ([`add_resume_note`]): the run resumes a thread
+    /// whose worktree path is not known or could not be reused. `""`: none.
+    pub resume_note: String,
+}
+
+/// (0.2.5 D7) The words of the kimi CLI's refusal to resume a session from another directory than
+/// the one it was created in (`failed to run prompt: Session "<id>" was created under a different
+/// directory.`): kimi binds a session to its working directory.
+pub const KIMI_OTHER_DIRECTORY: &str = "was created under a different directory";
+
+/// (0.2.5 D7) A failed turn whose failure is the CLI's [`KIMI_OTHER_DIRECTORY`] refusal gets `note`
+/// appended to its outcome and its failure text (the provider failure's message); any other turn,
+/// or an empty note, is left as it is.
+pub fn add_resume_note(t: &mut KimiTurn, note: &str) {
+    if t.ok || note.is_empty() || !t.outcome.contains(KIMI_OTHER_DIRECTORY) {
+        return;
+    }
+    t.outcome = format!("{} {note}", t.outcome);
+    if let Some(first) = t.texts.first_mut() {
+        *first = format!("{first} {note}");
+    }
 }
 
 /// Whether `dir` is a reviewer's throwaway worktree: named with
@@ -319,6 +341,8 @@ impl KimiEngine {
         let expect_thread = Self::expect_thread(turn);
         let mut t = kimi_turn_outcome(&events, exit_code, &result.stderr, &expect_thread);
         t.wall_seconds = result.wall_seconds;
+        // (D7) a resume of a thread whose directory is not known: the failure says what to do
+        add_resume_note(&mut t, &self.resume_note);
         // The zero-tool-call review guard (primary turn, a reviewing purpose): see grok.
         if is_primary && t.ok {
             if let Some((why, class)) = kimi_review_tool_guard(&self.purpose, events.tool_calls) {
@@ -1050,5 +1074,38 @@ mod tests {
             "an operator's own linked worktree is not a throwaway"
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (0.2.5 D7) The CLI's refusal of a session made in another directory (kimi 2.5.3's stderr)
+    // carries the resume note in the outcome and the failure text; any other failure, a usable turn
+    // or an empty note is left as it is.
+    #[test]
+    fn a_different_directory_refusal_carries_the_resume_note() {
+        let sid = "session_ead72d04-e414-46dc-94b5-844c548aa5e8";
+        let stderr = format!(
+            "Session \"{sid}\" was created under a different directory.\r\n  cd \"C:\\t\\c3-kimi-wt-x\" && kimi -r {sid}\r\n\r\nerror: failed to run prompt: Session \"{sid}\" was created under a different directory.\r\nSee log: C:\\k\\kimi-code.log\r\n"
+        );
+        let none = read_kimi_events("", true);
+        let note = "Start a new thread (--mode new).";
+        let mut t = kimi_turn_outcome(&none, 1, &stderr, sid);
+        assert!(!t.ok);
+        assert!(t.outcome.contains(KIMI_OTHER_DIRECTORY), "{}", t.outcome);
+        add_resume_note(&mut t, note);
+        assert!(
+            t.outcome.starts_with(&format!(
+                "failed: kimi failed - failed to run prompt: Session \"{sid}\" was created under a different directory."
+            )) && t.outcome.ends_with(note),
+            "{}",
+            t.outcome
+        );
+        assert!(t.texts[0].ends_with(note), "{:?}", t.texts);
+        let mut other = kimi_turn_outcome(&none, 1, "error: failed to run prompt: quota", "");
+        let before = other.outcome.clone();
+        add_resume_note(&mut other, note);
+        assert_eq!(other.outcome, before);
+        let mut silent = kimi_turn_outcome(&none, 1, &stderr, sid);
+        let before = silent.outcome.clone();
+        add_resume_note(&mut silent, "");
+        assert_eq!(silent.outcome, before);
     }
 }

@@ -163,6 +163,349 @@
                                        "wall_seconds":  28.8,
                                        "finished_at":  "2026-11-08T22:00:22+01:00",
                                        "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  2,
+                                       "when":  "2026-11-24T13:30:07+01:00",
+                                       "purpose":  "",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "cc4af5d6-13a1-45a7-b3d8-f6fb26ae5846",
+                                       "consult_ref":  "5d66e15c-d445-41d8-aafc-dacd5f5dd2b9",
+                                       "reviewer":  {
+                                                        "provider":  "kimi",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "kimi-code/kimi-for-coding",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "kimi",
+                                                        "harness":  "kimi-cli (version unknown)",
+                                                        "provider_fingerprint":  "282da20c8e15fa3b2e3d94d02c27980b0bfa790097f334cf219708a6ddf6990b",
+                                                        "provider_config":  {
+                                                                                "engine":  "kimi",
+                                                                                "launcher":  "C:\\Users\\Dmytro\\.kimi-code\\bin\\kimi.exe"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "kimi :: kimi-code/kimi-for-coding",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "inferred",
+                                                           "in_roster":  null,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: signed in (usable reply 15 min ago)",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:\\Users\\Dmytro\\.codex\\codex-consult-roster.json",
+                                                      "position":  11,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "engine"
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "session_ead72d04-e414-46dc-94b5-844c548aa5e8",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "kimi -p Your brief is the file C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-prompt-44a4086cf683499088fcd7071703d002.txt. Read it completely first, then follow it; answer in the format it requires. --output-format stream-json -m kimi-code/kimi-for-coding",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/smoke-kimi/handoffs/02-claude-live-kimi-0.2.5.md",
+                                       "range":  null,
+                                       "prompt_chars":  6936,
+                                       "reply":  "handoffs/03-kimi-live-1.md",
+                                       "reply_json":  "handoffs/03-kimi-live-1.reply.json",
+                                       "events":  "handoffs/03-kimi-live-1.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "kimi-code/kimi-for-coding",
+                                       "effort":  null,
+                                       "effort_requested":  "high",
+                                       "effort_sent":  null,
+                                       "effort_mapping":  "model-tier",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  420,
+                                       "timeout_source":  "explicit",
+                                       "continue_sec":  420,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-11-24T13:29:07+01:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "681af51bd38feb8054f87ddb52a2e98e142895f7",
+                                       "reviewed_revision":  "681af51",
+                                       "tree_sha256":  "c3e61eacc335e33cac2ff4bcb86448875e5abd27bde325e4f42b2a603823024f",
+                                       "tree_sha256_after":  "c3e61eacc335e33cac2ff4bcb86448875e5abd27bde325e4f42b2a603823024f",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "1345fb3df1068b6ac4f19246f512a06ff5249f23a1cacf48bc23b72087732d23",
+                                       "brief_sha256_after":  "1345fb3df1068b6ac4f19246f512a06ff5249f23a1cacf48bc23b72087732d23",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (1 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "ADVISE",
+                                       "verdict_reason":  "Both questioned behaviors are confirmed directly in the table at revision 681af51; no defects found.",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "compactions":  "unknown",
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  15.7,
+                                       "finished_at":  "2026-11-24T13:30:42+01:00",
+                                       "commit_wait_ms":  0,
+                                       "worktree":  {
+                                                        "reason":  "rev",
+                                                        "rev":  "HEAD",
+                                                        "sha":  "681af51bd38feb8054f87ddb52a2e98e142895f7"
+                                                    },
+                                       "live_head":  "681af51bd38feb8054f87ddb52a2e98e142895f7",
+                                       "live_tree_sha256":  "c3e61eacc335e33cac2ff4bcb86448875e5abd27bde325e4f42b2a603823024f"
+                                   },
+                                   {
+                                       "n":  3,
+                                       "when":  "2026-11-24T13:31:38+01:00",
+                                       "purpose":  "",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "1451eb9e-6994-4a90-a973-d39252affe99",
+                                       "consult_ref":  "358454d1-8a55-485d-b6e5-db1804510c86",
+                                       "reviewer":  {
+                                                        "provider":  "kimi",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "kimi-code/kimi-for-coding",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "kimi",
+                                                        "harness":  "kimi-cli (version unknown)",
+                                                        "provider_fingerprint":  "282da20c8e15fa3b2e3d94d02c27980b0bfa790097f334cf219708a6ddf6990b",
+                                                        "provider_config":  {
+                                                                                "engine":  "kimi",
+                                                                                "launcher":  "C:\\Users\\Dmytro\\.kimi-code\\bin\\kimi.exe"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "kimi :: kimi-code/kimi-for-coding",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "inferred",
+                                                           "in_roster":  null,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: signed in (usable reply 0 min ago)",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:\\Users\\Dmytro\\.codex\\codex-consult-roster.json",
+                                                      "position":  11,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "engine"
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "session_ead72d04-e414-46dc-94b5-844c548aa5e8",
+                                       "thread":  "",
+                                       "thread_source":  "unknown",
+                                       "thread_candidate":  "",
+                                       "mode":  "resume",
+                                       "mode_fallback":  null,
+                                       "command":  "kimi -p Your brief is the file C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-prompt-1c28ad126c2440ed8dbbb6b96cfb765d.txt. Read it completely first, then follow it; answer in the format it requires. This continues our existing session; re-read that file and follow it. --output-format stream-json -m kimi-code/kimi-for-coding -S session_ead72d04-e414-46dc-94b5-844c548aa5e8",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/smoke-kimi/handoffs/04-claude-live-kimi-resume.md",
+                                       "range":  null,
+                                       "prompt_chars":  6939,
+                                       "reply":  "handoffs/05-kimi-live-2.md",
+                                       "reply_json":  "",
+                                       "events":  "handoffs/05-kimi-live-2.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "kimi-code/kimi-for-coding",
+                                       "effort":  null,
+                                       "effort_requested":  "high",
+                                       "effort_sent":  null,
+                                       "effort_mapping":  "model-tier",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  420,
+                                       "timeout_source":  "explicit",
+                                       "continue_sec":  420,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-11-24T13:31:01+01:00",
+                                       "structured":  false,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "681af51bd38feb8054f87ddb52a2e98e142895f7",
+                                       "reviewed_revision":  "681af51",
+                                       "tree_sha256":  "c3e61eacc335e33cac2ff4bcb86448875e5abd27bde325e4f42b2a603823024f",
+                                       "tree_sha256_after":  "c3e61eacc335e33cac2ff4bcb86448875e5abd27bde325e4f42b2a603823024f",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "8396235b9c363da3a1bc25479fe21d9c85df9a979d6b815994c207738b10ac5a",
+                                       "brief_sha256_after":  "8396235b9c363da3a1bc25479fe21d9c85df9a979d6b815994c207738b10ac5a",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (4 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "failed: kimi failed - failed to run prompt: Session \"session_ead72d04-e414-46dc-94b5-844c548aa5e8\" was created under a different directory.",
+                                       "provider_failure":  {
+                                                                "class":  "unknown",
+                                                                "kind":  "",
+                                                                "code":  "",
+                                                                "message":  "failed to run prompt: Session \"session_ead72d04-e414-46dc-94b5-844c548aa5e8\" was created under a different directory.",
+                                                                "when":  "2026-11-24T13:32:01+01:00",
+                                                                "retry_after":  null,
+                                                                "hint":  ""
+                                                            },
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "compactions":  "unknown",
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  0,
+                                       "finished_at":  "2026-11-24T13:32:01+01:00",
+                                       "commit_wait_ms":  0,
+                                       "worktree":  {
+                                                        "reason":  "rev",
+                                                        "rev":  "HEAD",
+                                                        "sha":  "681af51bd38feb8054f87ddb52a2e98e142895f7"
+                                                    },
+                                       "live_head":  "681af51bd38feb8054f87ddb52a2e98e142895f7",
+                                       "live_tree_sha256":  "c3e61eacc335e33cac2ff4bcb86448875e5abd27bde325e4f42b2a603823024f",
+                                       "reply_kept":  "none"
                                    }
                                ]
               }

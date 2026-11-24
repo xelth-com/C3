@@ -27,6 +27,11 @@
 #                               session changing the main tree during the run (B1)
 #   (B1) the log line also carries `head`: the commit the cwd checks out (read from its `.git` file
 #   / directory, no git needed), and `ls`: the cwd's top-level names.
+#   (0.2.5 D7) Like the real CLI, a session is BOUND to the directory it was created in: every
+#   session this fake mints (or first sees) is recorded with its cwd in `fake-kimi-sessions.txt`
+#   beside this script (FAKE_KIMI_SESSIONS=<path> overrides), and a `-S <id>` turn from ANOTHER
+#   directory fails as kimi 2.5.3 does - the "created under a different directory" lines on stderr,
+#   `error: failed to run prompt: Session "<id>" was created under a different directory.`, exit 1.
 $ErrorActionPreference = 'Stop'
 $u8 = New-Object System.Text.UTF8Encoding($false)
 $raw = [string]$env:FAKE_KIMI_ARGS
@@ -142,6 +147,36 @@ if ($env:FAKE_KIMI_ARGV_LOG) {
 if ($kind -eq 'version') { Out-Bytes "kimi 0.27.0-fake`n"; exit 0 }
 if ($kind -ne 'turn') { Err-Bytes "fake kimi: unknown invocation: $raw"; exit 2 }
 
+# (D7) the session registry: `<id>`t<cwd>` lines, the FIRST line of an id is where it was created.
+$sessFile = if ($env:FAKE_KIMI_SESSIONS) { [string]$env:FAKE_KIMI_SESSIONS } else { Join-Path $PSScriptRoot 'fake-kimi-sessions.txt' }
+$cwdNow = (Get-Location).Path.TrimEnd('\')
+function Get-SessionDir {
+    param([string]$Id)
+    if (-not (Test-Path -LiteralPath $sessFile -PathType Leaf)) { return '' }
+    foreach ($l in [IO.File]::ReadAllLines($sessFile, $u8)) {
+        $parts = $l.Split([char]"`t", 2)
+        if ($parts.Count -eq 2 -and $parts[0] -ceq $Id) { return $parts[1] }
+    }
+    return ''
+}
+function Add-Session {
+    param([string]$Id)
+    if ((Get-SessionDir $Id) -ne '') { return }
+    $line = $Id + "`t" + $cwdNow + "`n"
+    Invoke-FakeWrite { [IO.File]::AppendAllText($sessFile, $line, $u8) }
+}
+if ($resume) {
+    $born = Get-SessionDir $resume
+    if ($born -ne '' -and -not [string]::Equals($born, $cwdNow, [StringComparison]::OrdinalIgnoreCase)) {
+        Err-Bytes ('Session "' + $resume + '" was created under a different directory.')
+        Err-Bytes ('  cd "' + $born + '" && kimi -r ' + $resume)
+        Err-Bytes ''
+        Err-Bytes ('error: failed to run prompt: Session "' + $resume + '" was created under a different directory.')
+        Err-Bytes 'See log: fake-kimi.log'
+        exit 1
+    }
+}
+
 if ($env:FAKE_KIMI_STDERR) { Err-Bytes $env:FAKE_KIMI_STDERR }
 if ($env:FAKE_KIMI_JUNCTION) { $null = New-Item -ItemType Junction -Path (Join-Path (Get-Location).Path 'node_modules') -Target ([string]$env:FAKE_KIMI_JUNCTION) }
 if ($env:FAKE_KIMI_WRITE) { [IO.File]::WriteAllText((Join-Path (Get-Location).Path ([string]$env:FAKE_KIMI_WRITE)), "written by the reviewer`n", $u8) }
@@ -158,6 +193,8 @@ $id = if ($resume) { $resume } else { 'session_' + [guid]::NewGuid().ToString() 
 $smode = [string]$env:FAKE_KIMI_SESSION
 if ($smode -eq 'other') { $id = 'session_' + [guid]::NewGuid().ToString() }
 if ($smode -eq 'notsession') { $id = 'sess-1' }
+# (D7) the session is bound to this directory (a resumed one keeps the directory it was created in)
+Add-Session $id
 
 # the reply: the resume reply on a `-S` turn, else the first-turn reply.
 $replyFile = $env:FAKE_KIMI_REPLY
