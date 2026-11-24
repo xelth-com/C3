@@ -9,8 +9,9 @@
 //! the whole test, whatever the body says; a file without it is reported and never edited. The
 //! repair only ever APPENDS the missing section: no existing byte changes. The edit is the model
 //! repair's: a sibling temporary file,
-//! read back, the original re-read against the snapshot the edit was computed from, a rename over
-//! the original, links and hard links refused ([`crate::setup::repo_models::replace_file`]) - since
+//! read back, the original re-read against the snapshot the edit was computed from, (F57-10) an
+//! atomic exchange with the original that keeps a displaced hand edit next to the file, links and
+//! hard links refused ([`crate::setup::repo_models::replace_file`]) - since
 //! 0.2.5 D4 all of it relative to directory handles reached from the repository root without
 //! following any component. The SessionStart hook does not do this, and nothing happens inside a
 //! C3 child (`C3_CHILD`).
@@ -148,6 +149,10 @@ pub fn scan(repo_root: &Path) -> RuleStatus {
 pub struct RuleRepair {
     /// The section was appended to this file (repo-relative).
     pub fixed: Option<String>,
+    /// (F57-10, F02-2) Said loudly with the fix: a hand edit saved during the write was displaced
+    /// and is kept next to the file, or the file was replaced by rename (no atomic exchange here) -
+    /// [`replace_file`].
+    pub notice: Option<String>,
     /// The repair that was due and could not be made: `(file, why)`; the file is as it was.
     pub problem: Option<(String, String)>,
     /// (0.2.5) The rule file was not read because a link is on its way: `(file, why)`. Not a
@@ -188,8 +193,9 @@ pub fn repair_delegation_rule(repo_root: &Path) -> RuleRepair {
         None => replace_file(&edit),
     };
     match result {
-        Ok(()) => RuleRepair {
+        Ok(notice) => RuleRepair {
             fixed: Some(DELEGATION_RULE.to_string()),
+            notice,
             ..RuleRepair::default()
         },
         Err(why) => RuleRepair {
@@ -318,6 +324,9 @@ pub fn scan_state_sentences(repo_root: &Path) -> Vec<StateSentenceFinding> {
 pub struct StateSentenceRepair {
     /// The files whose old sentences were replaced (repo-relative).
     pub fixed: Vec<String>,
+    /// (F57-10, F02-2) Said loudly with the fixes: a hand edit displaced by a write and kept next
+    /// to its file, or a file replaced by rename (no atomic exchange here) - [`replace_file`].
+    pub notices: Vec<String>,
     /// The repairs that were due and could not be made: `(file, why)`; the file is as it was.
     pub problems: Vec<(String, String)>,
     /// (0.2.5) The files that were not read because a link is on their way: `(file, why)`. Not
@@ -326,7 +335,7 @@ pub struct StateSentenceRepair {
 }
 
 /// Replace the old template sentences naming `.eck/` with the current ones - exactly those lines,
-/// nothing else - through the model repair's link-safe temporary-file-and-rename path. A file
+/// nothing else - through the model repair's link-safe temporary-file-and-exchange path. A file
 /// without such a line is not touched. The caller keeps this out of a C3 child.
 pub fn repair_state_sentences(repo_root: &Path) -> StateSentenceRepair {
     let mut out = StateSentenceRepair::default();
@@ -357,7 +366,10 @@ pub fn repair_state_sentences(repo_root: &Path) -> StateSentenceRepair {
             None => replace_file(&edit),
         };
         match result {
-            Ok(()) => out.fixed.push(file.to_string()),
+            Ok(notice) => {
+                out.fixed.push(file.to_string());
+                out.notices.extend(notice);
+            }
             Err(why) => out.problems.push((file.to_string(), why)),
         }
     }

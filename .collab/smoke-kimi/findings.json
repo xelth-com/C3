@@ -26,6 +26,75 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1795523620
+                    },
+                    {
+                        "n":  4,
+                        "consult_id":  "d01f36c7-713e-4205-b500-ab13223392b6",
+                        "lineage":  "kimi :: kimi-code/kimi-for-coding [kimi]",
+                        "provider":  "kimi",
+                        "model":  "kimi-code/kimi-for-coding",
+                        "engine":  "kimi",
+                        "purpose":  "",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-24T14:21:10+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-24T14:24:47+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795526687
+                    },
+                    {
+                        "n":  5,
+                        "consult_id":  "bc3fd53c-202b-4cf2-ab42-f331338b28f1",
+                        "lineage":  "kimi :: kimi-code/kimi-for-coding [kimi]",
+                        "provider":  "kimi",
+                        "model":  "kimi-code/kimi-for-coding",
+                        "engine":  "kimi",
+                        "purpose":  "",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-24T14:22:59+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-24T14:24:47+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795526687
+                    },
+                    {
+                        "n":  3,
+                        "consult_id":  "1451eb9e-6994-4a90-a973-d39252affe99",
+                        "lineage":  "kimi :: kimi-code/kimi-for-coding [kimi]",
+                        "provider":  "kimi",
+                        "model":  "kimi-code/kimi-for-coding",
+                        "engine":  "kimi",
+                        "purpose":  "",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-24T13:31:38+01:00",
+                        "useful":  "no",
+                        "note":  "the resume failed before any turn: kimi refused a session created under another directory (the defect wave D7 fixed)",
+                        "when":  "2026-11-24T14:24:47+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795526687
                     }
                 ]
 }

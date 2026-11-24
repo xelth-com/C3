@@ -22,6 +22,18 @@ use c3_core::roster::{Roster, RosterEntry};
 pub struct SourceList {
     pub source: String,
     pub ids: Vec<String>,
+    /// (F57-1) A page's provenance: the canonical URL its ids were read from
+    /// ([`super::web::canonical_url`]) - a page's name is only its label, which a later
+    /// configuration may give to another URL. Persisted; `None` on every other kind (a catalog's
+    /// name is its URL) and on a page record of an older build, whose ids are then never published
+    /// ([`super::web::provenance`]) until the next refresh rewrites the record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// (F57-1) Whether that URL was declared `"public": true` when the ids were collected - a page
+    /// read while it was not public stays unpublished whatever a later configuration declares.
+    /// Persisted; absent means false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub public: bool,
     /// The catalog's `created` stamp (unix seconds) per id, when it gives one: the first-collection
     /// "new" rule and the date evidence a public candidate needs. Persisted; a state file written
     /// before it existed loads with no dates.
@@ -805,6 +817,8 @@ fn aliased_view(current: &[SourceList], alias: &CatalogAlias) -> Vec<SourceList>
             SourceList {
                 source: s.source.clone(),
                 ids: s.ids.iter().map(spell).collect(),
+                url: s.url.clone(),
+                public: s.public,
                 created: s.created.iter().map(|(k, v)| (spell(k), *v)).collect(),
                 prices: s.prices.iter().map(|(k, v)| (spell(k), *v)).collect(),
             }
@@ -1015,14 +1029,18 @@ pub type Published = std::collections::HashSet<(String, String)>;
 /// source, which may be private), bound to a vendor class: a `<vendor>/<model>` id to the class of
 /// its OpenRouter vendor slug (`qwen/qwen4-max` -> `(alibaba, qwen4-max)`; an unknown slug binds
 /// nowhere), a plain id to the class of the source's own host ([`super::web::TrustedSource`]), or
-/// nowhere. Lower-cased. Empty when there is no state. (F16-1, F17-5) A source matches by its full
-/// name - a catalog by its exact URL - so an id counts only when the URL it was read from is
-/// trusted itself; a legacy host-keyed record of an older build matches nothing until a fetch
-/// rewrites it.
+/// nowhere. Lower-cased. Empty when there is no state. (F16-1, F17-5, F57-1) A record matches by
+/// its provenance ([`super::web::provenance`]) - the exact URL its ids were read from, for a
+/// catalog and a page alike - so an id counts only when the URL it was read from is trusted itself
+/// (and, for a page, was declared public when it was read); a legacy host-keyed catalog record or
+/// a label-only page record of an older build matches nothing until a fetch rewrites it.
 pub fn published_from(state: &ModelsState, trusted: &[super::web::TrustedSource]) -> Published {
     let mut out = Published::new();
     for s in state.sources.iter().filter(|s| is_public_source(&s.source)) {
-        let Some(t) = trusted.iter().find(|t| t.source == s.source) else {
+        let Some(key) = super::web::provenance(s) else {
+            continue;
+        };
+        let Some(t) = trusted.iter().find(|t| t.source == key) else {
             continue;
         };
         for id in &s.ids {
@@ -1082,8 +1100,10 @@ pub fn published_ids() -> &'static Published {
 /// Seat a successor by editing exactly the `model` of `reviewers[position]` (1-based, the roster
 /// position) in the roster file, keeping the file's formatting: copy to
 /// `<path>.bak-maintain-<yyyymmdd>`, replace that one string value ([`replace_entry_model`]),
-/// re-parse to verify the result still loads, and write it. The backup is left in place; on a
-/// verify failure nothing is written and the backup stands. `today` is `yyyymmdd`.
+/// re-parse to verify the result still loads, and write it ([`commit_swap`]: an atomic exchange
+/// that keeps a hand edit saved during the write next to the roster - `Ok(Some(notice))` then says
+/// where). The backup is left in place; on a verify failure nothing is written and the backup
+/// stands. `today` is `yyyymmdd`.
 ///
 /// (R3) `basis` is the roster TEXT as it was read immediately before the candidate's smoke - the
 /// same snapshot the protection / saturation gate judged. The edit is computed from THAT text and
@@ -1098,7 +1118,7 @@ pub fn apply_swap(
     old: &str,
     new: &str,
     today: &str,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     // The successor id is untrusted (it came from a model-list endpoint / CLI): refuse anything
     // outside the strict shape before it is spliced into the roster JSON.
     if !valid_model_id(new) {
@@ -1129,10 +1149,21 @@ pub fn apply_swap(
 }
 
 /// Commit an edited roster: take the once-per-day backup, re-read the file and abort if it changed
-/// since `basis` was read (a concurrent edit during the minutes-long smoke window), then write
-/// through a temp file + rename so a crash never leaves a truncated roster. Separated from
-/// [`apply_swap`] so the concurrency abort and the atomic write are unit-testable.
-fn commit_swap(roster_path: &str, basis: &str, updated: &str, today: &str) -> Result<(), String> {
+/// since `basis` was read (a concurrent edit during the minutes-long smoke window), then write a
+/// temp file (so a crash never leaves a truncated roster), read the roster once more and publish
+/// the temp file by an ATOMIC EXCHANGE with the roster (F57-10, [`crate::contain::publish_exchange`]):
+/// a hand edit saved after that last comparison is displaced, not lost - it is kept next to the
+/// roster as `<roster>.displaced-<UTC time>` and `Ok(Some(notice))` says so in one line (as it
+/// does when the system has no exchange and the roster was replaced by rename). The roster's
+/// directory is the codex home - reached by its path, opened once as an anchor handle; a roster
+/// that is a link is followed to the file it names, which is the file exchanged. Separated from
+/// [`apply_swap`] so the concurrency abort and the publication are unit-testable.
+fn commit_swap(
+    roster_path: &str,
+    basis: &str,
+    updated: &str,
+    today: &str,
+) -> Result<Option<String>, String> {
     // One backup per day, taken before the day's first swap: a second swap of the same pass must
     // not overwrite it with an already edited roster.
     let backup = format!("{roster_path}.bak-maintain-{today}");
@@ -1140,15 +1171,74 @@ fn commit_swap(roster_path: &str, basis: &str, updated: &str, today: &str) -> Re
         std::fs::write(&backup, basis.as_bytes())
             .map_err(|e| format!("could not write the roster backup ({e})"))?;
     }
-    // Re-read immediately before writing: if the roster changed since the edit was computed, abort
-    // rather than clobber a concurrent edit (the backup stands, nothing written).
-    let current = std::fs::read_to_string(roster_path)
-        .map_err(|e| format!("could not re-read the roster ({e})"))?;
-    if current != basis {
-        return Err("roster changed during the pass; the swap was not applied".to_string());
-    }
-    c3_core::store::write_text_atomic(std::path::Path::new(roster_path), updated.as_bytes())
-        .map_err(|e| format!("could not write the roster ({e})"))
+    let given = std::path::Path::new(roster_path);
+    let real = match std::fs::symlink_metadata(given) {
+        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(given)
+            .map_err(|e| format!("could not re-read the roster ({e})"))?,
+        _ => given.to_path_buf(),
+    };
+    let (Some(parent), Some(leaf)) = (real.parent(), real.file_name()) else {
+        return Err("the roster path names no file".to_string());
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        std::path::Path::new(".")
+    } else {
+        parent
+    };
+    let root = crate::contain::Root::open_anchor(parent)
+        .map_err(|e| format!("the roster's directory {}", e.words()))?;
+    let dir = root.dir();
+    // the new roster keeps the old one's permission bits (Unix)
+    #[cfg(unix)]
+    let permissions = dir.symlink_metadata(leaf).ok().map(|m| m.permissions());
+    #[cfg(not(unix))]
+    let permissions = None;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = std::ffi::OsString::from(format!(
+        ".{}.c3-swap-{}-{nanos}.tmp",
+        leaf.to_string_lossy(),
+        std::process::id()
+    ));
+    // Re-read before the temp file is written and again right before the exchange: if the roster
+    // changed since the edit was computed, abort rather than clobber a concurrent edit (the backup
+    // stands, nothing written).
+    let check = |_: crate::contain::Stage| -> Result<(), String> {
+        match crate::contain::read_file_in(dir, leaf) {
+            Ok(now) if now == basis.as_bytes() => Ok(()),
+            Ok(_) => Err("roster changed during the pass; the swap was not applied".to_string()),
+            Err(why) => Err(format!("could not re-read the roster (it {why})")),
+        }
+    };
+    let done = crate::contain::publish_exchange(
+        &crate::contain::Publish {
+            dir,
+            leaf,
+            tmp: &tmp,
+            bytes: updated.as_bytes(),
+            permissions,
+            check: &check,
+            race: "roster",
+        },
+        basis.as_bytes(),
+    )
+    .map_err(|f| {
+        let msg = match &f.error {
+            crate::contain::PublishError::Check(why) => why.clone(),
+            crate::contain::PublishError::Create(e) | crate::contain::PublishError::Write(e) => {
+                format!("could not write the roster ({e})")
+            }
+            crate::contain::PublishError::Rename(e) => {
+                format!("could not replace the roster ({e})")
+            }
+        };
+        f.with_cleanup(msg)
+    })?;
+    Ok(done.notice(&format!("the roster {roster_path}"), |name| {
+        parent.join(name).display().to_string()
+    }))
 }
 
 /// (F02-17) Replace the `model` of `reviewers[position]` (1-based: the roster position of a
@@ -2008,7 +2098,7 @@ mod tests {
                     "web:https://openrouter.ai:443/api/v1/models",
                     &["qwen/Qwen4-Max"],
                 ),
-                sl("page:zai-docs", &["glm-6"]),
+                page_rec("zai-docs", "https://docs.z.ai:443/models", true, &["glm-6"]),
                 sl("endpoint:api.z.ai", &["glm-9-secret"]),
                 sl(
                     "endpoint:https://api.z.ai:443/api/anthropic|ZAI_API_KEY|zai",
@@ -2056,6 +2146,139 @@ mod tests {
             &crate::maintain::web::trusted_sources(Some(&cfg))
         )
         .is_empty());
+    }
+
+    /// A page record as `c3 maintain` writes it since F57-1: its label, the canonical URL its ids
+    /// were read from and whether that URL was declared public then.
+    fn page_rec(name: &str, url: &str, public: bool, ids: &[&str]) -> SourceList {
+        SourceList {
+            url: Some(url.into()),
+            public,
+            ..sl(&format!("page:{name}"), ids)
+        }
+    }
+
+    /// (F57-1, the reviewer's RC1 at unit level) A page's ids are published only by the exact URL
+    /// they were read from, and only when that URL was declared public when they were read: ids
+    /// collected from a NON-public page stay unpublished after its label is reused for a different,
+    /// public URL; a label-only record of an older build is withheld; the same id collected from
+    /// the public URL is published. A catalog is matched by the same rule (its name is its URL).
+    #[test]
+    fn a_page_id_is_published_only_by_the_exact_public_url_it_was_read_from() {
+        let has = |p: &Published, id: &str| p.iter().any(|(_, m)| m == id);
+        // the configuration now: the label `docs` names a public vendor page on docs.z.ai
+        let cfg = crate::c3config::C3Config {
+            model_pages: vec![crate::c3config::ModelPageConfig {
+                name: "docs".into(),
+                url: "https://Docs.Z.ai/models".into(),
+                pattern: "(glm-[0-9a-z.-]+)".into(),
+                public: true,
+            }],
+            ..Default::default()
+        };
+        let trusted = crate::maintain::web::trusted_sources(Some(&cfg));
+        assert!(
+            trusted
+                .iter()
+                .any(|t| t.source == "page:https://docs.z.ai:443/models"),
+            "{trusted:?}"
+        );
+        assert!(!trusted.iter().any(|t| t.source == "page:docs"));
+        let one = |rec: SourceList| {
+            published_from(
+                &ModelsState {
+                    sources: vec![rec],
+                    ..Default::default()
+                },
+                &trusted,
+            )
+        };
+        // persisted while `docs` named an internal, non-public page
+        let private = page_rec(
+            "docs",
+            "https://wiki.acmecorp-internal.example:443/llm",
+            false,
+            &["glm-9-private"],
+        );
+        assert!(one(private.clone()).is_empty(), "the earlier URL's id");
+        // the same URL declared public later still does not publish what was read while it was not
+        let mut later = cfg.clone();
+        later.model_pages[0].url = "https://wiki.acmecorp-internal.example/llm".into();
+        let trusted_later = crate::maintain::web::trusted_sources(Some(&later));
+        assert!(published_from(
+            &ModelsState {
+                sources: vec![private],
+                ..Default::default()
+            },
+            &trusted_later
+        )
+        .is_empty());
+        // a public record of ANOTHER URL under the same label: not this URL's trust
+        assert!(one(page_rec(
+            "docs",
+            "https://other.example:443/models",
+            true,
+            &["glm-9-other"]
+        ))
+        .is_empty());
+        // an older build's record: the label alone - withheld until a refresh rewrites it
+        let legacy: ModelsState =
+            serde_json::from_str(r#"{"sources":[{"source":"page:docs","ids":["glm-9-legacy"]}]}"#)
+                .unwrap();
+        assert!(legacy.sources[0].url.is_none() && !legacy.sources[0].public);
+        assert!(published_from(&legacy, &trusted).is_empty());
+        // collected from the public URL after a refresh: published, bound to the host's class
+        let p = one(page_rec(
+            "docs",
+            "https://docs.z.ai:443/models",
+            true,
+            &["glm-9-public"],
+        ));
+        assert!(
+            p.contains(&("zai".to_string(), "glm-9-public".to_string())),
+            "{p:?}"
+        );
+        // ...under ANY label: the URL is the identity, not the name
+        assert!(has(
+            &one(page_rec(
+                "renamed",
+                "https://docs.z.ai:443/models",
+                true,
+                &["glm-9-public"]
+            )),
+            "glm-9-public"
+        ));
+        // the record round-trips through the state file with its provenance
+        let text = serde_json::to_string(&ModelsState {
+            sources: vec![page_rec(
+                "docs",
+                "https://docs.z.ai:443/models",
+                true,
+                &["glm-9-public"],
+            )],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            text.contains(r#""url":"https://docs.z.ai:443/models","public":true"#),
+            "{text}"
+        );
+        let back: ModelsState = serde_json::from_str(&text).unwrap();
+        assert!(has(&published_from(&back, &trusted), "glm-9-public"));
+        // a catalog: the same rule - its name is its canonical URL
+        assert_eq!(
+            crate::maintain::web::provenance(&sl(
+                "web:https://openrouter.ai:443/api/v1/models",
+                &[]
+            ))
+            .as_deref(),
+            Some("web:https://openrouter.ai:443/api/v1/models")
+        );
+        assert_eq!(
+            crate::maintain::web::provenance(&sl("web:openrouter.ai", &[])),
+            None
+        );
+        assert_eq!(crate::maintain::web::provenance(&sl("grok", &[])), None);
     }
 
     /// (F16-1, F17-5) A state file of an older build keys a catalog by its host (`web:<host>`): it
@@ -2223,6 +2446,85 @@ mod tests {
         assert!(err.contains("roster changed during the pass"), "{err}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "CHANGED");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (F57-10, the reviewer's Verify) An unrelated roster change the operator saves at the
+    // pre-publication boundary - after the swap's last comparison, right before the publication (the
+    // race hook writes it at `roster-publish`) - stays recoverable byte for byte: the roster holds
+    // C3's edit, the operator's version is kept next to it as `<roster>.displaced-<UTC time>`
+    // (the day's backup holds only the older basis), and the swap returns the notice naming it.
+    // Without such an edit nothing is left beside the roster but the backup.
+    #[test]
+    fn a_roster_edit_saved_at_the_publication_boundary_is_kept_byte_for_byte() {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-mnt-swap-displaced-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("codex-consult-roster.json");
+        let path_s = path.to_string_lossy().to_string();
+        let basis = "{\"roster_version\":1,\"reviewers\":[{\"provider\":\"grok\",\"engine\":\"grok\",\"model\":\"grok-4.7\",\"plan\":\"supergrok\"}]}";
+        let operator = "{\"roster_version\":1,\"reviewers\":[{\"provider\":\"grok\",\"engine\":\"grok\",\"model\":\"grok-4.7\",\"plan\":\"supergrok\",\"ext\":{\"reserve_percent\":15}}],\"note\":\"saved by hand\"}";
+        std::fs::write(&path, basis).unwrap();
+        let hook = c3_core::test_hooks::set_thread_hook(
+            crate::contain::RACE_HOOK,
+            &format!("roster-publish|write:{}|{operator}", path.display()),
+        );
+        let notice = apply_swap(
+            &path_s, basis, 1, "grok", "grok-4.7", "grok-4.8", "20261124",
+        )
+        .unwrap()
+        .expect("the displaced hand edit is reported");
+        drop(hook);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("grok-4.8"));
+        let kept: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("codex-consult-roster.json.displaced-"))
+            .collect();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(&kept[0])).unwrap(),
+            operator,
+            "the operator's version, byte for byte"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("codex-consult-roster.json.bak-maintain-20261124"))
+                .unwrap(),
+            basis,
+            "the backup holds only the basis"
+        );
+        assert!(
+            notice.contains("a hand edit of the roster")
+                && notice.contains(&kept[0])
+                && notice.contains("now holds C3's version"),
+            "{notice}"
+        );
+        // the next swap without an edit: nothing new beside the roster
+        let now = std::fs::read_to_string(&path).unwrap();
+        let none =
+            apply_swap(&path_s, &now, 1, "grok", "grok-4.8", "grok-4.9", "20261124").unwrap();
+        assert_eq!(none, None);
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "codex-consult-roster.json".to_string(),
+                "codex-consult-roster.json.bak-maintain-20261124".to_string(),
+                kept[0].clone(),
+            ]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

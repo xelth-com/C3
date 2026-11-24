@@ -62,6 +62,12 @@ globset = "0.4"
 # no-follow open option the component-by-component walk needs. Blocking, no async runtime.
 cap-std = "4.0.3"
 cap-fs-ext = "4.0.3"
+# windows-sys (Windows) + rustix (Unix): (0.2.5, F57-10 / F02-2) the atomic EXCHANGE that publishes a
+# file a person may edit by hand at the same time (`crate::contain::publish_exchange`) -
+# `ReplaceFileW` and `renameat2(RENAME_EXCHANGE)` / `renamex_np(RENAME_SWAP)`. Both are already in the
+# lock file at these versions as cap-std's own platform layer, so no new crate is pulled in.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+rustix = { version = "1.1.5", features = ["fs"] }
 # surrealdb + tokio: the derived context index (milestone 8), behind the `index-surreal`
 # feature (opt-in; absent from the default build). `kv-surrealkv` is the embedded
 # single-writer store (per-project `.c3/index/`); `protocol-ws` compiles the `ws://`

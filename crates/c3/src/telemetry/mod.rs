@@ -423,7 +423,8 @@ pub struct Hub {
 /// The intake (`Get-TelemetryUrl`, plus C3's own override): `C3_TELEMETRY_HUB` (C3's staging/test
 /// override, taken as given), else `CODEX_CONSULT_TELEMETRY_URL` (the operator setting the plugin
 /// reads too), else `https://xelth.com/T`. `CODEX_CONSULT_TELEMETRY_URL` must be an absolute https
-/// URL; plain http only for a LOOPBACK host (127.0.0.1, localhost, ::1) AND with
+/// URL; plain http only for a loopback IP LITERAL (127.0.0.0/8, ::1 - never the name `localhost`,
+/// which goes through the resolver) AND with
 /// `CODEX_CONSULT_TEST_MODE=1` (a harness's local intake) - anything else is refused (nothing is
 /// sent).
 pub fn hub() -> Hub {
@@ -460,11 +461,12 @@ pub fn hub() -> Hub {
         }
     };
     if parsed.scheme() != "https" {
+        // (0.2.5, F57-9) a loopback IP LITERAL only: the name `localhost` goes through the system
+        // resolver, which need not answer with a loopback address
         let loopback = match parsed.host() {
-            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
             Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
             Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-            None => false,
+            Some(url::Host::Domain(_)) | None => false,
         };
         if !(parsed.scheme() == "http" && loopback) {
             return refused(format!("the intake URL '{raw}' ({source}) is refused: only https (plain http only for a loopback test intake in test mode)"));

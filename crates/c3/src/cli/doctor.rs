@@ -145,6 +145,8 @@ pub fn run(args: DoctorArgs) -> i32 {
         crate::setup::repo_models::RepairReport::default()
     };
     let fixes = &repair.fixes;
+    // (F57-10, F02-2) the displaced versions the repair kept (a hand edit saved during its write)
+    let displaced = crate::setup::repo_models::displaced_files(&repo_root);
     // `--fix` also appends the template's "BRANCHES AND WORKTREES" section to a delegation rule file
     // C3 wrote before the section existed (only that, only when the file still carries C3's title
     // line; a rewritten file is reported by the scan, never edited) - never inside a C3 child.
@@ -214,6 +216,7 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "rewritten": s.rewritten,
             })).collect::<Vec<_>>(),
             "fixed_state_sentences": sentence_repair.fixed,
+            "state_sentence_notices": sentence_repair.notices,
             "state_sentence_problems": sentence_repair.problems.iter().map(|(file, why)| serde_json::json!({
                 "file": file,
                 "why": why,
@@ -222,7 +225,10 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "file": f.file,
                 "old": f.old,
                 "new": f.new,
+                "notice": f.notice,
             })).collect::<Vec<_>>(),
+            // (F57-10, F02-2) kept displaced versions, until the operator removes them
+            "displaced_files": displaced,
             "fix_problems": repair.problems.iter().filter(|p| p.old != NOT_READ).map(|p| serde_json::json!({
                 "file": p.file,
                 "old": p.old,
@@ -235,6 +241,7 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "why": why,
             })).collect::<Vec<_>>(),
             "fixed_rules": rule_repair.fixed.iter().collect::<Vec<_>>(),
+            "rule_notice": rule_repair.notice,
             "rule_fix_problems": rule_repair.problem.iter().map(|(file, why)| serde_json::json!({
                 "file": file,
                 "why": why,
@@ -309,8 +316,14 @@ pub fn run(args: DoctorArgs) -> i32 {
                 crate::state_dir::LEGACY_STATE_DIR
             );
         }
+        for n in &sentence_repair.notices {
+            println!("[!] {n}");
+        }
         for f in fixes {
             println!("[fixed] {}: model {} -> {}", f.file, f.old, f.new);
+            if let Some(n) = &f.notice {
+                println!("[!] {n}");
+            }
         }
         for p in repair.problems.iter().filter(|p| p.old != NOT_READ) {
             println!(
@@ -326,8 +339,16 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "[fixed] {file}: appended the \"BRANCHES AND WORKTREES\" section of C3's template"
             );
         }
+        if let Some(n) = &rule_repair.notice {
+            println!("[!] {n}");
+        }
         if let Some((file, why)) = &rule_repair.problem {
             println!("[!] {file}: the \"BRANCHES AND WORKTREES\" section not appended - {why}");
+        }
+        for file in &displaced {
+            println!(
+                "[!] {file}: a version a C3 write displaced (a hand edit saved during it) is kept here - compare it with the file and remove it"
+            );
         }
         for r in &removed_worktrees {
             if r.removed {

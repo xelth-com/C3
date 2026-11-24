@@ -1454,7 +1454,8 @@ fn diff_hands_the_reviewer_a_patch_and_a_named_range_without_it_is_warned() {
     let ty = text(&y);
     assert_eq!(y.status.code(), Some(0), "{ty}");
     assert!(!ty.contains("the brief names the git range"), "{ty}");
-    // (R5, F19-3) the patch is named by its content: `<brief stem>.<sha8>.patch`
+    // (R5, F19-3) the patch is named by its content: (0.2.5 A4, F57-5) `<brief stem>.<sha256>.patch`,
+    // the full digest
     let l = e.last();
     let patch_rel = l["diff"]["patch"].as_str().unwrap_or("").to_string();
     let patch = std::fs::read(e.repo.join(&patch_rel)).expect("the patch was written");
@@ -1462,9 +1463,10 @@ fn diff_hands_the_reviewer_a_patch_and_a_named_range_without_it_is_warned() {
         patch_rel,
         format!(
             ".collab/t/handoffs/01-claude-review.{}.patch",
-            &c3_core::sha256_hex(&patch)[..8]
+            c3_core::sha256_hex(&patch)
         )
     );
+    assert_eq!(l["diff"]["sha256"], c3_core::sha256_hex(&patch).as_str());
     // (R5, F18-3) the bridge's own patch is not a tree change: a clean run records a clean check
     assert_eq!(l["tree_check"]["outcome"], "clean", "{l}");
     let ptext = String::from_utf8_lossy(&patch);

@@ -402,7 +402,10 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
   source FOR THAT CLASS - the built-in catalog (OpenRouter; `qwen/qwen4-max` counts as `qwen4-max`
   of `alibaba` only), or a configured catalog / page declared `"public": true` (a page's plain ids
   count for the class of its own host, e.g. `docs.z.ai` -> `zai`) - judged per catalog URL, never
-  per host (another URL on the same host is trusted only by its own entry). An endpoint's own model list, an
+  per host (another URL on the same host is trusted only by its own entry), and a page by the exact
+  URL its ids were read from, never by its label: an id read while the page was not declared public,
+  or from another URL now under the same label, is not sent until a refresh reads it from the public
+  URL itself (a page record of an older build, label only, waits for that refresh too). An endpoint's own model list, an
   engine's list, an undeclared configured source, another class's name and a reviewer without a
   class never count; without a maintain state the closed lists alone decide.
 * **Never:** task names, prompts, briefs, paths, thread ids, `consult_id`, finding texts, notes,
@@ -611,9 +614,12 @@ its one-line report.
   minor counts as `.0`) — and only after the smoke passed on that entry's own plan; the roster is
   backed up first (`.bak-maintain-<date>`) and only that entry's `model` is edited (located by
   parsing, the result checked to differ in nothing else). The roster is re-read and compared with
-  the snapshot the smoke was judged on immediately before the rename, and the swap is abandoned
-  when it differs (passes are serialised by the pass lock; an edit landing between that re-read and
-  the rename itself is not seen). A protected or on-request roster entry is
+  the snapshot the smoke was judged on before it is written, and the swap is abandoned when it
+  differs (passes are serialised by the pass lock); the new roster then takes the old one's place by
+  an atomic exchange, so an edit saved after that comparison is not lost: it is kept next to the
+  roster as `<roster>.displaced-<UTC time>` and named in the pass's report (`ATTENTION: a hand edit
+  of the roster ... is kept at ...`; on a system without an atomic exchange the roster is replaced by
+  rename and the report says so). A protected or on-request roster entry is
   never smoked or edited: its successor is only announced. So is a successor of a higher major that
   the public catalog lists at more than twice the seated id's list price (prompt or completion):
   "list price N times higher - seat it by hand" - a list price is a signal of what the model costs
@@ -657,7 +663,9 @@ its one-line report.
   dots, `anthropic/claude-opus-4.5`, counts in the claude engine's dash form `claude-opus-4-5` as
   well); an endpoint's own list never does.
   A catalog is identified by its full URL (scheme, host, port, path, query): every configured URL
-  is fetched and recorded on its own, and trust is per URL, never per host.
+  is fetched and recorded on its own, and trust is per URL, never per host. A page is shown by its
+  label, but its ids are recorded with the URL they were read from and whether that URL was declared
+  public then - its trust follows that URL, not the label.
 - **By hand.** `c3 maintain` prints the report; `c3 maintain --run [--engine <name>] [--dry-run]
   [--force]` runs a pass now; `c3 maintain --models [--dry-run]` runs only the model step (no CLI is
   checked or updated, the weekly schedule does not move; with `--dry-run` nothing is smoked or
@@ -711,12 +719,15 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
   (`c3 doctor`, the manifest digest of `c3 explain`) read `.eck/`. Switch (default ON):
   `C3_STATE_MIGRATE=off`, or `"state_migrate": false` in `<codex home>/c3/config.json` - then C3
   does not move `.eck/` and creates and uses `.c3/` for its own files; a collab directory you place
-  under `.eck/` is still used as given.
+  under `.eck/` is still used as given. Beside a real `.eck/` every C3 command creates `.c3/` only
+  under the move lock, whatever the switch, so a process with the switch off never splits a move
+  another process makes (while that lock is held the command uses `.eck/` for that run and says so).
 - **`.c3` must be a real directory.** C3 never writes, reads or moves through a link: a `.c3` that
   is a symlink, junction or other reparse point is refused by every writing command (nothing is
   written, nothing is created beside it) and reported by `c3 doctor`; a consultation, panel or work
   run whose collab directory lies in a linked `.c3` or `.eck` - or reaches the folder through
-  another link - is refused at its start and creates nothing, and the read-only commands read
+  another link, or whose task directory or `handoffs/` (`work/`) in the folder is a link - is
+  refused at its start and creates nothing, and the read-only commands read
   neither; a `legacy/`, `lastsnapshot/` or collab directory reached through a link stops that step
   of the move and is reported (by name - remove the link and the move goes on), never followed.
   What C3 writes and moves inside the folder goes through directory handles, so a directory
@@ -766,6 +777,14 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
   into the patch as well; the redactor only replaces values that look like secrets, and the run
   names those files the same way (`untracked`, `untracked_count`). `--diff-tracked-only` is still
   accepted and names the default.
+- **A patch file is never replaced.** The `--diff` patch is written into the task's handoffs as
+  `<stem>.<sha256>.patch`, named by the full sha256 of its bytes. A file already at that name with
+  the same bytes is reused; one with other bytes (or a link, a directory) is never overwritten and
+  the run fails instead. The patch is published by a hard link, which fails on an existing name; on
+  a file system without hard links it is published under a name of its own,
+  `<stem>.<sha256>.<32 hex>.patch`, by a rename onto that fresh name. The prompt and the ledger's
+  `diff.patch` name the file the run wrote; a patch an older build wrote under the short name
+  (`<stem>.<8 hex>.patch`) is another file and is left alone.
 - **Old rule text.** `c3 doctor` reports a C3-written rules file that still has an old template
   sentence naming `.eck/`, and `c3 doctor --fix` replaces exactly that line with the current one;
   a sentence the user rewrote is reported and left alone.
@@ -789,9 +808,12 @@ both reports this (`c3 doctor`) and repairs it in place.
   hook applies them automatically and prints one line only when it changed something. No git
   command is run and nothing is written outside the repository (an agents directory or a file that
   is a link or another reparse point is skipped; a `.git` that is no repository, and `GIT_DIR` set
-  in the environment, mean no repair). A file is replaced by rename after it is read again: a file
-  that changed since the repair read it is left as it is (an edit landing between that re-read and
-  the rename itself is not seen). The hook does not do this inside a session C3 itself started:
+  in the environment, mean no repair). A file is replaced after it is read again: a file that
+  changed since the repair read it is left as it is, and the replacement is an atomic exchange, so an
+  edit saved after that re-read is not lost - it is kept next to the file as
+  `<file>.displaced-<UTC time>`, the hook line ends with `ATTENTION: a hand edit of <file> ...`, and
+  `c3 doctor` names every such file until it is removed (on a system without an atomic exchange the
+  file is replaced by rename and the line says so). The hook does not do this inside a session C3 itself started:
   every reviewer, worker and launcher probe, and every child of `c3 update`, gets `C3_CHILD=1`, so a
   read-only reviewer on the `claude` engine cannot change the tree it reviews and a worker's patch
   holds only its own change.

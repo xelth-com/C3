@@ -24,7 +24,11 @@
 //!   through a link, and a legacy folder that is gone is never created again.
 //! * [`begin_run`] - (S2, F36-6) a consultation or work run that starts with its records under the
 //!   legacy folder creates them under the move lock, so it cannot begin between the live-run check
-//!   and the rename.
+//!   and the rename; (0.2.5, F57-6) inside the folder its task directory and `handoffs/` (`work/`)
+//!   are made through handles and a link there refuses the run ([`run_dirs`]).
+//! * [`state_folder`] - (0.2.5, acceptance answer 2) the one function that creates `.c3/`: beside a
+//!   real `.eck/` only under the move lock, after the state was read again under it, whatever the
+//!   migration switch says - so no writer makes a `.c3/` while `.eck/` is being moved.
 //!
 //! (S2) The move is taken under an exclusive lock every c3 process of the repository sees
 //! ([`MoveLock`]: a file created with exclusive create in the repository's git directory, holding
@@ -38,8 +42,10 @@
 //! run may be live under `.eck/`, and when it cannot be made now the command goes on with the
 //! legacy folder for that run and says so. It is off with `C3_STATE_MIGRATE=off` or
 //! `"state_migrate": false` in the C3 config (then `.eck/` stays and C3 creates and uses `.c3/` for
-//! its own files; a collab directory placed under `.eck/` is used as given). The SessionStart hook
-//! never moves anything ([`forbid_moves`]).
+//! its own files - created under the move lock like every `.c3/` beside a real `.eck/`, so a
+//! process with the switch off never splits a move another process makes; a collab directory
+//! placed under `.eck/` is used as given). The SessionStart hook never moves anything
+//! ([`forbid_moves`]).
 //!
 //! (0.2.5 R7b, F47-2) What these operations read, write and move INSIDE the repository goes
 //! through directory handles ([`crate::contain`]), from the repository root opened once as an
@@ -118,6 +124,13 @@ pub const LOCK_WAIT_HOOK: &str = "CODEX_CONSULT_TEST_STATE_LOCK_WAIT_MS";
 /// (S2) The test hook that makes the listing of a directory of that name fail in the live-run walk
 /// (test mode only), as an unreadable run directory would.
 pub const UNREADABLE_HOOK: &str = "CODEX_CONSULT_TEST_STATE_UNREADABLE";
+/// (0.2.5, acceptance F57-4) The test hook that holds a creator of the move lock right after its
+/// exclusive create, inside the gate (test mode only): it creates `<value>.held` and waits (at most
+/// 60 s) until `<value>` exists.
+pub const LOCK_CREATE_HOLD_HOOK: &str = "CODEX_CONSULT_TEST_STATE_LOCK_CREATE_HOLD";
+/// (0.2.5, acceptance F57-4) The test hook that sets the garbage interval of the move lock
+/// ([`LOCK_GARBAGE_SECS`]) in seconds (test mode only).
+pub const LOCK_GARBAGE_HOOK: &str = "CODEX_CONSULT_TEST_STATE_LOCK_GARBAGE_SECS";
 
 /// How long a process waits for the move lock before it reads the state again.
 const LOCK_WAIT_DEFAULT_MS: u64 = 10_000;
@@ -125,8 +138,16 @@ const LOCK_WAIT_DEFAULT_MS: u64 = 10_000;
 /// a move takes moments. (R7b, F48-2) A live owner's lock is never taken over by age.
 const LOCK_STALE_SECS: u64 = 600;
 /// A lock file that does not parse is taken over once it is this old (its creator died between
-/// the exclusive create and the write).
+/// the exclusive create and the write - (F57-4) a live creator holds the gate through that interval,
+/// so its file is never judged by this rule while it writes).
 const LOCK_GARBAGE_SECS: u64 = 10;
+
+/// The garbage interval: [`LOCK_GARBAGE_SECS`], or the test hook [`LOCK_GARBAGE_HOOK`].
+fn lock_garbage_secs() -> u64 {
+    c3_core::test_hooks::hook(LOCK_GARBAGE_HOOK)
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(LOCK_GARBAGE_SECS)
+}
 
 /// `<repo>/.c3`.
 pub fn path(repo_root: &Path) -> PathBuf {
@@ -416,13 +437,27 @@ pub fn ensure(repo_root: &Path, collab_root: Option<&Path>) -> Result<Ensured, S
             e.words()
         )
     })?;
-    let folder = match open_state_folder(&root, true) {
+    // (0.2.5, acceptance answer 2) beside a real `.eck/` only under the move lock ([`state_folder`]):
+    // the lock held by another process (a mover, with this process's switch off) means "not now" -
+    // the command goes on in `.eck/` for this run and says so; nothing else is created
+    let folder = match state_folder(repo_root, &root) {
         Ok((d, fresh)) => {
             out.new_folder = fresh;
             d
         }
-        Err(Step::Create(e)) => return Err(format!("could not create {STATE_DIR}/ ({e})")),
-        Err(_) => {
+        Err(FolderError::Held(why)) => {
+            out.moved.push(format!(
+                "{STATE_DIR}/ could not be created now ({why}); using {LEGACY_STATE_DIR}/ for this run"
+            ));
+            out.dir = legacy_path(repo_root);
+            out.deferred = Some(why);
+            return Ok(out);
+        }
+        Err(FolderError::Child) => return Err(CHILD_REFUSAL.to_string()),
+        Err(FolderError::Step(Step::Create(e))) => {
+            return Err(format!("could not create {STATE_DIR}/ ({e})"))
+        }
+        Err(FolderError::Step(_)) => {
             return Err(link_problem(repo_root)
                 .unwrap_or_else(|| format!("{STATE_DIR} is not a real directory")))
         }
@@ -487,14 +522,68 @@ fn write_marker(folder: &Dir) -> std::io::Result<()> {
     }
 }
 
-/// (R7b, F47-2/F48-3) `.c3` opened relative to the repository root's handle WITHOUT following it
-/// (a link or a non-directory refuses), created first when `create` and it is not there. A folder
-/// this call created is fresh: it gets [`LAYOUT_MARKER`] at once. Returns the handle and whether it
-/// was fresh.
-fn open_state_folder(root: &Root, create: bool) -> Result<(Dir, bool), Step> {
-    let existed = !matches!(contain::entry(root.dir(), OsStr::new(STATE_DIR)), Ok(None));
-    let d = contain::open_child(root.dir(), OsStr::new(STATE_DIR), create)?;
-    let fresh = create && !existed;
+/// (R7b, F47-2) `.c3` opened relative to the repository root's handle WITHOUT following it (a link
+/// or a non-directory refuses). Never created here: [`state_folder`] is the one place that creates
+/// it.
+fn open_state_folder(root: &Root) -> Result<Dir, Step> {
+    contain::open_child(root.dir(), OsStr::new(STATE_DIR), false)
+}
+
+/// Why [`state_folder`] gave no handle on `.c3/`.
+#[derive(Debug)]
+enum FolderError {
+    /// `.c3` itself: a link, not a directory, or it could not be created or read.
+    Step(Step),
+    /// (0.2.5, acceptance answer 2) `.eck/` is a real directory and the move lock could not be taken
+    /// (why): `.c3/` was not created now.
+    Held(String),
+    /// Inside a C3 child `.c3/` is never created ([`CHILD_REFUSAL`]).
+    Child,
+}
+
+/// (R7b, F47-2/F48-3; 0.2.5, acceptance answer 2) The ONE function that creates `.c3/`: every writer
+/// reaches the folder through it ([`ensure`], [`prepare_dir`] / [`write_in`], [`begin_run`] /
+/// [`run_dirs`], [`migrate_collab_cache`]); the move ([`migrate_legacy`]) makes `.c3` only by its
+/// rename, under the move lock. `.c3` is opened relative to the repository root's handle WITHOUT
+/// following it (a link or a non-directory refuses). When it is not there it is created by this
+/// rule: while `.eck/` is a real directory a fresh `.c3/` is created only under the [`MoveLock`],
+/// with the state read again under it (a mover that renamed `.eck` meanwhile left a `.c3/`, which is
+/// then opened, not made) - whatever the migration switch says. A mover holds that lock from its
+/// re-read through its rename, so no `.c3/` can appear between them; before this, a writer with the
+/// switch off created `.c3/` while another process moved `.eck/`, the rename failed on the non-empty
+/// folder and the project had two folders. The lock held by another process is
+/// [`FolderError::Held`] ("not now": [`ensure`] goes on in `.eck/` for that run and says so, a run
+/// start refuses). When `.eck` is not a real directory (absent, or a link C3 never moves) there is
+/// nothing to split and no lock is taken. Inside a C3 child nothing is created. A folder this call
+/// created is fresh: it gets [`LAYOUT_MARKER`] at once, before the lock goes. Returns the handle and
+/// whether it was fresh. Never called with the move lock held (it would wait for itself).
+fn state_folder(repo_root: &Path, root: &Root) -> Result<(Dir, bool), FolderError> {
+    match contain::entry(root.dir(), OsStr::new(STATE_DIR)) {
+        Ok(Some(_)) => {
+            return open_state_folder(root)
+                .map(|d| (d, false))
+                .map_err(FolderError::Step)
+        }
+        Ok(None) => {}
+        Err(e) => return Err(FolderError::Step(Step::Io(e))),
+    }
+    if crate::engines::in_c3_child() {
+        return Err(FolderError::Child);
+    }
+    // `.eck` a real directory - or one that cannot be read (fail closed): only under the lock
+    let _lock = match contain::entry(root.dir(), OsStr::new(LEGACY_STATE_DIR)) {
+        Ok(Some(Kind::Dir)) | Err(_) => Some(
+            MoveLock::acquire(repo_root, "create the project folder").map_err(FolderError::Held)?,
+        ),
+        Ok(_) => None,
+    };
+    // the state again (under the lock when there is one): the create says whether `.c3` is there now
+    let fresh = match root.dir().create_dir(STATE_DIR) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(e) => return Err(FolderError::Step(Step::Create(e))),
+    };
+    let d = open_state_folder(root).map_err(FolderError::Step)?;
     if fresh {
         let _ = write_marker(&d);
     }
@@ -588,8 +677,10 @@ struct LockRec {
 /// the owner's pid and start time and is stale when that owner is gone (the liveness rule of the
 /// recovery records), or - an owner that cannot be shown alive - when it is older than
 /// [`LOCK_STALE_SECS`] (never while its owner lives, R7b). Released (the file removed) on
-/// drop. The mover holds it from the re-read of the state through the rename; a run that starts
-/// under the legacy folder holds it while it creates its records ([`begin_run`]).
+/// drop. (F57-4) Its creation, its takeover and its release each happen under the
+/// [`takeover_gate`]. The mover holds it from the re-read of the state through the rename; a run
+/// that starts under the legacy folder holds it while it creates its records ([`begin_run`]); a
+/// writer holds it while it creates a fresh `.c3/` beside a real `.eck/` ([`state_folder`]).
 #[derive(Debug)]
 pub struct MoveLock {
     path: PathBuf,
@@ -614,16 +705,30 @@ fn gate_path(lock: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// (0.2.5, found by the acceptance review) The gate of the move lock's takeover and release: an OS
-/// lock on the file `<lock>.gate`, held only for one compare-and-remove. The takeover read the
-/// record, judged it stale, read it again and removed the file - two separate steps: of two
-/// processes that judged the same stale record, the first could remove it and create its own lock
-/// between the second's compare and its removal, the second then removed THAT lock and created
-/// another, and both held "the" lock - two movers in the section the lock exists to keep single.
-/// Under the gate the compare and the removal are one step among C3 processes. The OS releases the
-/// lock when its holder dies, so the gate has no stale state of its own, and the gate file is
-/// never removed (removing a locked file would bring the same race back). `None` when the gate
-/// cannot be opened or is not free within a second: a taker then removes nothing.
+/// (0.2.5, found by the acceptance review; F57-4) The gate of the move lock: an OS lock on the file
+/// `<lock>.gate`, held for each step that changes who owns the lock - the CREATION (from before the
+/// exclusive create through the complete, flushed record and its read-back, or the removal of a
+/// file whose write failed: [`try_create_lock`]), the TAKEOVER's compare-and-remove
+/// ([`take_over_if_stale`]) and the owner's RELEASE (drop). The takeover read the record, judged it
+/// stale, read it again and removed the file - two separate steps: of two processes that judged the
+/// same stale record, the first could remove it and create its own lock between the second's
+/// compare and its removal, the second then removed THAT lock and created another, and both held
+/// "the" lock - two movers in the section the lock exists to keep single. Under the gate the compare
+/// and the removal are one step among C3 processes. (F57-4) The creation was outside it: a creator
+/// suspended between its exclusive create and its write for longer than [`LOCK_GARBAGE_SECS`] had
+/// its still-empty file taken over as garbage, and when it resumed its write into the unlinked
+/// file succeeded (Unix) and it returned as a second owner. Now a creator's empty file exists only
+/// while its creator holds the gate, a taker cannot remove it meanwhile, and the creator returns
+/// success only after reading its own record back under the gate. The OS releases the lock when
+/// its holder dies, so the gate has no stale state of its own (an empty file a creator left by
+/// dying inside the gate is garbage after the interval, as before), and the gate file is never
+/// removed (removing a locked file would bring the same race back). What it cannot do: it is an
+/// OS lock, so it binds the C3 processes of one machine (and of hosts whose shared file system has
+/// working OS locks); a process of ANOTHER host on a file system without working OS locks is held
+/// only by the age rules ([`LOCK_STALE_SECS`], [`LOCK_GARBAGE_SECS`]) - the read-back still keeps a
+/// creator whose file was replaced from returning as an owner - and a c3 older than 0.2.5 takes no
+/// gate at all. `None` when the gate cannot be opened or is not free within a second: a taker then
+/// removes nothing, a creator creates nothing.
 fn takeover_gate(lock: &Path) -> Option<std::fs::File> {
     let f = std::fs::OpenOptions::new()
         .create(true)
@@ -660,6 +765,15 @@ impl MoveLock {
                     if take_over_if_stale(&path) {
                         continue;
                     }
+                    if Instant::now() >= deadline {
+                        return Err(holder_words(&path));
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                // (F57-4) the gate is busy (another process creates, takes over or releases the
+                // lock now), or the file this creator wrote vanished under it: nothing was created
+                // - wait, then try again or report the holder
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     if Instant::now() >= deadline {
                         return Err(holder_words(&path));
                     }
@@ -741,13 +855,29 @@ fn read_lock(path: &Path) -> Option<LockRec> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
-/// Create the lock file by exclusive create and write this process's record into it.
+/// Create the lock file by exclusive create and write this process's record into it. (0.2.5,
+/// acceptance F57-4) All of it under the [`takeover_gate`]: the gate is taken BEFORE the exclusive
+/// create and held through the complete, flushed record - or, when the write fails, through the
+/// removal of the file - and through a read-back that must find exactly this process's record in
+/// the file; only then is the lock this process's. `Err` of kind `WouldBlock`: the gate was not
+/// free within its bounded wait (nothing was created), or the file vanished before the read-back -
+/// the caller waits and tries again. `AlreadyExists`: a lock file is there - or the file read back
+/// holds another record (left as it is: it is not this process's) - the caller judges it or
+/// reports "held".
 fn try_create_lock(path: &Path, purpose: &str) -> std::io::Result<MoveLock> {
     use std::io::Write as _;
+    let Some(_gate) = takeover_gate(path) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "the gate of the move lock is held by another c3 process",
+        ));
+    };
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)?;
+    // (the race test pauses a creator here, inside the gate)
+    hold_at(LOCK_CREATE_HOLD_HOOK);
     let me = std::process::id();
     let rec = LockRec {
         pid: me,
@@ -763,10 +893,27 @@ fn try_create_lock(path: &Path, purpose: &str) -> std::io::Result<MoveLock> {
         let _ = std::fs::remove_file(path);
         return Err(e);
     }
-    Ok(MoveLock {
-        path: path.to_path_buf(),
-        token: rec.token,
-    })
+    drop(f);
+    // still under the gate: the file at the lock's path holds this process's record - else the
+    // lock is not this process's (a write into a file that was unlinked meanwhile never counts)
+    match std::fs::read(path) {
+        Ok(now) if now == bytes => Ok(MoveLock {
+            path: path.to_path_buf(),
+            token: rec.token,
+        }),
+        Ok(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "the move lock file holds another process's record",
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "the move lock file vanished while it was created",
+        )),
+        Err(e) => {
+            let _ = std::fs::remove_file(path);
+            Err(e)
+        }
+    }
 }
 
 /// The age of a file by its modification time (`None` when it cannot be read).
@@ -816,7 +963,7 @@ fn lock_is_stale(bytes: &[u8], age: Option<u64>) -> bool {
             !crate::liveness::proc::pid_alive(rec.pid, &rec.start_time)
         }
         Ok(_) => age.is_some_and(|a| a > LOCK_STALE_SECS),
-        Err(_) => age.is_none_or(|a| a > LOCK_GARBAGE_SECS),
+        Err(_) => age.is_none_or(|a| a > lock_garbage_secs()),
     }
 }
 
@@ -992,7 +1139,7 @@ pub fn migrate_legacy(repo_root: &Path) -> Migration {
     };
     // (R7b, F48-3) the move is complete: the marker goes in last, through `.c3/`'s handle
     if renamed.is_ok() {
-        if let Ok((d, _)) = open_state_folder(&root, false) {
+        if let Ok(d) = open_state_folder(&root) {
             let _ = write_marker(&d);
         }
     }
@@ -1031,10 +1178,14 @@ pub fn migrate_legacy(repo_root: &Path) -> Migration {
 /// (R7b, F47-2) The rename of `.eck` to `.c3`, relative to the repository root's handle and never
 /// over an existing name: immediately before it `.c3` must be absent and `.eck` a real directory,
 /// both read through the root's handle without following them; the rename moves the entry `.eck`
-/// itself (a link put there in the last instant would be moved as a link - its target never). A
-/// directory is never renamed over an existing name on Windows; on Unix `rename(2)` could replace
-/// only an EMPTY directory made at `.c3` in that same instant (a non-empty one, or any other entry,
-/// makes it fail, and the failure is read like any other rename error).
+/// itself (a link put there in the last instant would be moved as a link - its target never). The
+/// mover holds the move lock, and (0.2.5, acceptance answer 2) no C3 process creates `.c3` beside a
+/// real `.eck/` without holding that lock ([`state_folder`]), so no C3 writer can make `.c3` in that
+/// instant - whatever its migration switch. An entry made there by something else (the operator,
+/// another tool) is the rest: a directory is never renamed over an existing name on Windows; on
+/// Unix `rename(2)` could replace only an EMPTY directory made at `.c3` in that same instant (a
+/// non-empty one, or any other entry, makes it fail, and the failure is read like any other rename
+/// error).
 fn rename_folder(root: &Root) -> std::io::Result<()> {
     if contain::entry(root.dir(), OsStr::new(STATE_DIR))?.is_some() {
         return Err(std::io::Error::new(
@@ -1081,7 +1232,13 @@ fn after_failure(repo_root: &Path, mut out: Migration, why: String) -> Migration
 
 /// The test hook [`MOVE_HOLD_HOOK`]: hold this mover inside the move until the test releases it.
 fn hold_inside_the_move() {
-    let Some(v) = c3_core::test_hooks::hook(MOVE_HOLD_HOOK) else {
+    hold_at(MOVE_HOLD_HOOK);
+}
+
+/// A hold hook ([`MOVE_HOLD_HOOK`], [`LOCK_CREATE_HOLD_HOOK`]): with the hook set to `<value>`,
+/// create `<value>.held` and wait (at most 60 s) until `<value>` exists.
+fn hold_at(hook: &str) {
+    let Some(v) = c3_core::test_hooks::hook(hook) else {
         return;
     };
     let release = PathBuf::from(v.trim());
@@ -1527,30 +1684,41 @@ pub struct RunStart {
 ///
 /// (R7b, F48-1) First, in every case: a collab directory that reaches into C3's folder through a
 /// link ([`folder_link_problem`]: `.c3` or `.eck` itself a link, or an alias) refuses the run with
-/// one line and nothing is created. Outside a C3 child a collab directory inside `.c3/` is then
-/// created through handles ([`prepare_dir`]: never through a link, `.c3/` itself fresh with its
-/// marker), so the run's own directories are made in a real directory of the folder.
-pub fn begin_run(repo_root: &Path, collab_root: &Path) -> Result<RunStart, String> {
+/// one line and nothing is created. A collab directory inside `.c3/` is then created through
+/// handles ([`prepare_dir`]: never through a link, `.c3/` itself fresh with its marker - never inside
+/// a C3 child), so the run's own directories are made in a real directory of the folder.
+///
+/// (0.2.5, acceptance F57-6) Then the run's own directories: the task directory `<collab>/<task>`
+/// and each of `dirs` below it (`handoffs` for a consultation, a detached run and a panel; `work`
+/// for a work run) are made ready by [`run_dirs`] - inside C3's folder through handles, a link at
+/// either refusing the run before anything is written (under the move lock for a run under
+/// `.eck/`). The callers create none of these directories themselves.
+pub fn begin_run(
+    repo_root: &Path,
+    collab_root: &Path,
+    task: &str,
+    dirs: &[&str],
+) -> Result<RunStart, String> {
     if let Some(why) = folder_link_problem(repo_root, collab_root) {
         return Err(format!("{why}; nothing was started"));
     }
-    let none = RunStart { _lock: None };
+    let start = |lock: Option<MoveLock>| -> Result<RunStart, String> {
+        run_dirs(repo_root, collab_root, task, dirs)
+            .map_err(|why| format!("{why}; nothing was started"))?;
+        Ok(RunStart { _lock: lock })
+    };
     if crate::engines::in_c3_child() {
-        return Ok(none);
+        return start(None);
     }
     match split_state_path(repo_root, collab_root) {
         Some((StateName::Legacy, _)) => {}
-        Some((StateName::Current, _)) => {
-            prepare_dir(repo_root, collab_root)
-                .map_err(|why| format!("{why}; nothing was started"))?;
-            return Ok(none);
-        }
-        None => return Ok(none),
+        Some((StateName::Current, _)) | None => return start(None),
     }
     let eck = legacy_path(repo_root);
     if !real_dir(&eck) && !real_dir(&path(repo_root)) {
-        // no folder at all: nothing a mover could take away
-        return Ok(none);
+        // no folder at all: nothing a mover could take away (and C3 never creates `.eck/` again:
+        // [`run_dirs`] refuses)
+        return start(None);
     }
     let lock = MoveLock::acquire(repo_root, "run start").map_err(|why| {
         format!(
@@ -1563,7 +1731,73 @@ pub fn begin_run(repo_root: &Path, collab_root: &Path) -> Result<RunStart, Strin
             shown(repo_root, &moved_with_folder(repo_root, collab_root))
         ));
     }
-    Ok(RunStart { _lock: Some(lock) })
+    start(Some(lock))
+}
+
+/// (0.2.5, acceptance F57-6) The task directory `<collab_root>/<task>` and each of `dirs` below it
+/// made ready for a run's records. Inside C3's project folder (the collab root lies in `.c3/` or in
+/// the legacy `.eck/`) through handles from the repository root: the collab root as [`prepare_dir`]
+/// makes it, then the task directory relative to the collab root's handle and each of `dirs`
+/// relative to the task directory's, created when missing and opened WITHOUT following them - a
+/// link (a symlink, a junction or another reparse point) or anything else that is not a real
+/// directory at either refuses, in one line that names it, before anything is written there (its
+/// target is untouched). Before this, the callers appended `<task>/handoffs` to a checked collab
+/// root and created it with `create_dir_all`: a task directory that already was a link sent the
+/// handoff, the reply, the events, the task lock and the ledger wherever it pointed.
+///
+/// A collab root OUTSIDE the folder (the default `.collab/`, a `--collab-dir` elsewhere) is the
+/// operator's own anchor and stays as it was: the directories are created by path and a link in
+/// it is followed. [`begin_run`] calls this for a single run, a detached run, a panel and a work
+/// run; a panel member, whose panel made these directories under the move lock, calls it itself.
+/// What it does not do: the run's later writes go by path into the directories checked here, so a
+/// component swapped for a link AFTER this check, while the run writes, is not caught.
+pub fn run_dirs(
+    repo_root: &Path,
+    collab_root: &Path,
+    task: &str,
+    dirs: &[&str],
+) -> Result<(), String> {
+    let plain = |n: &str| contain::components(Path::new(n)).is_some_and(|c| c.len() == 1);
+    if let Some(bad) = std::iter::once(task)
+        .chain(dirs.iter().copied())
+        .find(|n| !plain(n))
+    {
+        return Err(format!("'{bad}' is not one plain directory name"));
+    }
+    let task_path = collab_root.join(task);
+    if split_state_path(repo_root, collab_root).is_none() {
+        let leaves: Vec<PathBuf> = if dirs.is_empty() {
+            vec![task_path]
+        } else {
+            dirs.iter().map(|d| task_path.join(d)).collect()
+        };
+        for p in leaves {
+            std::fs::create_dir_all(&p)
+                .map_err(|e| format!("could not create {} ({e})", p.display()))?;
+        }
+        return Ok(());
+    }
+    let (collab, mut cur_path) = open_write_dir(repo_root, collab_root)?;
+    cur_path.push(task);
+    let task_dir = run_dir(repo_root, &collab, task, &cur_path)?;
+    for d in dirs {
+        run_dir(repo_root, &task_dir, d, &cur_path.join(d))?;
+    }
+    Ok(())
+}
+
+/// One directory of [`run_dirs`]: `name` in `parent`, created when missing, opened without following
+/// it; `p` is its path for the refusal.
+fn run_dir(repo_root: &Path, parent: &Dir, name: &str, p: &Path) -> Result<Dir, String> {
+    match contain::open_child(parent, OsStr::new(name), true) {
+        Ok(d) => Ok(d),
+        Err(Step::Link { .. }) => Err(format!(
+            "{} is {} - C3 never writes a run's records through a link inside its project folder (its target is untouched)",
+            shown(repo_root, p),
+            link_words(p)
+        )),
+        Err(why) => Err(format!("{} {why}", shown(repo_root, p))),
+    }
 }
 
 // ------------------------------------------------------------------------------ collab paths
@@ -1907,9 +2141,19 @@ fn open_write_dir(repo_root: &Path, dir: &Path) -> Result<(Dir, PathBuf), String
             StateName::Legacy => LEGACY_STATE_DIR,
         };
         let mut cur_path = repo_root.join(name);
-        // `.c3` is created when missing (fresh, with its marker); `.eck` never is
+        // `.c3` is created when missing (fresh, with its marker; beside a real `.eck/` only under
+        // the move lock - [`state_folder`]); `.eck` never is
         let opened = match kind {
-            StateName::Current => open_state_folder(&root, true).map(|(d, _)| d),
+            StateName::Current => match state_folder(repo_root, &root) {
+                Ok((d, _)) => Ok(d),
+                Err(FolderError::Step(s)) => Err(s),
+                Err(FolderError::Held(why)) => {
+                    return Err(format!(
+                        "{STATE_DIR}/ could not be created now ({why}) - nothing was written"
+                    ))
+                }
+                Err(FolderError::Child) => return Err(CHILD_REFUSAL.to_string()),
+            },
             StateName::Legacy => contain::open_child(root.dir(), OsStr::new(name), false),
         };
         let mut cur = match opened {
@@ -2169,11 +2413,17 @@ pub fn migrate_collab_cache(repo_root: &Path, collab_root: &Path) -> Vec<String>
     let dst_dir = match Root::open_anchor(repo_root)
         .map_err(|e| format!("the repository root {}", e.words()))
         .and_then(|r| {
-            open_state_folder(&r, true)
+            state_folder(repo_root, &r)
                 .map(|(d, _)| d)
                 .map_err(|why| match why {
-                    Step::Create(e) => format!("could not create {STATE_DIR}/ ({e})"),
-                    _ => format!("{STATE_DIR} is a link or not a directory"),
+                    FolderError::Step(Step::Create(e)) => {
+                        format!("could not create {STATE_DIR}/ ({e})")
+                    }
+                    FolderError::Step(_) => format!("{STATE_DIR} is a link or not a directory"),
+                    FolderError::Held(why) => {
+                        format!("{STATE_DIR}/ could not be created now ({why})")
+                    }
+                    FolderError::Child => CHILD_REFUSAL.to_string(),
                 })
         }) {
         Ok(d) => d,

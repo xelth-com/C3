@@ -1112,9 +1112,21 @@ fn update_and_verify(
 }
 
 /// Resolve a pending update left by an interrupted pass. Returns (report clause, state action,
-/// whether the pending record may now be cleared). The installed version still being the previous
-/// one means the update never took (clear). Otherwise the installed version is smoked: a pass clears
-/// the record (verified); a fail is rolled back to the recorded previous version and the record is
+/// whether the pending record may now be cleared). (F57-3) What a recovery may credit is bound to
+/// the installed version, measured FIRST (`installed`, read at the start of this engine's turn of
+/// the pass) - the record is matched by engine only, so its versions decide nothing by themselves:
+/// - the previous version: the update never took (clear);
+/// - the pending TARGET: it is smoked, and only a pass on it, with `--version` read again after the
+///   smoke still showing the target, records "update to <target> verified" (clear);
+/// - a THIRD version (changed by hand or by another updater since the record was written): the
+///   target is never credited. It is smoked for itself: a pass clears the record with an action
+///   that names the installed version and says the pending update to the target was not verified
+///   (the state's `installed` is that version); a failure takes the failure path below;
+/// - a version that cannot be read: nothing is credited and no smoke is run (its result could not
+///   be attributed to a version); the record is kept for a pass that can read it.
+///
+/// A passing smoke during which the installed version changed is credited to no version (kept). A
+/// failing smoke is rolled back to the recorded previous version and the record is
 /// cleared only when the rollback command succeeds AND the previous version is actually restored. A
 /// failed rollback, a rollback that does not restore the previous version, and the absence of any
 /// rollback path all leave the record in place (resolved = false) so a later due pass smokes it
@@ -1195,9 +1207,30 @@ fn handle_pending_smoke(
             return Done(format!("{installed_text} {msg}"), msg, true);
         }
     }
+    // (F57-3) A version that cannot be read verifies nothing: no smoke is run (its result could not
+    // be attributed to any version) and the record is kept for a pass that can read it.
+    let Some(inst) = installed else {
+        let msg = format!(
+            "pending update to {} unresolved: the installed version cannot be read, so the update is not verified (no smoke run)",
+            p.target
+        );
+        println!("c3 maintain: {name} {installed_text} - {msg}");
+        return Done(format!("{installed_text} {msg}"), msg, false);
+    };
+    // (F57-3) Only the measured target can be credited with the update; a THIRD version (changed
+    // since the record was written) is smoked for itself and every clause names it.
+    let is_target = version::parse_cli_version(&p.target).is_some_and(|t| t.parts == inst.parts);
+    let third = if is_target {
+        String::new()
+    } else {
+        format!(
+            " ({installed_text} is installed, not the pending target {})",
+            p.target
+        )
+    };
     // Otherwise verify the installed version by a smoke.
     let Some(target) = smoke::pick_target(&smoke_override(name), roster, name, now) else {
-        let msg = "pending update unresolved: no quota for a smoke".to_string();
+        let msg = format!("pending update unresolved{third}: no quota for a smoke");
         println!("c3 maintain: {name} {installed_text} - {msg}");
         return Done(format!("{installed_text} {msg}"), msg, false); // keep the pending record
     };
@@ -1206,10 +1239,32 @@ fn handle_pending_smoke(
     let word = outcome.hold().map(|(w, _)| w).unwrap_or("failed");
     match outcome {
         smoke::Smoke::Pass => {
-            let msg = format!(
-                "recovered: update to {} verified after an interrupted pass",
-                p.target
-            );
+            // (F57-3) the pass belongs to the version that ran: `--version` again after the smoke
+            // must still show the version measured before it
+            let after = engine::installed_version(env, launcher);
+            if !after.as_ref().is_some_and(|a| a.parts == inst.parts) {
+                let after_t = after
+                    .as_ref()
+                    .map(|v| v.text().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let msg = format!(
+                    "pending update to {} unresolved: the installed version changed during the smoke ({installed_text} -> {after_t}), so its pass is credited to no version",
+                    p.target
+                );
+                println!("c3 maintain: {name} {installed_text} - {msg}");
+                return Done(format!("{installed_text} {msg}"), msg, false);
+            }
+            let msg = if is_target {
+                format!(
+                    "recovered: update to {} verified after an interrupted pass",
+                    p.target
+                )
+            } else {
+                format!(
+                    "pending update to {} not verified: {installed_text} is installed instead (changed since the update was recorded); the smoke passed on {installed_text}",
+                    p.target
+                )
+            };
             println!("c3 maintain: {name} {installed_text} - {msg}");
             Done(format!("{installed_text} {msg}"), msg, true)
         }
@@ -1228,7 +1283,7 @@ fn handle_pending_smoke(
                     // undone, so the pending record may be cleared.
                     if cmd_ok && restored {
                         let msg = format!(
-                            "recovered: smoke {word}, rolled back to {} ({why})",
+                            "recovered{third}: smoke {word}, rolled back to {} ({why})",
                             p.previous
                         );
                         println!("c3 maintain: {name} {installed_text} - {msg}");
@@ -1242,7 +1297,7 @@ fn handle_pending_smoke(
                         .map(|v| v.text().to_string())
                         .unwrap_or_else(|| "unknown".to_string());
                     let msg = format!(
-                        "pending update unresolved: rollback failed, still {now_t} ({why})"
+                        "pending update unresolved{third}: rollback failed, still {now_t} ({why})"
                     );
                     println!("c3 maintain: {name} {installed_text} - {msg}");
                     return StillFailing(format!("{installed_text} {msg}"), msg, target);
@@ -1250,7 +1305,8 @@ fn handle_pending_smoke(
             }
             // No rollback path (unsupported, or do_rollback returned None): the engine is stuck on a
             // failing version. Keep the record for another pass; this is not a recovery.
-            let msg = format!("pending update unresolved: smoke {word}, no rollback path ({why})");
+            let msg =
+                format!("pending update unresolved{third}: smoke {word}, no rollback path ({why})");
             println!("c3 maintain: {name} {installed_text} - {msg}");
             StillFailing(format!("{installed_text} {msg}"), msg, target)
         }
@@ -1602,11 +1658,17 @@ fn run_models(
                         &c.new,
                         &today,
                     ) {
-                        Ok(()) => {
+                        Ok(notice) => {
                             seated += 1;
                             let msg = format!("{label}, smoke passed");
                             println!("c3 maintain: {msg} (roster edited, backup taken)");
                             clauses.push(msg);
+                            // (F57-10) a hand edit the write displaced is kept next to the
+                            // roster: said loudly and recorded in the report
+                            if let Some(n) = notice {
+                                println!("c3 maintain: ATTENTION: {n}");
+                                clauses.push(n);
+                            }
                         }
                         Err(e) => {
                             println!("c3 maintain: {label} smoke passed, not seated ({e})");

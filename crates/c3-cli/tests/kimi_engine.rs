@@ -1627,3 +1627,81 @@ fn a_resume_of_a_parent_without_a_worktree_path_gets_a_fresh_path_and_the_hint()
         "the handoff's failure text carries it: {h}"
     );
 }
+
+// ------------------------------------------------------------------ (F57-6, RC5) a linked task directory
+
+/// A junction at `link` to `target` (no privilege needed).
+fn junction(link: &Path, target: &Path) -> bool {
+    Command::new("cmd")
+        .args(["/c", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// (0.2.5, acceptance F57-6 / RC5) A real `.c3/collab` whose task directory - or its `handoffs/` -
+/// is a junction to an empty directory elsewhere: a consultation and a `--detach` start are refused
+/// before anything is written, in one line that names the junction; no kimi turn starts and nothing
+/// (no handoff, task lock or ledger) appears at the junction's target. A normal run with
+/// `--collab-dir .c3/collab` still creates both directories and lands its reply there.
+#[test]
+fn a_linked_task_directory_in_the_project_folder_refuses_the_run_and_writes_nothing_there() {
+    let e = setup("linked-task");
+    let target = e.work.join("elsewhere");
+    std::fs::create_dir_all(&target).unwrap();
+    let collab = e.repo.join(".c3").join("collab");
+    std::fs::create_dir_all(&collab).unwrap();
+    let kimi = [
+        "--engine",
+        "kimi",
+        "--model",
+        "kimi-code/k3",
+        "--collab-dir",
+        ".c3/collab",
+    ];
+    for (link, name) in [
+        (collab.join("t"), ".c3/collab/t"),
+        (collab.join("t").join("handoffs"), ".c3/collab/t/handoffs"),
+    ] {
+        if name.ends_with("handoffs") {
+            std::fs::create_dir_all(collab.join("t")).unwrap();
+        }
+        assert!(junction(&link, &target), "mklink /J {}", link.display());
+        for detach in [false, true] {
+            let mut extra = kimi.to_vec();
+            if detach {
+                extra.push("--detach");
+            }
+            let o = e.consult(&extra, &[("FAKE_KIMI_TOOLCALL", "1")]);
+            let t = text(&o);
+            assert_eq!(o.status.code(), Some(1), "{name} detach={detach}: {t}");
+            assert!(
+                t.contains(&format!("{name} is a link")) && t.contains("nothing was started"),
+                "{name} detach={detach}: {t}"
+            );
+            assert!(e.turns().is_empty(), "no kimi turn started: {t}");
+            assert_eq!(
+                std::fs::read_dir(&target).unwrap().count(),
+                0,
+                "nothing at the junction's target ({name} detach={detach}): {t}"
+            );
+        }
+        std::fs::remove_dir(&link).unwrap();
+    }
+    // a normal run creates both directories, real ones, and lands its reply there
+    let o = e.consult(&kimi, &[("FAKE_KIMI_TOOLCALL", "1")]);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        collab
+            .join("t")
+            .join("handoffs")
+            .join("01-kimi-reply.md")
+            .is_file(),
+        "{t}"
+    );
+    assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(&e.work);
+}

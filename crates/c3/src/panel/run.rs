@@ -927,7 +927,15 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
         None
     } else {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        match crate::state_dir::begin_run(&providers::resolve_repo_root(&cwd), &b.collab_root) {
+        // (0.2.5, acceptance F57-6) the run start makes the task directory and its `handoffs/`
+        // ready (inside C3's project folder through handles, a link at either refusing the panel
+        // before anything is written or any member starts)
+        match crate::state_dir::begin_run(
+            &providers::resolve_repo_root(&cwd),
+            &b.collab_root,
+            b.task.as_str(),
+            &["handoffs"],
+        ) {
             Ok(s) => Some(s),
             Err(e) => {
                 eprintln!("{TOOL}: {e}");
@@ -935,11 +943,10 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
             }
         }
     };
-    // A real run creates the handoffs dir and takes the task lock (held to the end).
+    // A real run takes the task lock (held to the end).
     let _task_lock = if dry {
         None
     } else {
-        let _ = std::fs::create_dir_all(task_dir.join("handoffs"));
         let record = LockRecord::now(&b.task, Some(Value::String(b.panel_id.clone())));
         match store.take_task_lock(&b.task, &record) {
             Ok(l) => Some(l),

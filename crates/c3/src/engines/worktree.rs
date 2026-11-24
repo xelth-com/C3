@@ -18,7 +18,10 @@
 //! (0.2.5 D7) A run that resumes a thread of a worktree-isolated engine makes its worktree at the
 //! path of the run it resumes ([`ThrowawayWorktree::create_at`]: only a path of C3's own shape,
 //! [`reusable_worktree_path`], and only when it is free - the engine binds its session to that
-//! directory).
+//! directory). (0.2.5 A4, F57-7) That path is BUILT from the temp directory's handle and the recorded
+//! name (the recorded parent must be the temp directory by file identity), and every worktree's
+//! directory is claimed through that handle and kept by its identity through the checkout
+//! ([`ThrowawayWorktree::create_at`]).
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -124,6 +127,11 @@ pub enum CreateError {
     Occupied(PathBuf),
     /// The worktree could not be made (the words say why).
     Failed(String),
+    /// (0.2.5 A4, F57-7) The directory this call claimed at the path is not the one there any more
+    /// (the words say what was found): it was swapped between the claim and the check after the
+    /// checkout. The run is refused; NOTHING at the path is removed (whatever sits there is not
+    /// this run's), and the registration `git worktree add` made is pruned.
+    Replaced(PathBuf, String),
 }
 
 impl CreateError {
@@ -132,34 +140,53 @@ impl CreateError {
         match self {
             CreateError::Occupied(p) => format!("the path {} is taken", p.display()),
             CreateError::Failed(why) => why.clone(),
+            CreateError::Replaced(p, why) => format!(
+                "the directory made for the worktree at {} is not the one at that path any more ({why}); nothing there was removed",
+                p.display()
+            ),
         }
     }
 }
 
-/// (0.2.5 D7) Whether two existing directories are the same one: both canonicalised (each must
-/// resolve), compared without the verbatim prefix and, on Windows, without regard to case.
-fn same_existing_dir(a: &Path, b: &Path) -> bool {
-    let norm = |p: &Path| -> Option<String> {
-        let c = std::fs::canonicalize(p).ok()?;
-        let mut s = c.to_string_lossy().replace('\\', "/");
-        if let Some(r) = s.strip_prefix("//?/") {
-            s = r.to_string();
-        }
-        let s = s.trim_end_matches('/').to_string();
-        Some(if cfg!(windows) { s.to_lowercase() } else { s })
-    };
-    matches!((norm(a), norm(b)), (Some(x), Some(y)) if x == y)
+/// (0.2.5 A4, F57-7) A directory's identity read on an open handle - the same (volume / device,
+/// file index / inode) pair as [`contain::FileId`].
+fn dir_id(d: &cap_std::fs::Dir) -> std::io::Result<contain::FileId> {
+    let m = d.dir_metadata()?;
+    Ok((
+        cap_fs_ext::MetadataExt::dev(&m),
+        cap_fs_ext::MetadataExt::ino(&m),
+    ))
+}
+
+/// (0.2.5 A4, F57-7) The CURRENT system temp directory ([`std::env::temp_dir`]), opened once as a
+/// directory handle: a throwaway worktree's path is built from it, its directory is claimed through
+/// it, and a recorded path's parent is compared with it by identity.
+fn open_temp_dir() -> Result<Root, String> {
+    let t = std::env::temp_dir();
+    Root::open_anchor(&t)
+        .map_err(|e| format!("the system temp directory {} {}", t.display(), e.words()))
 }
 
 /// (0.2.5 D7) Whether `recorded` - the throwaway worktree path a run recorded - has the shape C3
 /// gives one, so a run that RESUMES that run's thread may make its own worktree at the same path (a
 /// worktree-isolated engine binds its session to the directory it was made in): an absolute path
-/// without a `.` or `..` component, directly under the CURRENT system temp directory (its parent
-/// compared canonically) and named [`THROWAWAY_WORKTREE_PREFIX`] followed by 32 lower-case hex
-/// digits ([`crate::setup::branches::is_throwaway_name`]). `Ok` is the path exactly as recorded (the
-/// directory the engine saw); `Err` says why it is not reusable. Whether the path is FREE is decided
-/// when the worktree is made ([`ThrowawayWorktree::create_at`]).
+/// without a `.` or `..` component, directly under the CURRENT system temp directory and named
+/// [`THROWAWAY_WORKTREE_PREFIX`] followed by 32 lower-case hex digits
+/// ([`crate::setup::branches::is_throwaway_name`]). `Err` says why it is not reusable. Whether the
+/// path is FREE is decided when the worktree is made ([`ThrowawayWorktree::create_at`]).
+///
+/// (0.2.5 A4, F57-7) The path is BUILT, not reused: `Ok` is the temp directory joined with the
+/// validated name. "Directly under the temp directory" is decided by NATIVE identity - the recorded
+/// parent and the temp directory, each opened as a directory, must have the same file identity
+/// (volume and file index on Windows, device and inode elsewhere) - never by comparing path text,
+/// and no separator is rewritten (a literal backslash in a Unix name stays part of that name).
 pub fn reusable_worktree_path(recorded: &str) -> Result<PathBuf, String> {
+    let temp = open_temp_dir()?;
+    reusable_under(recorded, &temp)
+}
+
+/// [`reusable_worktree_path`] against the opened temp directory `temp`.
+fn reusable_under(recorded: &str, temp: &Root) -> Result<PathBuf, String> {
     if recorded.is_empty() {
         return Err("no path was recorded".into());
     }
@@ -175,22 +202,24 @@ pub fn reusable_worktree_path(recorded: &str) -> Result<PathBuf, String> {
     }) {
         return Err("it holds a `.` or `..` component".into());
     }
-    let named = p
+    let Some(name) = p
         .file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(crate::setup::branches::is_throwaway_name);
-    if !named {
+        .filter(|n| crate::setup::branches::is_throwaway_name(n))
+    else {
         return Err(format!(
             "its name is not `{THROWAWAY_WORKTREE_PREFIX}` followed by 32 lower-case hex digits"
         ));
-    }
+    };
+    // the recorded parent, opened as a directory, must BE the temp directory (file identity)
     let under_temp = p
         .parent()
-        .is_some_and(|d| same_existing_dir(d, &std::env::temp_dir()));
+        .and_then(|d| Root::open_anchor(d).ok())
+        .is_some_and(|d| d.id() == temp.id());
     if !under_temp {
         return Err("it is not directly under the system temp directory".into());
     }
-    Ok(p)
+    Ok(temp.path().join(name))
 }
 
 /// (0.2.5 D7) The pre-start refusal of a resuming seat whose worktree path is taken: one line that
@@ -201,6 +230,147 @@ pub fn occupied_refusal(engine: &str, path: &Path) -> String {
         "the {engine} seat is not usable: the worktree path {} of the thread it resumes is taken (a live run of that thread, or a crashed run's leftover); nothing was started - a live run must finish first, and `c3 doctor --fix` removes a crashed run's leftover",
         path.display()
     )
+}
+
+/// (0.2.5 A4, F57-7) The pre-start refusal of a seat whose claimed worktree directory was replaced
+/// before the checkout was verified ([`CreateError::Replaced`]): one line in preflight-class wording
+/// (" is not usable:").
+pub fn replaced_refusal(engine: &str, path: &Path, why: &str) -> String {
+    format!(
+        "the {engine} seat is not usable: the directory made for its throwaway worktree at {} is not the one at that path any more ({why}); nothing was started and nothing there was removed",
+        path.display()
+    )
+}
+
+/// (0.2.5 A4, F57-7) The directory a creation made for its worktree: the handle it was opened by
+/// right after the exclusive create (through the temp directory's handle, without following it),
+/// kept open so the identity is always read from the directory itself.
+struct Claim {
+    dir: cap_std::fs::Dir,
+}
+
+impl Claim {
+    /// Whether the directory `other` is the claimed one (identities read on both handles; one that
+    /// cannot be read is not the same).
+    fn is(&self, other: &cap_std::fs::Dir) -> bool {
+        matches!((dir_id(&self.dir), dir_id(other)), (Ok(a), Ok(b)) if a == b)
+    }
+}
+
+/// (0.2.5 A4, F57-7) Claim the worktree directory `name` in the temp directory `temp` (`path` names
+/// it in messages; `given`: the path was asked for, a resume): made EXCLUSIVELY through `temp`'s
+/// handle - an existing entry is [`CreateError::Occupied`] for a given path and never touched - then
+/// opened through the same handle WITHOUT following it and kept. What was made a moment ago is an
+/// empty real directory: a link, anything else, or a directory with an entry in it means another
+/// directory took the name in between ([`CreateError::Replaced`]; nothing is removed).
+fn claim_dir(temp: &Root, name: &OsStr, path: &Path, given: bool) -> Result<Claim, CreateError> {
+    match temp.dir().create_dir(name) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && given => {
+            return Err(CreateError::Occupied(path.to_path_buf()));
+        }
+        Err(e) => {
+            return Err(CreateError::Failed(format!(
+                "its directory {} could not be made ({e})",
+                path.display()
+            )));
+        }
+    }
+    interleave("worktree-claim");
+    let replaced = |why: String| CreateError::Replaced(path.to_path_buf(), why);
+    let dir = contain::open_child(temp.dir(), name, false)
+        .map_err(|why| replaced(format!("the path {why}")))?;
+    match contain::list(&dir) {
+        Ok(names) if names.is_empty() => {}
+        Ok(_) => return Err(replaced("the directory at the path is not empty".into())),
+        Err(e) => return Err(replaced(format!("the directory cannot be listed ({e})"))),
+    }
+    dir_id(&dir).map_err(|e| replaced(format!("its identity cannot be read ({e})")))?;
+    Ok(Claim { dir })
+}
+
+/// (0.2.5 A4, F57-7) After a failed `git worktree add`: remove the directory [`claim_dir`] made -
+/// through the temp directory's handle, only while the name still opens (without following it) to
+/// that same directory (its identity), and only when it is empty (a directory removal). Returns the
+/// words a failure appends (`""` when it is gone).
+fn remove_claimed(temp: &Root, name: &OsStr, path: &Path, claim: Claim) -> String {
+    let again = match contain::open_child(temp.dir(), name, false) {
+        Ok(d) => d,
+        Err(Step::Missing) => return String::new(),
+        Err(why) => {
+            return format!(
+                "; the path {} {why} now, so nothing there was removed",
+                path.display()
+            )
+        }
+    };
+    if !claim.is(&again) {
+        return format!(
+            "; the path {} no longer names the directory made for it, so nothing there was removed",
+            path.display()
+        );
+    }
+    // (Windows) a held handle refuses the removal: both are released first
+    drop(again);
+    drop(claim);
+    match temp.dir().remove_dir(name) {
+        Ok(()) => String::new(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => format!(
+            "; the directory {} made for it was left in place ({e})",
+            path.display()
+        ),
+    }
+}
+
+/// (0.2.5 A4) A point where a test interleaves its own step: the race hook of [`contain`]
+/// ([`contain::race_point`]) and, in a unit test, a step this thread registered for the point
+/// ([`interleave_hook::at`]). Does nothing otherwise.
+pub(crate) fn interleave(point: &str) {
+    contain::race_point(point);
+    #[cfg(test)]
+    interleave_hook::run(point);
+}
+
+/// (0.2.5 A4) The unit tests' interleaving: a step registered for a named point runs ONCE, the first
+/// time this thread reaches that point ([`interleave`]).
+#[cfg(test)]
+pub(crate) mod interleave_hook {
+    use std::cell::RefCell;
+
+    type Steps = Vec<(String, Box<dyn FnOnce()>)>;
+
+    thread_local! {
+        static STEPS: RefCell<Steps> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Clears this thread's registered steps when dropped.
+    pub(crate) struct Guard;
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            STEPS.with(|s| s.borrow_mut().clear());
+        }
+    }
+
+    /// Run `step` the first time this thread reaches `point`.
+    pub(crate) fn at(point: &str, step: impl FnOnce() + 'static) -> Guard {
+        STEPS.with(|s| s.borrow_mut().push((point.to_string(), Box::new(step))));
+        Guard
+    }
+
+    /// Take the first step registered for `point` (if any) and run it - outside the borrow, so the
+    /// step may reach a point itself.
+    pub(crate) fn run(point: &str) {
+        let step = STEPS.with(|s| {
+            let mut s = s.borrow_mut();
+            let i = s.iter().position(|(p, _)| p == point)?;
+            Some(s.remove(i).1)
+        });
+        if let Some(step) = step {
+            step();
+        }
+    }
 }
 
 /// How a failed creation's clean-up ended, in words.
@@ -229,6 +399,22 @@ impl ThrowawayWorktree {
     /// checks the revision out into that (empty) directory. `None` is a fresh random path, exactly
     /// as [`ThrowawayWorktree::create`]. Everything after the checkout (the owner record, the
     /// outside-link sweep, the removal when the guard drops) is the same.
+    ///
+    /// (0.2.5 A4, F57-7) The claimed directory keeps its identity through the checkout - for a
+    /// given path and a fresh one alike. The system temp directory is opened ONCE; the path is
+    /// built from it and the recorded name ([`reusable_worktree_path`]: the recorded parent must be
+    /// that directory by file identity); the directory is made exclusively through the temp
+    /// directory's handle and opened through it without following it, and that handle is kept
+    /// ([`claim_dir`]: a link or a non-empty directory found there is [`CreateError::Replaced`]).
+    /// After `git worktree add` the path is opened again by its name, without following it, and must
+    /// be that same directory (identity of the two handles) before anything is staged or a reviewer
+    /// starts; the root the run then uses IS that verified directory. A mismatch is
+    /// [`CreateError::Replaced`]: nothing at the path is removed and the registration git made is
+    /// pruned. A failed `git worktree add` removes only the claimed directory - through the temp
+    /// directory's handle, while it is still that directory, and only when empty
+    /// ([`remove_claimed`]). The limit: between the exclusive create and the open there is no handle
+    /// yet, so an EMPTY real directory swapped in at that instant cannot be told from the one made
+    /// (it holds nothing to lose; one with content, or a link, is refused).
     pub fn create_at(
         repo: &Path,
         rev: &str,
@@ -264,64 +450,64 @@ impl ThrowawayWorktree {
         let main_dirty = !git_capture(repo, &["--no-optional-locks", "status", "--porcelain"])
             .map_err(CreateError::Failed)?
             .is_empty();
-        let (path, claimed) = match at {
+        // (0.2.5 A4, F57-7) the temp directory, opened ONCE: the path is built from it and the
+        // directory claimed through it
+        let temp = open_temp_dir().map_err(CreateError::Failed)?;
+        let (path, given) = match at {
             None => {
                 let run_id = uuid::Uuid::new_v4().simple().to_string();
                 (
-                    std::env::temp_dir().join(format!("{THROWAWAY_WORKTREE_PREFIX}{run_id}")),
+                    temp.path()
+                        .join(format!("{THROWAWAY_WORKTREE_PREFIX}{run_id}")),
                     false,
                 )
             }
             Some(given) => {
-                let p = reusable_worktree_path(&given.to_string_lossy()).map_err(|why| {
+                let p = reusable_under(&given.to_string_lossy(), &temp).map_err(|why| {
                     CreateError::Failed(format!(
                         "the worktree path {} cannot be reused: {why}",
                         given.display()
                     ))
                 })?;
-                // (D7) the path is CLAIMED by making its directory exclusively: whatever already
-                // exists there (a directory, a file, a link - dangling or not) is not ours and is
-                // left exactly as it is
-                match std::fs::create_dir(&p) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                        return Err(CreateError::Occupied(p));
-                    }
-                    Err(e) => {
-                        return Err(CreateError::Failed(format!(
-                            "its directory {} could not be made ({e})",
-                            p.display()
-                        )));
-                    }
-                }
                 (p, true)
             }
         };
+        let name = path
+            .file_name()
+            .map(OsStr::to_os_string)
+            .ok_or_else(|| CreateError::Failed(format!("{} has no name", path.display())))?;
+        // (D7) the path is CLAIMED by making its directory exclusively: whatever already exists
+        // there (a directory, a file, a link - dangling or not) is not ours and is left exactly as
+        // it is; (A4) the claimed directory is kept by its handle from here on
+        let claim = claim_dir(&temp, &name, &path, given)?;
         let path_s = path.to_string_lossy().to_string();
+        interleave("worktree-add");
         if let Err(e) = git_capture(repo, &["worktree", "add", "--detach", &path_s, &sha]) {
             // (D7) the empty directory this call made - and only it - is removed again
-            let left = match claimed.then(|| std::fs::remove_dir(&path)) {
-                Some(Err(re)) if re.kind() != std::io::ErrorKind::NotFound => format!(
-                    "; the directory {} made for it was left in place ({re})",
-                    path.display()
-                ),
-                _ => String::new(),
-            };
+            let left = remove_claimed(&temp, &name, &path, claim);
             return Err(CreateError::Failed(format!("{e}{left}")));
         }
+        interleave("worktree-checkout");
         // (0.2.5 D4) The worktree's directory is opened once, WITHOUT following it, and verified on
         // that handle: everything C3 does in it from here on is relative to this handle.
+        // (0.2.5 A4, F57-7) It must be the directory that was claimed: the identity of a fresh
+        // no-follow open by the name against the kept handle, before anything is staged or any
+        // reviewer starts. Anything else at the path is not this run's: nothing there is removed,
+        // the registration git made is pruned, the run is refused.
         let root = match Root::open(&path) {
-            Ok(r) => r,
-            Err(e) => {
-                let removal = removal_words(remove_worktree_dir(repo, &path, None, &REAL_REMOVAL));
-                return Err(CreateError::Failed(format!(
-                    "its directory {} {}; {removal}",
-                    path.display(),
-                    e.words()
-                )));
+            Ok(r) if claim.is(r.dir()) => r,
+            found => {
+                let why = match found {
+                    Ok(_) => "another directory sits there".to_string(),
+                    Err(e) => format!("the path {}", e.words()),
+                };
+                drop(claim);
+                let _ = git_capture(repo, &["worktree", "prune"]);
+                return Err(CreateError::Replaced(path, why));
             }
         };
+        drop(claim);
+        drop(temp);
         // Name this process as its owner (in the worktree's git admin directory, not its files), so
         // `c3 branches` / `c3 doctor` can tell a crashed run's leftover from a live run's worktree.
         // (0.2.5 R2, F13-8) Not best effort: a worktree whose record cannot be written could not be
@@ -1292,9 +1478,14 @@ pub fn uncommitted_paths_outside(repo: &Path, skip_dir: Option<&str>) -> Uncommi
 
 /// (F11-5) A path as prompt DATA: shown between backticks only when it holds no backtick, no
 /// control character and no line break (such a name could close the code span or start a new
-/// instruction line); `None` when it must be counted instead.
+/// instruction line) and - (0.2.5 A4, F57-8) - no Unicode format character
+/// ([`crate::unicode::is_format_char`]: a bidi override or an invisible character could reorder or
+/// hide what the name shows); `None` when it must be counted instead.
 fn prompt_safe_path(p: &str) -> Option<String> {
-    if p.is_empty() || p.chars().any(|c| c == '`' || c.is_control()) {
+    if p.is_empty()
+        || p.chars()
+            .any(|c| c == '`' || c.is_control() || crate::unicode::is_format_char(c))
+    {
         None
     } else {
         Some(format!("`{p}`"))
@@ -2561,21 +2752,31 @@ mod tests {
         assert!(l.ends_with(
             "The brief `.collab/t/h/01.md` was copied into your worktree at that path."
         ));
-        // names with a backtick, a line break or a control character are counted, not shown
+        // names with a backtick, a line break, a control character or (0.2.5 A4, F57-8) a Unicode
+        // format character (here U+202E, the right-to-left override) are counted, not shown
         let odd = Uncommitted {
             tracked: vec![
                 "ok.rs".into(),
                 "a`b.rs".into(),
                 "line\nbreak.rs".into(),
                 "tab\tx.rs".into(),
+                "invoice\u{202E}txt.exe".into(),
             ],
             new_paths: 0,
         };
         let l = isolation_prompt_line("abc", &odd, "");
-        assert!(l.contains(": `ok.rs` (+3 more)."), "{l}");
+        assert!(
+            l.contains("5 tracked path(s) had uncommitted changes"),
+            "{l}"
+        );
+        assert!(l.contains(": `ok.rs` (+4 more)."), "{l}");
         assert!(
             !l.contains("a`b") && !l.contains("break.rs") && !l.contains("tab"),
             "{l}"
+        );
+        assert!(
+            !l.contains('\u{202E}') && !l.contains("invoice") && !l.contains("txt.exe"),
+            "the name with the override is counted, none of its bytes shown: {l:?}"
         );
         // from a live repo (the reviewer's Verify): a modified tracked file is named, a
         // confidential untracked file is only counted.
@@ -2667,9 +2868,10 @@ mod tests {
     }
 
     // (0.2.5 D7) The shape rule of a reusable worktree path: exactly C3's own shape - directly under
-    // the system temp directory (compared canonically), the prefix and 32 lower-case hex digits, an
-    // absolute path without `.` / `..` - is taken as recorded; a path outside temp, a wrong prefix, a
-    // wrong length, upper-case hex, a relative path or one with `..` is refused, each saying why.
+    // the system temp directory, the prefix and 32 lower-case hex digits, an absolute path without
+    // `.` / `..` - is reusable; a path outside temp, a wrong prefix, a wrong length, upper-case hex,
+    // a relative path or one with `..` is refused, each saying why. (0.2.5 A4, F57-7) The path is
+    // the temp directory joined with the recorded name.
     #[test]
     fn a_reusable_worktree_path_has_exactly_c3s_shape() {
         let ok = c3_shaped_path();
@@ -2714,6 +2916,147 @@ mod tests {
         assert!(why.contains("`..`"), "{why}");
         assert!(reusable_worktree_path("").is_err());
         let _ = std::fs::remove_dir_all(base.parent().unwrap());
+    }
+
+    // (0.2.5 A4, F57-7) THE PARENT-IDENTITY RULE: "directly under the temp directory" is the file
+    // identity of the two opened directories, never path text. A directory that merely LOOKS like
+    // temp (another directory with temp's own name) is not reused; a recorded parent that reaches
+    // the temp directory by another spelling (an alias link to it) is the temp directory, and the
+    // path the worktree is made at is BUILT from the temp directory and the name - never the
+    // recorded spelling. On Unix a literal backslash stays part of a name: a directory named `a\b`
+    // is not `a/b` (no separator rewriting).
+    #[test]
+    fn a_reusable_path_is_built_from_the_temp_directory_by_identity() {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let name = format!("{THROWAWAY_WORKTREE_PREFIX}{id}");
+        let temp = std::env::temp_dir();
+        let base = temp.join(format!("c3-wt-parent-id-{}", uuid::Uuid::new_v4().simple()));
+        // a look-alike: a directory with the temp directory's own name, somewhere else
+        let look = base.join(temp.file_name().unwrap());
+        std::fs::create_dir_all(&look).unwrap();
+        let why = reusable_worktree_path(&look.join(&name).to_string_lossy()).unwrap_err();
+        assert!(
+            why.contains("not directly under the system temp directory"),
+            "{why}"
+        );
+        // an alias of the temp directory: the same directory, so reusable - at the BUILT path
+        let alias = base.join("alias-of-temp");
+        contain::tests::junction_or_symlink(&alias, &temp);
+        let built = reusable_worktree_path(&alias.join(&name).to_string_lossy()).unwrap();
+        assert_eq!(built, temp.join(&name), "built from the temp directory");
+        assert!(!built.starts_with(&alias), "{}", built.display());
+        // the decision is made against the temp directory's handle (a stand-in temp here)
+        let fake_temp_dir = base.join("a").join("b");
+        std::fs::create_dir_all(&fake_temp_dir).unwrap();
+        let fake_temp = Root::open_anchor(&fake_temp_dir).unwrap();
+        assert_eq!(
+            reusable_under(&fake_temp_dir.join(&name).to_string_lossy(), &fake_temp),
+            Ok(fake_temp_dir.join(&name))
+        );
+        assert!(reusable_under(&temp.join(&name).to_string_lossy(), &fake_temp).is_err());
+        #[cfg(unix)]
+        {
+            // `a\b` is ONE directory name on Unix, not the path `a/b`
+            let decoy = base.join("a\\b");
+            std::fs::create_dir_all(&decoy).unwrap();
+            let why = reusable_under(&decoy.join(&name).to_string_lossy(), &fake_temp).unwrap_err();
+            assert!(
+                why.contains("not directly under the system temp directory"),
+                "{why}"
+            );
+        }
+        crate::contain::remove_link(
+            &cap_std::fs::Dir::open_ambient_dir(&base, cap_std::ambient_authority()).unwrap(),
+            OsStr::new("alias-of-temp"),
+            true,
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (0.2.5 A4, F57-7) THE CLAIM RACE (the reviewer's Verify): the directory claimed for a resumed
+    // worktree is replaced by another directory WITH CONTENT at a point between the claim and the
+    // check - right after the exclusive create (`worktree-claim`), before `git worktree add`
+    // (`worktree-add`) and after it (`worktree-checkout`). Wherever the swap happens the resume is
+    // refused (or fails) before anything is staged, the replacement directory is preserved with its
+    // content, nothing is staged into it, and git keeps no registration at the path. Where the
+    // system refuses the swap (Windows, while C3 holds the claimed directory's handle - from the
+    // claim on) the worktree is the claimed directory and is used and removed as usual.
+    #[test]
+    fn a_claimed_worktree_directory_replaced_before_the_check_refuses_and_is_kept() {
+        for point in ["worktree-claim", "worktree-add", "worktree-checkout"] {
+            let repo = brief_repo("claim-race");
+            let at = c3_shaped_path();
+            let name = at.file_name().unwrap().to_string_lossy().to_string();
+            let aside = at.with_file_name(format!("{name}.aside"));
+            let swapped = std::rc::Rc::new(std::cell::Cell::new(false));
+            let step = {
+                let (at, aside, swapped) = (at.clone(), aside.clone(), swapped.clone());
+                move || {
+                    if std::fs::rename(&at, &aside).is_ok() {
+                        std::fs::create_dir(&at).unwrap();
+                        std::fs::write(at.join("keep.txt"), "not the run's\n").unwrap();
+                        swapped.set(true);
+                    }
+                }
+            };
+            let guard = interleave_hook::at(point, step);
+            let made = ThrowawayWorktree::create_at(&repo, "HEAD", Some(&at));
+            drop(guard);
+            if point == "worktree-claim" {
+                assert!(swapped.get(), "{point}: no handle is held before the open");
+            } else if cfg!(windows) {
+                assert!(
+                    !swapped.get(),
+                    "{point}: the claimed directory's handle is held, so it cannot be renamed"
+                );
+            }
+            if swapped.get() {
+                match &made {
+                    Err(CreateError::Replaced(p, why)) => {
+                        assert_eq!(p, &at, "{point}");
+                        assert!(point != "worktree-add" && !why.is_empty(), "{point}: {why}");
+                    }
+                    Err(CreateError::Failed(why)) => {
+                        assert_eq!(point, "worktree-add", "{why}");
+                        assert!(
+                            why.contains("no longer names the directory made for it")
+                                && why.contains("nothing there was removed"),
+                            "{point}: {why}"
+                        );
+                    }
+                    Err(e) => panic!("{point}: unexpected {e:?}"),
+                    Ok(wt) => panic!(
+                        "{point}: a replaced directory was used: {}",
+                        wt.path().display()
+                    ),
+                }
+                drop(made);
+                assert_eq!(
+                    tree_names(&at),
+                    vec!["keep.txt".to_string()],
+                    "{point}: the replacement is untouched, nothing staged into it"
+                );
+                assert_eq!(
+                    std::fs::read_to_string(at.join("keep.txt")).unwrap(),
+                    "not the run's\n",
+                    "{point}"
+                );
+                let list = git_capture(&repo, &["worktree", "list", "--porcelain"]).unwrap();
+                assert!(!list.contains(&name), "{point}: {list}");
+                std::fs::remove_dir_all(&at).unwrap();
+                let _ = std::fs::remove_dir_all(&aside);
+            } else {
+                let wt = made.unwrap_or_else(|e| panic!("{point}: {e:?}"));
+                assert_eq!(wt.path(), at.as_path(), "{point}");
+                assert!(at.join("committed.md").is_file(), "{point}");
+                assert!(!aside.exists(), "{point}");
+                drop(wt);
+                assert!(std::fs::symlink_metadata(&at).is_err(), "{point}: removed");
+            }
+            let _ = git_capture(&repo, &["worktree", "prune"]);
+            let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+        }
     }
 
     // (0.2.5 D7) `create_at` makes the worktree exactly at a free C3-shaped path (and the path can

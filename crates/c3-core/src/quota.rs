@@ -852,10 +852,17 @@ pub struct SubagentSurface {
     /// Every `multi_agent_version` its `session_meta` and `turn_context` lines name (deduplicated,
     /// first seen first). `disabled` is the only value of a thread whose sub-agents are off.
     pub versions: Vec<String>,
-    /// How many tool lists (`response_item` / `additional_tools`) it holds.
+    /// How many tool lists (`response_item` / `additional_tools`) it holds that were read in full
+    /// ([`ToolInventory::Complete`]). (F57-2) A list C3 could not read in full is not counted: it
+    /// is in [`SubagentSurface::unreadable`].
     pub tool_lists: usize,
     /// The multi-agent tools those lists offer (deduplicated).
     pub offered: Vec<String>,
+    /// (F57-2) Why each tool list C3 could not read in full ([`ToolInventory::Unproven`]) was not
+    /// understood, in file order: its line, the turn it was recorded in, and the entry's position
+    /// and kind or key - never its content. Such a list is no evidence, and a multi-agent tool may
+    /// hide in it, so the switch is unproven while this is not empty.
+    pub unreadable: Vec<String>,
     /// The multi-agent tools the thread called (deduplicated).
     pub called: Vec<String>,
     /// (F11-8) The `id` of the rollout's first `session_meta` (`""` when it names none): the
@@ -887,12 +894,25 @@ pub struct TurnEvidence {
     /// Its `task_complete` was seen.
     pub complete: bool,
     /// Recognized switch evidence inside its own boundaries: a `turn_context` naming a
-    /// `multi_agent_version`, or an `additional_tools` list with its `tools` array.
+    /// `multi_agent_version`, or (F57-2) an `additional_tools` list read in full
+    /// ([`ToolInventory::Complete`]).
     pub evidence: bool,
+    /// (F57-2) How many tool lists inside its own boundaries C3 could not read in full
+    /// ([`ToolInventory::Unproven`]): the turn proves nothing then, whatever else it records.
+    pub unreadable: usize,
+}
+
+impl TurnEvidence {
+    /// (F57-2) The turn proves the switch: it recorded evidence of its own and every tool list in
+    /// it was read in full.
+    pub fn proven(&self) -> bool {
+        self.evidence && self.unreadable == 0
+    }
 }
 
 impl SubagentSurface {
-    /// Whether the rollout tells anything about the switch: a `multi_agent_version` or a tool list.
+    /// Whether the rollout tells anything about the switch: a `multi_agent_version` or a tool list
+    /// read in full.
     pub fn has_evidence(&self) -> bool {
         !self.versions.is_empty() || self.tool_lists > 0
     }
@@ -936,27 +956,183 @@ fn is_multi_agent_tool(namespace: &str, name: &str) -> bool {
     !name.is_empty() && (namespace == MULTI_AGENT_NAMESPACE || MULTI_AGENT_TOOLS.contains(&base))
 }
 
-/// Walk one `additional_tools` entry (`{type:namespace, name, tools:[...]}` nests; a tool is
-/// `{type, name}` or the chat form `{type:function, function:{name}}`).
-fn collect_multi_agent_tools(node: &Value, namespace: &str, out: &mut Vec<String>) {
-    let name = node
-        .get("name")
-        .or_else(|| node.pointer("/function/name"))
-        .and_then(|n| n.as_str())
-        .unwrap_or("");
-    if node.get("type").and_then(|t| t.as_str()) == Some("namespace") {
-        for t in node
-            .get("tools")
-            .and_then(|t| t.as_array())
-            .into_iter()
-            .flatten()
-        {
-            collect_multi_agent_tools(t, name, out);
-        }
-        return;
+/// (F57-2) What one tool inventory - the `tools` value of an `additional_tools` record - says about
+/// the sub-agent switch ([`tool_inventory`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolInventory {
+    /// Every entry is of a supported shape, so the set of tool names is known, and none is a
+    /// multi-agent tool: the list is switch evidence.
+    Complete,
+    /// A multi-agent tool is offered (the names, deduplicated): a breach, whatever else in the list
+    /// could not be read.
+    Breached(Vec<String>),
+    /// Something in the list could not be interpreted, so a multi-agent tool may hide in it: the
+    /// list is no evidence. The reason names the entry's position and kind or key, never its
+    /// content.
+    Unproven(String),
+}
+
+/// (F57-2) The tool kinds identified by their `type` alone (the Responses API's hosted tools): an
+/// entry of one of them is a known tool without a `name`, and none of them is a multi-agent tool
+/// (outside the [`MULTI_AGENT_NAMESPACE`] namespace, where every tool counts). Any other nameless
+/// tool is not understood.
+const NAMELESS_TOOL_KINDS: [&str; 7] = [
+    "local_shell",
+    "web_search",
+    "web_search_preview",
+    "image_generation",
+    "file_search",
+    "code_interpreter",
+    "computer_use_preview",
+];
+
+/// (F57-2) A JSON value's kind, for a reason (never the value itself).
+fn json_kind(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
     }
-    if is_multi_agent_tool(namespace, name) {
-        push_unique(out, name);
+}
+
+/// (F57-2) An entry's `type`, for a reason: the kind when it is a short identifier, otherwise a
+/// neutral placeholder (a long or odd string is content, not a kind).
+fn kind_label(ty: &str) -> String {
+    let identifier = !ty.is_empty()
+        && ty.len() <= 40
+        && ty
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if identifier {
+        format!("`{ty}`")
+    } else {
+        "an unprintable kind".to_string()
+    }
+}
+
+/// (F57-2) Read one tool inventory: the `tools` value of an `additional_tools` record (`None` when
+/// the record has none). The supported shapes are codex-cli 0.169.0's: an array whose entries are
+/// objects with a string `type` - a `namespace` with a non-empty `name` and a `tools` array (read
+/// the same way, nested), a `function` or `custom` tool with a non-empty `name` (or the chat form's
+/// `function.name`), or a hosted tool identified by its kind alone ([`NAMELESS_TOOL_KINDS`]).
+/// Anything else is not understood - a missing or non-array list, an entry that is not an object,
+/// an entry without a string `type` or of an unknown kind, a tool without a name, a `name` that is
+/// not a string, a namespace without a name or whose inner list is missing or not an array - and the
+/// answer is then [`ToolInventory::Unproven`], unless a multi-agent tool is present elsewhere in the
+/// list: [`ToolInventory::Breached`] wins, a shown surface is a breach whatever else is unreadable.
+/// Only [`ToolInventory::Complete`] is switch evidence.
+pub fn tool_inventory(tools: Option<&Value>) -> ToolInventory {
+    let mut offered: Vec<String> = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
+    match tools {
+        None => problems.push("it has no `tools` field".to_string()),
+        Some(Value::Array(list)) => walk_tool_list(list, "", "", &mut offered, &mut problems),
+        Some(other) => problems.push(format!(
+            "its `tools` field is {}, not an array",
+            json_kind(other)
+        )),
+    }
+    if !offered.is_empty() {
+        return ToolInventory::Breached(offered);
+    }
+    match problems.len() {
+        0 => ToolInventory::Complete,
+        1 => ToolInventory::Unproven(problems.remove(0)),
+        n => ToolInventory::Unproven(format!(
+            "{} (and {} more entr{} C3 cannot read)",
+            problems[0],
+            n - 1,
+            if n == 2 { "y" } else { "ies" }
+        )),
+    }
+}
+
+/// (F57-2) Walk one list of [`tool_inventory`]: `namespace` is the enclosing namespace's name
+/// (`""` at the top), `at` the enclosing entry's position (`"2."` inside the second entry).
+fn walk_tool_list(
+    list: &[Value],
+    namespace: &str,
+    at: &str,
+    offered: &mut Vec<String>,
+    problems: &mut Vec<String>,
+) {
+    for (i, node) in list.iter().enumerate() {
+        let pos = format!("{at}{}", i + 1);
+        let Some(obj) = node.as_object() else {
+            problems.push(format!("entry {pos} is {}, not an object", json_kind(node)));
+            continue;
+        };
+        let ty = match obj.get("type") {
+            Some(Value::String(t)) => t.as_str(),
+            Some(other) => {
+                problems.push(format!(
+                    "entry {pos} has a `type` that is {}, not a string",
+                    json_kind(other)
+                ));
+                continue;
+            }
+            None => {
+                problems.push(format!("entry {pos} has no `type`"));
+                continue;
+            }
+        };
+        let what = if ty == "namespace" {
+            "a namespace".to_string()
+        } else {
+            format!("a {} tool", kind_label(ty))
+        };
+        // the name: `name`, or the chat form's `function.name`
+        let raw_name = obj
+            .get("name")
+            .map(|v| ("name", v))
+            .or_else(|| node.pointer("/function/name").map(|v| ("function.name", v)));
+        let name = match raw_name {
+            Some((_, Value::String(n))) => Some(n.as_str()).filter(|n| !n.is_empty()),
+            None => None,
+            Some((key, other)) => {
+                problems.push(format!(
+                    "entry {pos} ({what}) has a `{key}` that is {}, not a string",
+                    json_kind(other)
+                ));
+                continue;
+            }
+        };
+        match ty {
+            "namespace" => {
+                let Some(ns) = name else {
+                    problems.push(format!("entry {pos} (a namespace) has no name"));
+                    continue;
+                };
+                match obj.get("tools") {
+                    Some(Value::Array(inner)) => {
+                        walk_tool_list(inner, ns, &format!("{pos}."), offered, problems)
+                    }
+                    Some(other) => problems.push(format!(
+                        "entry {pos} (a namespace) holds `tools` as {}, not an array",
+                        json_kind(other)
+                    )),
+                    None => problems.push(format!("entry {pos} (a namespace) has no `tools` list")),
+                }
+            }
+            "function" | "custom" => match name {
+                Some(n) if is_multi_agent_tool(namespace, n) => push_unique(offered, n),
+                Some(_) => {}
+                None => problems.push(format!("entry {pos} ({what}) has no name")),
+            },
+            k if NAMELESS_TOOL_KINDS.contains(&k) => {
+                let label = name.unwrap_or(k);
+                if is_multi_agent_tool(namespace, label) {
+                    push_unique(offered, label);
+                }
+            }
+            other => problems.push(format!(
+                "entry {pos} is of a kind C3 does not know ({})",
+                kind_label(other)
+            )),
+        }
     }
 }
 
@@ -969,7 +1145,10 @@ fn collect_multi_agent_tools(node: &Value, namespace: &str, out: &mut Vec<String
 /// `found: false`. (0.2.5 D3, F32-2) The evidence is also bound to the turn it was recorded in -
 /// the `task_started` / `task_complete` pair around it ([`SubagentSurface::turns`]) - so a check can
 /// ask for each turn's own evidence; boundaries that do not pair up are counted
-/// ([`SubagentSurface::boundary_errors`]).
+/// ([`SubagentSurface::boundary_errors`]). (F57-2) Each tool list is read by [`tool_inventory`]:
+/// only a list read in full is evidence for its turn, its multi-agent tools are offered whatever
+/// else it holds, and a list C3 cannot read in full is named in [`SubagentSurface::unreadable`] and
+/// counted against its turn ([`TurnEvidence::unreadable`]).
 pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
     let mut s = SubagentSurface::default();
     if path.as_os_str().is_empty() || !path.is_file() {
@@ -983,7 +1162,7 @@ pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
             return s;
         }
     };
-    for line in text.lines() {
+    for (i, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
@@ -1040,16 +1219,31 @@ pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
             continue;
         }
         match p.get("type").and_then(|t| t.as_str()).unwrap_or("") {
-            // (F11-8) a tool list counts as evidence only once its `tools` array is there
-            "additional_tools" => {
-                if let Some(tools) = p.get("tools").and_then(|t| t.as_array()) {
+            // (F11-8, F57-2) a tool list counts as evidence only when every entry of it was read
+            // (COMPLETE); one C3 cannot read in full is no evidence and makes its turn unproven
+            "additional_tools" => match tool_inventory(p.get("tools")) {
+                ToolInventory::Complete => {
                     s.tool_lists += 1;
                     mark_turn(&mut s);
-                    for t in tools {
-                        collect_multi_agent_tools(t, "", &mut s.offered);
+                }
+                ToolInventory::Breached(names) => {
+                    for n in &names {
+                        push_unique(&mut s.offered, n);
                     }
                 }
-            }
+                ToolInventory::Unproven(why) => {
+                    let n = s.turns.len();
+                    let turn = match s.turns.last_mut().filter(|t| !t.complete) {
+                        Some(t) => {
+                            t.unreadable += 1;
+                            format!("turn {n}")
+                        }
+                        None => "outside any turn".to_string(),
+                    };
+                    s.unreadable
+                        .push(format!("the tool list at line {} ({turn}): {why}", i + 1));
+                }
+            },
             "function_call" | "custom_tool_call" => {
                 let name = p.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 let ns = p.get("namespace").and_then(|n| n.as_str()).unwrap_or("");
@@ -4193,6 +4387,13 @@ mod tests {
             std::fs::write(&p, format!("{text}{sep}")).unwrap();
             let s = rollout_subagent_surface(&p);
             assert_eq!(s.tool_lists, 0, "{s:?}");
+            // (F57-2) ... and it is named as a list C3 could not read, against its turn
+            assert_eq!(
+                s.unreadable,
+                vec!["the tool list at line 3 (turn 1): it has no `tools` field".to_string()],
+                "{s:?}"
+            );
+            assert_eq!(s.turns[0].unreadable, 1, "{s:?}");
             assert_eq!(s.malformed, 1, "{s:?}");
             assert_eq!(s.terminals, 1, "{s:?}");
             assert_eq!(s.versions, vec!["disabled".to_string()]);
@@ -4243,6 +4444,7 @@ mod tests {
         let full = |c: bool, e: bool| TurnEvidence {
             complete: c,
             evidence: e,
+            unreadable: 0,
         };
         // turn 1 by its turn_context, turn 2 by its tool list
         let s = turns(&[&meta, &started, &tc, &complete, &started, &tools, &complete]);
@@ -4261,6 +4463,149 @@ mod tests {
         let s = turns(&[&meta, &started, &started, &tc, &complete]);
         assert_eq!(s.boundary_errors, 1, "{s:?}");
         assert_eq!(s.turns, vec![full(false, false), full(true, true)], "{s:?}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// (F57-2) A tool inventory is COMPLETE only when every entry is of a supported shape; a
+    /// multi-agent tool makes it BREACHED whatever else is unreadable; anything it cannot interpret
+    /// makes it UNPROVEN, and the reason names the entry's position and kind or key, never its
+    /// content.
+    #[test]
+    fn a_tool_inventory_is_complete_breached_or_unproven() {
+        let inv = |j: &str| tool_inventory(Some(&serde_json::from_str::<Value>(j).unwrap()));
+        let unproven = |j: &str| match inv(j) {
+            ToolInventory::Unproven(why) => why,
+            other => panic!("expected unproven for {j}, got {other:?}"),
+        };
+        // complete: namespaces of named tools, the chat form, a hosted tool known by its kind, an
+        // empty list
+        assert_eq!(
+            inv(
+                r#"[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"},{"type":"function","name":"wait"}]},{"type":"function","function":{"name":"read_page"}},{"type":"web_search"}]"#
+            ),
+            ToolInventory::Complete
+        );
+        assert_eq!(inv("[]"), ToolInventory::Complete);
+        // unproven: the reviewer's shape - a namespace whose `tools` is an OBJECT
+        assert_eq!(
+            unproven(
+                r#"[{"type":"namespace","name":"functions","tools":{"type":"function","name":"spawn_agent"}}]"#
+            ),
+            "entry 1 (a namespace) holds `tools` as an object, not an array"
+        );
+        // a nameless tool (nested), a namespace without a name or without a list, an entry that is
+        // not an object, an entry without a type, an unknown kind, a name that is not a string
+        assert_eq!(
+            unproven(
+                r#"[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"wait"},{"type":"function","description":"secret words"}]}]"#
+            ),
+            "entry 1.2 (a `function` tool) has no name"
+        );
+        assert_eq!(
+            unproven(r#"[{"type":"namespace","tools":[]}]"#),
+            "entry 1 (a namespace) has no name"
+        );
+        assert_eq!(
+            unproven(r#"[{"type":"namespace","name":"clock"}]"#),
+            "entry 1 (a namespace) has no `tools` list"
+        );
+        assert_eq!(
+            unproven(r#"["spawn_agent"]"#),
+            "entry 1 is a string, not an object"
+        );
+        assert_eq!(unproven(r#"[{"name":"exec"}]"#), "entry 1 has no `type`");
+        assert_eq!(
+            unproven(r#"[{"type":"agent_pool","name":"x"}]"#),
+            "entry 1 is of a kind C3 does not know (`agent_pool`)"
+        );
+        assert_eq!(
+            unproven(r#"[{"type":"some kind with spaces and content"}]"#),
+            "entry 1 is of a kind C3 does not know (an unprintable kind)"
+        );
+        assert_eq!(
+            unproven(r#"[{"type":"function","name":{"text":"spawn_agent"}}]"#),
+            "entry 1 (a `function` tool) has a `name` that is an object, not a string"
+        );
+        assert_eq!(
+            unproven(r#"[{"type":"function"},{"type":"custom"},7]"#),
+            "entry 1 (a `function` tool) has no name (and 2 more entries C3 cannot read)"
+        );
+        // the list itself missing or not an array
+        assert_eq!(
+            tool_inventory(None),
+            ToolInventory::Unproven("it has no `tools` field".to_string())
+        );
+        assert_eq!(
+            unproven(r#"{"tools":[]}"#),
+            "its `tools` field is an object, not an array"
+        );
+        // breached: a multi-agent tool beside an unreadable entry is still a breach
+        assert_eq!(
+            inv(
+                r#"[{"type":"namespace","name":"functions","tools":{}},{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent"}]},{"type":"function"}]"#
+            ),
+            ToolInventory::Breached(vec!["spawn_agent".to_string()])
+        );
+    }
+
+    /// (F57-2) In a rollout, a tool list C3 cannot read in full grants its turn no evidence, is
+    /// counted against that turn and named with its line; a `turn_context` beside it does not make
+    /// that turn proven; a complete list still proves its turn.
+    #[test]
+    fn an_unreadable_tool_list_leaves_its_turn_unproven() {
+        let home = scratch("surface-unreadable");
+        let now = Utc::now();
+        let id = v7(now, 28);
+        let at = stamp(now);
+        let meta = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"multi_agent_version\":\"disabled\"}}}}"
+        );
+        let tc = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"turn_context\",\"payload\":{{\"turn_id\":\"t\",\"multi_agent_version\":\"disabled\"}}}}"
+        );
+        let good = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"additional_tools\",\"tools\":[{{\"type\":\"namespace\",\"name\":\"functions\",\"tools\":[{{\"type\":\"function\",\"name\":\"wait\"}}]}}]}}}}"
+        );
+        let opaque = format!(
+            "{{\"timestamp\":\"{at}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"additional_tools\",\"tools\":[{{\"type\":\"namespace\",\"name\":\"functions\",\"tools\":{{\"exec\":{{}}}}}}]}}}}"
+        );
+        let started = event_line(now, "task_started");
+        let complete = event_line(now, "task_complete");
+        let lines: Vec<String> = [
+            &meta, &started, &good, &complete, &started, &opaque, &complete, &started, &tc,
+            &opaque, &complete,
+        ]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
+        let p = write_rollout(&home, &id, &lines, now);
+        let s = rollout_subagent_surface(&p);
+        assert_eq!(s.tool_lists, 1, "{s:?}");
+        assert_eq!(s.breach(), None, "{s:?}");
+        assert_eq!(
+            s.turns.iter().map(|t| t.proven()).collect::<Vec<_>>(),
+            vec![true, false, false],
+            "{s:?}"
+        );
+        assert_eq!(
+            (s.turns[1].evidence, s.turns[1].unreadable),
+            (false, 1),
+            "{s:?}"
+        );
+        assert_eq!(
+            (s.turns[2].evidence, s.turns[2].unreadable),
+            (true, 1),
+            "the turn_context beside it does not prove the turn: {s:?}"
+        );
+        assert_eq!(
+            s.unreadable,
+            vec![
+                "the tool list at line 6 (turn 2): entry 1 (a namespace) holds `tools` as an object, not an array".to_string(),
+                "the tool list at line 10 (turn 3): entry 1 (a namespace) holds `tools` as an object, not an array".to_string(),
+            ],
+            "{s:?}"
+        );
+        assert!(!s.unreadable.iter().any(|w| w.contains("exec")), "{s:?}");
         let _ = std::fs::remove_dir_all(&home);
     }
 

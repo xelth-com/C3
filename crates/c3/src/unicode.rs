@@ -1,7 +1,8 @@
 //! (0.2.5 D5) The Unicode character classes C3 keeps out of what it shows: ONE table of the format
 //! characters (general category Cf), used wherever a name is shown only when it is plain text - the
-//! untracked files a `--diff` patch carries or leaves out (`consult::reviewed`) and the branch name
-//! of the red-CI line (`ci_check`).
+//! untracked files a `--diff` patch carries or leaves out (`consult::reviewed`), the branch name
+//! of the red-CI line (`ci_check`) and (0.2.5 A4, F57-8) the tracked names the isolation prompt
+//! lists (`engines::worktree`).
 
 /// Whether `c` is a Unicode format character (general category Cf, Unicode 16.0): a bidi override
 /// or isolate, a zero-width character, a soft hyphen, an invisible operator, a tag character... - it

@@ -400,6 +400,153 @@ fn the_move_lock_is_exclusive_and_a_dead_owners_lock_is_taken_over() {
     let _ = std::fs::remove_dir_all(&r);
 }
 
+// (0.2.5, acceptance F57-4 / RC3) A creator of the move lock paused right after its exclusive
+// create - inside the gate now - for longer than the garbage interval, while a second acquirer runs
+// with that interval shortened to nothing: the creator's still-empty file is never taken over, at
+// most one of them ever holds the lock (each holds it until the creator was released, so two owners
+// would overlap), and the paused creator completes as the owner; the second gets the lock only once
+// the creator released it.
+#[test]
+fn a_lock_creator_paused_after_its_exclusive_create_is_never_a_second_owner() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let r = scratch("lock-create");
+    std::fs::create_dir_all(r.join(".git")).unwrap();
+    let p = lock_path(&r);
+    let release = r.with_extension("release");
+    let mut held = release.clone().into_os_string();
+    held.push(".held");
+    let held = PathBuf::from(held);
+    let inside = Arc::new(AtomicUsize::new(0));
+    let most = Arc::new(AtomicUsize::new(0));
+    // the protected section: count who is in it; stay until the creator was released
+    let section = {
+        let (inside, most, release) = (inside.clone(), most.clone(), release.clone());
+        move || {
+            let n = inside.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(n, Ordering::SeqCst);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !release.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            std::thread::sleep(Duration::from_millis(700));
+            inside.fetch_sub(1, Ordering::SeqCst);
+        }
+    };
+    let (r1, rel1, s1) = (r.clone(), release.clone(), section.clone());
+    let creator = std::thread::spawn(move || {
+        let _h =
+            c3_core::test_hooks::set_thread_hook(LOCK_CREATE_HOLD_HOOK, &rel1.to_string_lossy());
+        let got = MoveLock::acquire_within(&r1, "paused creator", Duration::from_secs(30));
+        if got.is_ok() {
+            s1();
+        }
+        got.map(|l| l.token.clone())
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !held.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        held.exists(),
+        "the creator never reached its exclusive create"
+    );
+    // the creator's file is there, still empty, and grows older than the garbage interval
+    assert_eq!(std::fs::read(&p).unwrap().len(), 0);
+    std::thread::sleep(Duration::from_millis(1500));
+    let (r2, s2) = (r.clone(), section.clone());
+    let second = std::thread::spawn(move || {
+        let _h = c3_core::test_hooks::set_thread_hook(LOCK_GARBAGE_HOOK, "0");
+        let got = MoveLock::acquire_within(&r2, "second", Duration::from_secs(20));
+        if got.is_ok() {
+            s2();
+        }
+        got.map(|l| l.token.clone())
+    });
+    // the second acquirer tries meanwhile: the creator's empty file stays, nobody holds the lock
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(
+        std::fs::read(&p).unwrap().len(),
+        0,
+        "the creator's empty file was taken over"
+    );
+    assert_eq!(
+        inside.load(Ordering::SeqCst),
+        0,
+        "an owner while the creator is paused"
+    );
+    std::fs::write(&release, "go").unwrap();
+    let first = creator.join().unwrap();
+    let second = second.join().unwrap();
+    assert!(first.is_ok(), "the paused creator is the owner: {first:?}");
+    assert!(
+        second.is_ok(),
+        "the second gets the lock after it: {second:?}"
+    );
+    assert_ne!(first, second);
+    assert_eq!(most.load(Ordering::SeqCst), 1, "never two owners at once");
+    assert!(!p.exists(), "both released");
+    let _ = std::fs::remove_file(&release);
+    let _ = std::fs::remove_file(&held);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+// (0.2.5, acceptance answer 2) Beside a real `.eck/` a fresh `.c3/` is created only under the move
+// lock - by every writer, whatever the migration switch: while another process holds the lock no
+// writer creates it (a writer's directory and a run start refuse, the cache move leaves its
+// entries, `ensure` goes on in `.eck/` and says so - its switch-off twin is the c3-cli test
+// `a_writer_with_the_switch_off_never_splits_a_move`); with the lock free it is created, fresh and
+// marked. Without a `.eck/` no lock is needed.
+#[test]
+fn a_fresh_folder_beside_the_old_one_is_created_only_under_the_move_lock() {
+    let r = scratch("create-locked");
+    std::fs::create_dir_all(r.join(".git")).unwrap();
+    seed_eck(&r);
+    let collab = r.join(".collab");
+    std::fs::create_dir_all(collab.join(STATE_DIR)).unwrap();
+    std::fs::write(collab.join(STATE_DIR).join("index-entry"), "x\n").unwrap();
+    let held = MoveLock::acquire_within(&r, "test", Duration::from_millis(0)).unwrap();
+    {
+        let _h = c3_core::test_hooks::set_thread_hook(LOCK_WAIT_HOOK, "100");
+        let root = Root::open_anchor(&r).unwrap();
+        assert!(matches!(state_folder(&r, &root), Err(FolderError::Held(_))));
+        let err = prepare_dir(&r, &path(&r).join("explains")).unwrap_err();
+        assert!(err.contains(".c3/ could not be created now"), "{err}");
+        let err = begin_run(&r, &path(&r).join("collab"), "t", &["handoffs"]).unwrap_err();
+        assert!(
+            err.contains(".c3/ could not be created now") && err.contains("nothing was started"),
+            "{err}"
+        );
+        let notes = migrate_collab_cache(&r, &collab);
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("not moved: .c3/ could not be created now")),
+            "{notes:?}"
+        );
+        assert!(
+            std::fs::symlink_metadata(path(&r)).is_err(),
+            "no writer created .c3/ while the lock was held"
+        );
+    }
+    drop(held);
+    let root = Root::open_anchor(&r).unwrap();
+    let (_d, fresh) = state_folder(&r, &root)
+        .map_err(|e| format!("{e:?}"))
+        .unwrap();
+    assert!(fresh && is_finished(&path(&r)), "fresh and marked");
+    assert!(real_dir(&legacy_path(&r)), ".eck/ is left as it is");
+    // no `.eck/`: no lock is needed
+    let r2 = scratch("create-free");
+    std::fs::create_dir_all(r2.join(".git")).unwrap();
+    let held = MoveLock::acquire_within(&r2, "test", Duration::from_millis(0)).unwrap();
+    let root = Root::open_anchor(&r2).unwrap();
+    assert!(state_folder(&r2, &root).is_ok_and(|(_, fresh)| fresh));
+    drop(held);
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&r2);
+}
+
 // (F36-1) A writer that waits for the lock while another process moves the folder reads the state
 // again once it has it: `.c3/` there, `.eck/` gone - it uses `.c3/` and creates no second folder.
 #[test]
@@ -436,7 +583,7 @@ fn a_run_start_and_a_move_never_interleave() {
     let collab = legacy_path(&r).join("collab");
     let held = MoveLock::acquire_within(&r, "test", Duration::from_millis(0)).unwrap();
     let (r2, c2) = (r.clone(), collab.clone());
-    let run = std::thread::spawn(move || begin_run(&r2, &c2).map(|_| ()));
+    let run = std::thread::spawn(move || begin_run(&r2, &c2, "t", &["handoffs"]).map(|_| ()));
     std::thread::sleep(Duration::from_millis(300));
     std::fs::rename(legacy_path(&r), path(&r)).unwrap();
     drop(held);
@@ -449,7 +596,7 @@ fn a_run_start_and_a_move_never_interleave() {
     let r = scratch("runstart2");
     seed_eck(&r);
     let collab = legacy_path(&r).join("collab");
-    let start = begin_run(&r, &collab).unwrap();
+    let start = begin_run(&r, &collab, "t", &["handoffs"]).unwrap();
     assert!(start._lock.is_some(), "a start under .eck/ takes the lock");
     let r2 = r.clone();
     let mover = std::thread::spawn(move || migrate_legacy(&r2));
@@ -462,7 +609,10 @@ fn a_run_start_and_a_move_never_interleave() {
     let m = mover.join().unwrap();
     assert!(m.moved, "{:?}", m.notes);
     // a start outside the legacy folder takes nothing
-    assert!(begin_run(&r, &r.join(".collab")).unwrap()._lock.is_none());
+    assert!(begin_run(&r, &r.join(".collab"), "t", &["handoffs"])
+        .unwrap()
+        ._lock
+        .is_none());
     let _ = std::fs::remove_dir_all(&r);
 }
 
@@ -670,14 +820,14 @@ fn a_collab_directory_under_a_linked_folder_refuses_the_run_and_creates_nothing(
     }
     let resolved = crate::providers::resolve_collab_root(&r, ".c3/collab");
     for given in [r.join(".c3").join("collab"), resolved] {
-        let err = begin_run(&r, &given).unwrap_err();
+        let err = begin_run(&r, &given, "t", &["handoffs"]).unwrap_err();
         assert!(
             err.contains(".c3 is a link") && err.contains("nothing was started"),
             "{err}"
         );
     }
     std::fs::create_dir_all(outside.join("collab")).unwrap();
-    let err = begin_run(&r, &outside.join("collab")).unwrap_err();
+    let err = begin_run(&r, &outside.join("collab"), "t", &["handoffs"]).unwrap_err();
     assert!(
         err.contains("never reads or writes through a link"),
         "{err}"
@@ -690,10 +840,90 @@ fn a_collab_directory_under_a_linked_folder_refuses_the_run_and_creates_nothing(
     drop_link(&path(&r));
     // a linked `.eck`: refused for a writer, not read by a reader
     assert!(dir_link(&legacy_path(&r), &outside));
-    assert!(begin_run(&r, &legacy_path(&r).join("collab")).is_err());
+    assert!(begin_run(&r, &legacy_path(&r).join("collab"), "t", &["handoffs"]).is_err());
     assert_eq!(read_path(&r), None);
     drop_link(&legacy_path(&r));
     let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
+// (0.2.5, acceptance F57-6 / RC5) Inside C3's folder a task directory - or its `handoffs/` or
+// `work/` - that is a link (a junction on Windows, a symlink elsewhere) refuses the run before
+// anything is written, in one line that names it: for a run start under `.c3/collab` and (under the
+// move lock, released again) `.eck/collab`, and for a panel member; nothing appears at the link's
+// target. A normal start makes both directories. Outside the folder the collab root is the
+// operator's anchor: a linked task directory is followed, as before.
+#[test]
+fn a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing() {
+    let r = scratch("linked-task");
+    let outside = r.with_extension("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let collab = path(&r).join("collab");
+    std::fs::create_dir_all(&collab).unwrap();
+    let t = collab.join("t");
+    if !dir_link(&t, &outside) {
+        eprintln!("skipped: the platform made no directory link");
+        return;
+    }
+    let empty = |why: &str| {
+        assert!(
+            std::fs::read_dir(&outside).unwrap().next().is_none(),
+            "something was created at the link's target: {why}"
+        )
+    };
+    for dirs in [&["handoffs"][..], &["work"][..]] {
+        let err = begin_run(&r, &collab, "t", dirs).unwrap_err();
+        assert!(
+            err.contains(".c3/collab/t is a link")
+                && err.contains("through a link")
+                && err.contains("nothing was started"),
+            "{err}"
+        );
+        empty(&err);
+    }
+    // a panel member checks its panel's directories again
+    let err = run_dirs(&r, &collab, "t", &["handoffs"]).unwrap_err();
+    assert!(err.contains(".c3/collab/t is a link"), "{err}");
+    empty(&err);
+    drop_link(&t);
+    // `handoffs/` (or `work/`) the link
+    std::fs::create_dir_all(&t).unwrap();
+    for name in ["handoffs", "work"] {
+        assert!(dir_link(&t.join(name), &outside));
+        let err = begin_run(&r, &collab, "t", &[name]).unwrap_err();
+        assert!(
+            err.contains(&format!(".c3/collab/t/{name} is a link")),
+            "{err}"
+        );
+        empty(&err);
+        drop_link(&t.join(name));
+    }
+    // a normal start makes both directories, real ones
+    let s = begin_run(&r, &collab, "n", &["handoffs"]).unwrap();
+    assert!(s._lock.is_none());
+    assert!(real_dir(&collab.join("n")) && real_dir(&collab.join("n").join("handoffs")));
+    // under the legacy folder: the same refusal, under the move lock
+    let r2 = scratch("linked-task-eck");
+    seed_eck(&r2);
+    let ecollab = legacy_path(&r2).join("collab");
+    assert!(dir_link(&ecollab.join("x"), &outside));
+    let err = begin_run(&r2, &ecollab, "x", &["handoffs"]).unwrap_err();
+    assert!(err.contains(".eck/collab/x is a link"), "{err}");
+    empty(&err);
+    assert!(!lock_path(&r2).exists(), "the move lock was released");
+    drop_link(&ecollab.join("x"));
+    // outside the folder: followed, as before
+    let c = r.join(".collab");
+    std::fs::create_dir_all(&c).unwrap();
+    assert!(dir_link(&c.join("t"), &outside));
+    begin_run(&r, &c, "t", &["handoffs"]).unwrap();
+    assert!(
+        outside.join("handoffs").is_dir(),
+        "a collab root outside the folder is followed"
+    );
+    drop_link(&c.join("t"));
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&r2);
     let _ = std::fs::remove_dir_all(&outside);
 }
 
@@ -905,7 +1135,7 @@ fn short_names_and_aliases_resolve_to_the_folder() {
             split_state_path(&r, &alias.join("collab")),
             Some((StateName::Legacy, "collab".to_string()))
         );
-        let why = begin_run(&r, &alias.join("collab")).unwrap_err();
+        let why = begin_run(&r, &alias.join("collab"), "t", &["handoffs"]).unwrap_err();
         assert!(why.contains("alias is a link"), "{why}");
         drop_link(&alias);
     } else {

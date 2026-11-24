@@ -17,6 +17,10 @@
 //!   directory's handle) and published by a rename relative to the same handle, replacing nothing but
 //!   a regular file; whatever this call created is removed through the same handle on failure, and
 //!   a failed removal is reported ([`publish`]);
+//! * (F57-10, F02-2) a file a person may edit by hand at the same time is published by an atomic
+//!   EXCHANGE of the temporary file and the file instead ([`publish_exchange`]): the version it
+//!   displaced is read back and kept next to the file when it is not the one the edit was computed
+//!   from - an edit saved during the write is never lost;
 //! * a tree is walked without ever descending into a link ([`walk_links`]) and removed through the
 //!   handles ([`remove_contents`], [`remove_root`]).
 //!
@@ -50,6 +54,8 @@ use cap_std::fs::{Dir, File, Metadata, OpenOptions};
 /// renamed aside (to `<name>.c3-race-orig`) and a link to `<link target>` is made in its place (a
 /// junction on Windows, a symlink elsewhere). On Windows the rename fails while C3 holds the
 /// directory's handle, which is the protection; the test reads which of the two happened.
+/// (F57-10, F02-2) A line `<point>|write:<file>|<text>` instead writes `<text>` to `<file>` in
+/// place when the operation reaches `<point>` - an editor's save landing at that moment.
 pub(crate) const RACE_HOOK: &str = "CODEX_CONSULT_TEST_CONTAIN_RACE";
 
 /// Windows' `FILE_ATTRIBUTE_REPARSE_POINT`.
@@ -569,24 +575,44 @@ impl PublishFailure {
 /// check refuses one anyway). On any failure the temporary file is removed through the same handle;
 /// a removal that fails is reported in [`PublishFailure::cleanup`].
 pub(crate) fn publish(p: &Publish<'_>) -> Result<(), PublishFailure> {
-    let fail = |error: PublishError, cleanup: Option<io::Error>| PublishFailure {
+    stage_temp(p)?;
+    race_point(&format!("{}-publish", p.race));
+    p.dir
+        .rename(p.tmp, p.dir, p.leaf)
+        .map_err(|e| failure(p, PublishError::Rename(e), remove_temp(p)))
+}
+
+/// A [`PublishFailure`] of `p`.
+fn failure(p: &Publish<'_>, error: PublishError, cleanup: Option<io::Error>) -> PublishFailure {
+    PublishFailure {
         error,
         cleanup,
         tmp: p.tmp.to_os_string(),
-    };
-    (p.check)(Stage::BeforeCreate).map_err(|why| fail(PublishError::Check(why), None))?;
+    }
+}
+
+/// Remove `p.tmp` through the directory's handle; `Some` is a removal that failed (a temporary file
+/// that is not there is no failure).
+fn remove_temp(p: &Publish<'_>) -> Option<io::Error> {
+    match p.dir.remove_file(p.tmp) {
+        Ok(()) => None,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => Some(e),
+    }
+}
+
+/// The first half of [`publish`] and [`publish_exchange`]: the caller's check, the NEW temporary
+/// file created exclusively relative to the directory's handle, written and synced (its permission
+/// bits set), and the caller's check again. On any failure the temporary file is removed.
+fn stage_temp(p: &Publish<'_>) -> Result<(), PublishFailure> {
+    (p.check)(Stage::BeforeCreate).map_err(|why| failure(p, PublishError::Check(why), None))?;
     race_point(&format!("{}-create", p.race));
     let mut o = OpenOptions::new();
     o.write(true).create_new(true);
     let mut f = p
         .dir
         .open_with(p.tmp, &o)
-        .map_err(|e| fail(PublishError::Create(e), None))?;
-    let remove_tmp = || match p.dir.remove_file(p.tmp) {
-        Ok(()) => None,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => Some(e),
-    };
+        .map_err(|e| failure(p, PublishError::Create(e), None))?;
     let written = (|| -> io::Result<()> {
         write_hook(&mut f, p.bytes)?;
         f.sync_all()?;
@@ -597,15 +623,381 @@ pub(crate) fn publish(p: &Publish<'_>) -> Result<(), PublishFailure> {
     })();
     drop(f);
     if let Err(e) = written {
-        return Err(fail(PublishError::Write(e), remove_tmp()));
+        return Err(failure(p, PublishError::Write(e), remove_temp(p)));
     }
     if let Err(why) = (p.check)(Stage::BeforeRename) {
-        return Err(fail(PublishError::Check(why), remove_tmp()));
+        return Err(failure(p, PublishError::Check(why), remove_temp(p)));
     }
+    Ok(())
+}
+
+/// (F57-10, F02-2) The test hook that makes [`publish_exchange`] behave as on a system without an
+/// atomic exchange (`CODEX_CONSULT_TEST_CONTAIN_NO_EXCHANGE`, any value): its compare-then-rename
+/// fallback is then proved.
+pub(crate) const NO_EXCHANGE_HOOK: &str = "CODEX_CONSULT_TEST_CONTAIN_NO_EXCHANGE";
+
+/// How [`publish_exchange`] put the new bytes in place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Publication {
+    /// Atomically exchanged with the version it displaced: Windows `ReplaceFileW`, Linux
+    /// `renameat2(RENAME_EXCHANGE)`, macOS `renamex_np(RENAME_SWAP)`.
+    Exchange,
+    /// The file was not there: published without replacing anything (a hard link to the new
+    /// name, which fails when a file appeared meanwhile - then the exchange is tried again).
+    Created,
+    /// No atomic exchange on this system or file system: published by [`publish`]'s
+    /// compare-then-rename, so an edit saved between the last comparison and the rename is lost -
+    /// the limit that remains there. Why.
+    Rename(String),
+}
+
+/// A displaced version [`publish_exchange`] kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Kept {
+    /// Its name in the directory (`<file>.displaced-<UTC time>`, [`displaced_name`]).
+    pub(crate) name: OsString,
+    /// `None`: it differs from the version the edit was computed from - an edit saved during the
+    /// write. `Some`: it could not be proved to be that version, or could not be removed - why.
+    pub(crate) unproven: Option<String>,
+}
+
+/// What [`publish_exchange`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Exchanged {
+    pub(crate) how: Publication,
+    /// The displaced version, when it was not the basis: kept next to the file.
+    pub(crate) kept: Option<Kept>,
+    /// The temporary name could not be removed after a [`Publication::Created`] (it is a second
+    /// name of the new file): why.
+    pub(crate) cleanup: Option<String>,
+}
+
+impl Exchanged {
+    /// The line a caller prints - loudly - about a write of `file` whose displaced version is kept
+    /// at `kept_at` (the caller's spelling of the [`Kept::name`] path), or that was published by
+    /// rename; `None` when there is nothing to say (an exchange that displaced the basis itself, a
+    /// first write).
+    pub(crate) fn notice(&self, file: &str, kept_at: impl Fn(&OsStr) -> String) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(k) = &self.kept {
+            let at = kept_at(&k.name);
+            parts.push(match &k.unproven {
+                None => format!(
+                    "a hand edit of {file} landed during C3's write: it is kept at {at}; the file now holds C3's version"
+                ),
+                Some(why) => format!(
+                    "the version of {file} C3's write displaced is kept at {at} ({why}); the file now holds C3's version"
+                ),
+            });
+        }
+        if let Publication::Rename(why) = &self.how {
+            parts.push(format!(
+                "{file} was replaced by rename, not by an atomic exchange ({why}): an edit saved during the write would not be kept"
+            ));
+        }
+        if let Some(why) = &self.cleanup {
+            parts.push(format!("{file}: {why}"));
+        }
+        (!parts.is_empty()).then(|| parts.join("; "))
+    }
+}
+
+/// (F57-10, F02-2) [`publish`] for a file a person may edit by hand at the same time (the roster,
+/// a repository's agent and rule files): the version the write DISPLACES is never lost. The new
+/// bytes go to the NEW temporary file `p.tmp` and the caller's check (the comparison with the basis
+/// the edit was computed from) runs as in [`publish`]; then the temporary file and `p.leaf` are
+/// ATOMICALLY EXCHANGED ([`Publication::Exchange`]) - there is no moment between a comparison and
+/// the publication in which a save could be overwritten unseen. The displaced version is read back
+/// through the directory's handle: when it is byte for byte `basis` it is removed; otherwise - an
+/// edit saved after the last comparison - it is KEPT next to the file under
+/// `<file>.displaced-<UTC time>` ([`displaced_name`]) and returned ([`Exchanged::kept`]) for the
+/// caller to report. Not there at all: published without replacing anything
+/// ([`Publication::Created`]). No exchange on this system or file system (other Unix targets,
+/// `EINVAL` / `ENOSYS` / `ENOTSUP`, `ReplaceFileW` unsupported): [`publish`]'s compare-then-rename,
+/// said in the result ([`Publication::Rename`]).
+///
+/// On Windows the exchange is `ReplaceFileW` on the paths of the directory the handle holds
+/// (`GetFinalPathNameByHandleW`; while the handle is open the directory cannot be renamed, the same
+/// ground the module's other Windows operations stand on), the displaced version landing at
+/// `<tmp>.displaced`; a sharing violation (an editor holding the file) is retried up to 8 times,
+/// 250 ms apart, as `c3_core::store::write_text_atomic` does. On Linux and macOS it is
+/// `renameat_with(RENAME_EXCHANGE)` relative to the directory's descriptor, the displaced version
+/// landing at `p.tmp`.
+pub(crate) fn publish_exchange(p: &Publish<'_>, basis: &[u8]) -> Result<Exchanged, PublishFailure> {
+    stage_temp(p)?;
     race_point(&format!("{}-publish", p.race));
-    p.dir
-        .rename(p.tmp, p.dir, p.leaf)
-        .map_err(|e| fail(PublishError::Rename(e), remove_tmp()))
+    let fallback = |why: String| -> Result<Exchanged, PublishFailure> {
+        p.dir
+            .rename(p.tmp, p.dir, p.leaf)
+            .map_err(|e| failure(p, PublishError::Rename(e), remove_temp(p)))?;
+        Ok(Exchanged {
+            how: Publication::Rename(why),
+            kept: None,
+            cleanup: None,
+        })
+    };
+    if c3_core::test_hooks::hook(NO_EXCHANGE_HOOK).is_some() {
+        return fallback("the exchange is switched off by a test hook".to_string());
+    }
+    let mut backup = p.tmp.to_os_string();
+    backup.push(".displaced");
+    // a file that disappears and reappears between the tries is given three rounds
+    for _ in 0..3 {
+        match exchange(p.dir, p.tmp, p.leaf, &backup) {
+            Exchange::Swapped(at) => {
+                return Ok(Exchanged {
+                    how: Publication::Exchange,
+                    kept: settle_displaced(p.dir, &at, p.leaf, Some(basis)),
+                    cleanup: None,
+                })
+            }
+            Exchange::Missing => match p.dir.hard_link(p.tmp, p.dir, p.leaf) {
+                Ok(()) => {
+                    let cleanup = remove_temp(p).map(|e| {
+                        format!(
+                            "its temporary name {} could not be removed ({e})",
+                            p.tmp.to_string_lossy()
+                        )
+                    });
+                    return Ok(Exchanged {
+                        how: Publication::Created,
+                        kept: None,
+                        cleanup,
+                    });
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => {
+                    return fallback(format!(
+                        "the file was not there and no hard link could be made ({e})"
+                    ))
+                }
+            },
+            Exchange::Unsupported(why) => return fallback(why),
+            Exchange::Failed(e, left) => {
+                let kept = left.and_then(|at| settle_displaced(p.dir, &at, p.leaf, None));
+                let e = match kept.map(|k| k.name) {
+                    Some(name) => io::Error::new(
+                        e.kind(),
+                        format!(
+                            "{e}; the version it displaced is kept as {}",
+                            name.to_string_lossy()
+                        ),
+                    ),
+                    None => e,
+                };
+                return Err(failure(p, PublishError::Rename(e), remove_temp(p)));
+            }
+        }
+    }
+    Err(failure(
+        p,
+        PublishError::Rename(io::Error::other(
+            "the file kept disappearing and reappearing during the write",
+        )),
+        remove_temp(p),
+    ))
+}
+
+/// The displaced version at `at` after an exchange: removed when it reads back (through the
+/// directory's handle, not followed) as exactly `basis`; otherwise renamed to
+/// `<leaf>.displaced-<UTC time>` ([`displaced_name`]) and returned. (A failed publication passes no
+/// basis: whatever it left is kept.)
+fn settle_displaced(dir: &Dir, at: &OsStr, leaf: &OsStr, basis: Option<&[u8]>) -> Option<Kept> {
+    let unproven = match read_file_in(dir, at) {
+        Ok(b) if basis == Some(b.as_slice()) => match dir.remove_file(at) {
+            Ok(()) => return None,
+            Err(e) => Some(format!(
+                "it is the version the edit was computed from, but could not be removed ({e})"
+            )),
+        },
+        Ok(_) => None,
+        Err(why) => Some(format!("it could not be read back: it {why}")),
+    };
+    let name = displaced_name(dir, leaf);
+    match dir.rename(at, dir, &name) {
+        Ok(()) => Some(Kept { name, unproven }),
+        Err(e) => Some(Kept {
+            name: at.to_os_string(),
+            unproven: Some(format!(
+                "{}it could not be renamed to {} ({e})",
+                unproven.map(|u| format!("{u}; ")).unwrap_or_default(),
+                name.to_string_lossy()
+            )),
+        }),
+    }
+}
+
+/// A free name for a displaced version of `leaf` in `dir`: `<leaf>.displaced-<yyyymmddTHHMMSS.mmm>Z`
+/// (UTC), with `-2`, `-3` ... appended while such an entry exists. (Only C3 makes such names; two
+/// C3 writes of one file in the same millisecond are what the suffix is for.)
+pub(crate) fn displaced_name(dir: &Dir, leaf: &OsStr) -> OsString {
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let base = format!("{}.displaced-{stamp}", leaf.to_string_lossy());
+    let mut name = OsString::from(&base);
+    let mut n = 1;
+    while !matches!(entry(dir, &name), Ok(None)) && n < 1000 {
+        n += 1;
+        name = OsString::from(format!("{base}-{n}"));
+    }
+    name
+}
+
+/// What one exchange attempt did.
+#[cfg_attr(
+    not(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_vendor = "apple"
+    )),
+    allow(dead_code)
+)]
+enum Exchange {
+    /// Exchanged: the displaced version is now at this name of the directory.
+    Swapped(OsString),
+    /// The file to replace is not there.
+    Missing,
+    /// No atomic exchange on this system or file system: why.
+    Unsupported(String),
+    /// It failed; a displaced version it left at this name (Windows), if any.
+    Failed(io::Error, Option<OsString>),
+}
+
+/// (Windows) `ReplaceFileW`: `tmp` takes the place of `leaf`, whose version lands at `backup`.
+#[cfg(windows)]
+fn exchange(dir: &Dir, tmp: &OsStr, leaf: &OsStr, backup: &OsStr) -> Exchange {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, ReplaceFileW, REPLACEFILE_IGNORE_ACL_ERRORS, REPLACEFILE_IGNORE_MERGE_ERRORS,
+    };
+    const ERROR_INVALID_FUNCTION: i32 = 1;
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_NOT_SUPPORTED: i32 = 50;
+    const ERROR_UNABLE_TO_REMOVE_REPLACED: i32 = 1175;
+    const ERROR_UNABLE_TO_MOVE_REPLACEMENT_2: i32 = 1177;
+    const ATTEMPTS: u32 = 8;
+    let base = match dir_path(dir) {
+        Ok(b) => b,
+        Err(e) => return Exchange::Failed(e, None),
+    };
+    let wide = |name: &OsStr| -> Vec<u16> {
+        base.join(name)
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    };
+    let (target, replacement, displaced) = (wide(leaf), wide(tmp), wide(backup));
+    let mut attempt = 1;
+    loop {
+        // SAFETY: three NUL-terminated UTF-16 strings that outlive the call; the two reserved
+        // arguments are null, as the API requires.
+        let ok = unsafe {
+            ReplaceFileW(
+                target.as_ptr(),
+                replacement.as_ptr(),
+                displaced.as_ptr(),
+                REPLACEFILE_IGNORE_MERGE_ERRORS | REPLACEFILE_IGNORE_ACL_ERRORS,
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        if ok != 0 {
+            return Exchange::Swapped(backup.to_os_string());
+        }
+        let e = io::Error::last_os_error();
+        match e.raw_os_error() {
+            Some(ERROR_FILE_NOT_FOUND) => return Exchange::Missing,
+            Some(ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED) => {
+                return Exchange::Unsupported(format!("ReplaceFileW is not supported here ({e})"))
+            }
+            Some(
+                ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_UNABLE_TO_REMOVE_REPLACED,
+            ) if attempt < ATTEMPTS => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            code => {
+                if code == Some(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2) {
+                    // the file was moved to `backup` but the new one not into its place: put it
+                    // back (no replace - should a file have appeared there, both stay)
+                    // SAFETY: as above.
+                    unsafe { MoveFileExW(displaced.as_ptr(), target.as_ptr(), 0) };
+                }
+                let left = matches!(entry(dir, backup), Ok(Some(_))).then(|| backup.to_os_string());
+                return Exchange::Failed(e, left);
+            }
+        }
+    }
+}
+
+/// (Windows) The path of the directory `dir`'s handle holds (`GetFinalPathNameByHandleW`, the
+/// `\\?\` form).
+#[cfg(windows)]
+fn dir_path(dir: &Dir) -> io::Result<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED, VOLUME_NAME_DOS,
+    };
+    let mut buf: Vec<u16> = vec![0; 512];
+    loop {
+        // SAFETY: the handle is the open directory's, valid for the call; `buf` holds `buf.len()`
+        // UTF-16 units.
+        let n = unsafe {
+            GetFinalPathNameByHandleW(
+                dir.as_raw_handle(),
+                buf.as_mut_ptr(),
+                buf.len() as u32,
+                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
+            )
+        } as usize;
+        if n == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if n < buf.len() {
+            buf.truncate(n);
+            return Ok(PathBuf::from(OsString::from_wide(&buf)));
+        }
+        buf.resize(n + 1, 0);
+    }
+}
+
+/// (Linux, Android, Apple) `renameat2(RENAME_EXCHANGE)` / `renamex_np(RENAME_SWAP)` relative to the
+/// directory's descriptor: `tmp` and `leaf` swap, the displaced version lands at `tmp`.
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn exchange(dir: &Dir, tmp: &OsStr, leaf: &OsStr, _backup: &OsStr) -> Exchange {
+    use rustix::fs::{renameat_with, RenameFlags};
+    use rustix::io::Errno;
+    match renameat_with(dir, tmp, dir, leaf, RenameFlags::EXCHANGE) {
+        Ok(()) => Exchange::Swapped(tmp.to_os_string()),
+        Err(e) if e == Errno::NOENT => Exchange::Missing,
+        Err(e)
+            if e == Errno::INVAL
+                || e == Errno::NOSYS
+                || e == Errno::NOTSUP
+                || e == Errno::OPNOTSUPP =>
+        {
+            Exchange::Unsupported(format!(
+                "the file system refuses an atomic exchange ({})",
+                io::Error::from(e)
+            ))
+        }
+        Err(e) => Exchange::Failed(io::Error::from(e), None),
+    }
+}
+
+/// (Any other system) No atomic exchange.
+#[cfg(not(any(
+    windows,
+    target_os = "linux",
+    target_os = "android",
+    target_vendor = "apple"
+)))]
+fn exchange(_dir: &Dir, _tmp: &OsStr, _leaf: &OsStr, _backup: &OsStr) -> Exchange {
+    Exchange::Unsupported("this system has no atomic exchange of two names".to_string())
 }
 
 /// (0.2.5 D4) The test hook that makes a write of a [`publish`] or a patch fail after half the bytes
@@ -987,8 +1379,14 @@ pub(crate) fn race_point(point: &str) {
         let (Some(p), Some(dir), Some(target)) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
-        if p == point {
-            swap_for_link(Path::new(dir), Path::new(target));
+        if p != point {
+            continue;
+        }
+        match dir.strip_prefix("write:") {
+            Some(file) => {
+                let _ = std::fs::write(file, target);
+            }
+            None => swap_for_link(Path::new(dir), Path::new(target)),
         }
     }
 }
@@ -1376,6 +1774,213 @@ pub(crate) mod tests {
             "hello\n"
         );
         assert_eq!(f.with_cleanup("x".into()), "x");
+        drop(dir);
+        drop(root);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Whether this build has an atomic exchange ([`exchange`]): Windows, Linux, Android, Apple.
+    const HAS_EXCHANGE: bool = cfg!(any(
+        windows,
+        target_os = "linux",
+        target_os = "android",
+        target_vendor = "apple"
+    ));
+
+    /// A [`publish_exchange`] of `bytes` onto `<root>/inner/own.txt` whose check (at both stages)
+    /// requires the file to read as `basis` - the comparison of the roster writer and the repair.
+    fn exchange_own(root: &Root, tmp: &str, bytes: &[u8], basis: &[u8]) -> Exchanged {
+        let (dir, leaf) = root.open_parent(Path::new("inner/own.txt"), false).unwrap();
+        let check = |_: Stage| -> Result<(), String> {
+            match read_file_in(&dir, &leaf) {
+                Ok(b) if b == basis => Ok(()),
+                _ => Err("changed".to_string()),
+            }
+        };
+        publish_exchange(
+            &Publish {
+                dir: &dir,
+                leaf: &leaf,
+                tmp: OsStr::new(tmp),
+                bytes,
+                permissions: None,
+                check: &check,
+                race: "x",
+            },
+            basis,
+        )
+        .unwrap()
+    }
+
+    // (F57-10, F02-2) An editor's save that lands AFTER the last comparison and before the
+    // publication (the race hook writes it at `x-publish`) is displaced, not lost: the file holds the
+    // new bytes, the edit is kept byte for byte as `own.txt.displaced-<UTC time>` and returned; on
+    // this platform the publication was the atomic exchange. Without an edit nothing is left behind.
+    #[test]
+    fn publish_exchange_keeps_an_edit_saved_before_the_exchange_and_nothing_without_one() {
+        let (base, root_p, _outside) = scratch("exchange");
+        let root = Root::open(&root_p).unwrap();
+        let file = root_p.join("inner").join("own.txt");
+        let hook = c3_core::test_hooks::set_thread_hook(
+            RACE_HOOK,
+            &format!(
+                "x-publish|write:{}|EDITED BY HAND, unrelated line",
+                file.display()
+            ),
+        );
+        let done = exchange_own(&root, ".own.t1.tmp", b"NEW\n", b"INSIDE\n");
+        drop(hook);
+        assert_eq!(std::fs::read(&file).unwrap(), b"NEW\n");
+        if HAS_EXCHANGE {
+            assert_eq!(done.how, Publication::Exchange);
+        }
+        let kept = done.kept.clone().expect("the displaced edit is kept");
+        assert_eq!(kept.unproven, None, "it differs from the basis");
+        let kept_name = kept.name.to_string_lossy().to_string();
+        assert!(kept_name.starts_with("own.txt.displaced-"), "{kept_name}");
+        assert_eq!(
+            std::fs::read(root_p.join("inner").join(&kept_name)).unwrap(),
+            b"EDITED BY HAND, unrelated line"
+        );
+        assert_eq!(
+            names(&root_p.join("inner")),
+            vec!["own.txt".to_string(), kept_name.clone()]
+        );
+        let notice = done
+            .notice("own.txt", |n| n.to_string_lossy().to_string())
+            .unwrap();
+        assert!(
+            notice.contains("a hand edit of own.txt landed during C3's write")
+                && notice.contains(&kept_name),
+            "{notice}"
+        );
+        // no edit: the displaced version IS the basis - removed, nothing left, nothing to say
+        let done = exchange_own(&root, ".own.t2.tmp", b"NEWER\n", b"NEW\n");
+        assert_eq!(done.kept, None);
+        assert_eq!(done.notice("own.txt", |_| String::new()), None);
+        assert_eq!(std::fs::read(&file).unwrap(), b"NEWER\n");
+        assert_eq!(
+            names(&root_p.join("inner")),
+            vec!["own.txt".to_string(), kept_name]
+        );
+        drop(root);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (F57-10, F02-2) Without an atomic exchange (forced by its test hook) the publication is the
+    // compare-then-rename it was before and SAYS so: the new bytes are in place, nothing is left
+    // behind, and an edit landing after the last comparison is not kept - the limit that remains on
+    // such a system, named in the notice. A file that is not there is published without replacing
+    // anything.
+    #[test]
+    fn without_an_exchange_publication_falls_back_to_the_rename_and_says_so() {
+        let (base, root_p, _outside) = scratch("no-exchange");
+        let root = Root::open(&root_p).unwrap();
+        let file = root_p.join("inner").join("own.txt");
+        let _off = c3_core::test_hooks::set_thread_hook(NO_EXCHANGE_HOOK, "1");
+        let done = exchange_own(&root, ".own.t1.tmp", b"NEW\n", b"INSIDE\n");
+        assert!(
+            matches!(&done.how, Publication::Rename(why) if why.contains("test hook")),
+            "{done:?}"
+        );
+        assert_eq!(done.kept, None);
+        assert_eq!(std::fs::read(&file).unwrap(), b"NEW\n");
+        assert_eq!(names(&root_p.join("inner")), vec!["own.txt".to_string()]);
+        let notice = done.notice("own.txt", |_| String::new()).unwrap();
+        assert!(
+            notice.contains("replaced by rename, not by an atomic exchange"),
+            "{notice}"
+        );
+        // an edit at the same moment is lost here (what the exchange closes elsewhere)
+        let edit = c3_core::test_hooks::set_thread_hook(
+            RACE_HOOK,
+            &format!("x-publish|write:{}|EDITED", file.display()),
+        );
+        let done = exchange_own(&root, ".own.t2.tmp", b"NEWER\n", b"NEW\n");
+        drop(edit);
+        assert_eq!(done.kept, None);
+        assert_eq!(std::fs::read(&file).unwrap(), b"NEWER\n");
+        assert_eq!(names(&root_p.join("inner")), vec!["own.txt".to_string()]);
+        drop(_off);
+        // a first write: nothing to displace, nothing replaced
+        let dir = root.open_dir(Path::new("inner"), false).unwrap();
+        let any = |_: Stage| -> Result<(), String> { Ok(()) };
+        let done = publish_exchange(
+            &Publish {
+                dir: &dir,
+                leaf: OsStr::new("first.txt"),
+                tmp: OsStr::new(".first.tmp"),
+                bytes: b"FIRST\n",
+                permissions: None,
+                check: &any,
+                race: "x",
+            },
+            b"",
+        )
+        .unwrap();
+        if HAS_EXCHANGE {
+            assert_eq!(done.how, Publication::Created);
+        }
+        assert_eq!(done.kept, None);
+        assert_eq!(
+            std::fs::read(root_p.join("inner").join("first.txt")).unwrap(),
+            b"FIRST\n"
+        );
+        assert_eq!(
+            names(&root_p.join("inner")),
+            vec!["first.txt".to_string(), "own.txt".to_string()]
+        );
+        drop(dir);
+        drop(root);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (F57-10, F02-2) The Unix twin: the exchange is `renameat2(RENAME_EXCHANGE)` /
+    // `renamex_np(RENAME_SWAP)` relative to the directory's descriptor - an edit saved before it is
+    // kept byte for byte, the new file carries the permission bits the caller gave it, and the
+    // directory renamed away meanwhile (the descriptor still names it) receives the publication.
+    #[cfg(unix)]
+    #[test]
+    fn publish_exchange_on_unix_swaps_relative_to_the_directory_descriptor() {
+        use std::os::unix::fs::PermissionsExt;
+        let (base, root_p, _outside) = scratch("exchange-unix");
+        let root = Root::open(&root_p).unwrap();
+        let (dir, leaf) = root.open_parent(Path::new("inner/own.txt"), false).unwrap();
+        let moved = root_p.join("inner-moved");
+        let file = moved.join("own.txt");
+        // the directory is renamed before the temp file is made; the edit lands before the swap
+        let hook = c3_core::test_hooks::set_thread_hook(
+            RACE_HOOK,
+            &format!("x-publish|write:{}|EDITED BY HAND", file.display()),
+        );
+        std::fs::rename(root_p.join("inner"), &moved).unwrap();
+        let check = |_: Stage| -> Result<(), String> { Ok(()) };
+        let done = publish_exchange(
+            &Publish {
+                dir: &dir,
+                leaf: &leaf,
+                tmp: OsStr::new(".own.tmp"),
+                bytes: b"NEW\n",
+                permissions: Some(cap_std::fs::Permissions::from_std(
+                    std::fs::Permissions::from_mode(0o640),
+                )),
+                check: &check,
+                race: "x",
+            },
+            b"INSIDE\n",
+        )
+        .unwrap();
+        drop(hook);
+        if HAS_EXCHANGE {
+            assert_eq!(done.how, Publication::Exchange);
+        }
+        assert_eq!(std::fs::read(&file).unwrap(), b"NEW\n");
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+        let kept = done.kept.expect("kept").name.to_string_lossy().to_string();
+        assert!(kept.starts_with("own.txt.displaced-"), "{kept}");
+        assert_eq!(std::fs::read(moved.join(&kept)).unwrap(), b"EDITED BY HAND");
+        assert_eq!(names(&moved), vec!["own.txt".to_string(), kept]);
         drop(dir);
         drop(root);
         let _ = std::fs::remove_dir_all(&base);

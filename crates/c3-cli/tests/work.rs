@@ -2348,3 +2348,77 @@ fn a_tests_run_of_a_done_run_inlines_the_authors_patch() {
         text(&st)
     );
 }
+
+/// A directory link at `link` to `target`: a junction on Windows (no privilege needed), a symlink
+/// elsewhere.
+fn dir_link(link: &Path, target: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+/// Remove a directory link made by [`dir_link`] (never its target).
+fn drop_link(link: &Path) {
+    #[cfg(windows)]
+    let _ = std::fs::remove_dir(link);
+    #[cfg(not(windows))]
+    let _ = std::fs::remove_file(link);
+}
+
+/// (0.2.5, acceptance F57-6 / RC5) `c3 work` with its collab directory in a real `.c3/collab` whose
+/// task directory - or its `work/` - is a link (a junction on Windows, a symlink elsewhere) to an
+/// empty directory: refused before any record exists, in one line that names the link; the worker
+/// never starts and nothing appears at the link's target. A normal run there lands its record.
+#[test]
+fn a_linked_task_directory_in_the_project_folder_refuses_the_work_run() {
+    let e = setup("linked-task");
+    let target = e.work.join("elsewhere");
+    std::fs::create_dir_all(&target).unwrap();
+    let collab = e.repo.join(".c3").join("collab");
+    std::fs::create_dir_all(&collab).unwrap();
+    for (link, name) in [
+        (collab.join("t"), ".c3/collab/t"),
+        (collab.join("t").join("work"), ".c3/collab/t/work"),
+    ] {
+        if name.ends_with("work") {
+            std::fs::create_dir_all(collab.join("t")).unwrap();
+        }
+        assert!(dir_link(&link, &target), "link {}", link.display());
+        let out = e.work("ZAI-claude", &["--collab-dir", ".c3/collab"], &[]);
+        let t = text(&out);
+        assert_eq!(out.status.code(), Some(1), "{name}: {t}");
+        assert!(
+            t.contains(&format!("{name} is a link")) && t.contains("nothing was started"),
+            "{name}: {t}"
+        );
+        assert!(
+            !e.repo.join("worker-touched.txt").exists(),
+            "the worker never started"
+        );
+        assert!(
+            std::fs::read_dir(&target).unwrap().next().is_none(),
+            "nothing at the link's target ({name}): {t}"
+        );
+        drop_link(&link);
+    }
+    // a normal run there: both directories real, the record under `work/`
+    let out = e.work("ZAI-claude", &["--collab-dir", ".c3/collab"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+    assert!(
+        !files_under(&collab.join("t").join("work")).is_empty(),
+        "{t}"
+    );
+    assert!(std::fs::read_dir(&target).unwrap().next().is_none());
+}

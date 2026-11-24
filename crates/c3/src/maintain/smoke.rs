@@ -754,7 +754,13 @@ fn rollout_surface_of(
 /// `multi_agent_version` nor a tool list. (0.2.5 D3, F32-2) The proof is per TURN: every turn of a
 /// thread's rollout must record its own evidence (a `multi_agent_version` in its `turn_context`, or
 /// a tool list) between its own `task_started` and `task_complete`, and a rollout whose turn
-/// boundaries do not pair up is unproven too. The budget watch's sub-agent guard - the defence behind
+/// boundaries do not pair up is unproven too. (F57-2) A tool list is evidence only when C3 read
+/// every entry of it ([`c3_core::quota::tool_inventory`] answers COMPLETE): a rollout holding a
+/// list it cannot read in full - an entry that is not an object, a tool without a name, a namespace
+/// whose inner list is missing or not an array, an unknown entry kind - is unproven, the reason
+/// naming the line, the turn and what was not understood (never the entry's content), since a
+/// multi-agent tool may hide in it; a multi-agent tool beside such an entry is still a breach.
+/// The budget watch's sub-agent guard - the defence behind
 /// the switch - reads the same rollouts, so a CLI whose rollouts C3 cannot read runs with a blind
 /// guard: holding such an update costs one held update, letting it through risks the incident
 /// again. A shown surface (a version other than `disabled`, a multi-agent tool offered or called)
@@ -837,6 +843,15 @@ pub(crate) fn subagent_switch_check(
                 s.malformed
             ));
         }
+        // (F57-2) a tool list C3 cannot read in full is no evidence, and a multi-agent tool may
+        // hide in it (a breach in it or elsewhere was a failure above)
+        if !s.unreadable.is_empty() {
+            return unproven(format!(
+                "the rollout of thread {t} holds {} tool list(s) C3 cannot read in full, so they prove nothing - {}",
+                s.unreadable.len(),
+                s.unreadable.join("; ")
+            ));
+        }
         // (0.2.5 D3, F32-2) evidence is bound to the turn it was recorded in: turn boundaries that
         // do not pair up leave it unbound
         if s.boundary_errors > 0 {
@@ -857,8 +872,9 @@ pub(crate) fn subagent_switch_check(
             ));
         }
         // (0.2.5 D3, F32-2) EACH turn - a thread two consults share holds one per consult - needs
-        // switch evidence of its own, between its own task_started and task_complete
-        if let Some(i) = s.turns.iter().position(|x| !x.evidence) {
+        // switch evidence of its own, between its own task_started and task_complete; (F57-2) only
+        // a tool list read in full is evidence, and an unreadable one leaves its turn unproven
+        if let Some(i) = s.turns.iter().position(|x| !x.proven()) {
             return unproven(format!(
                 "turn {} of {} in the rollout of thread {t} records no switch evidence of its own (no multi_agent_version, no tool list between its task_started and task_complete)",
                 i + 1,
@@ -1348,6 +1364,80 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert!(
             why.contains("turn boundaries that cannot be told apart (1 task_started / task_complete record(s) without their pair)"),
+            "{why}"
+        );
+    }
+
+    /// (F57-2, the reviewer's RC2 first half) A tool inventory C3 cannot read in full is no switch
+    /// evidence: in a two-turn rollout whose second turn's ONLY evidence is a tool list holding a
+    /// namespace whose `tools` is an object - or a nameless tool - the smoke is unproven and an
+    /// automatic update holds on it; a fully readable list without multi-agent tools still proves
+    /// its turn; a multi-agent tool beside an unreadable entry is still a breach.
+    #[test]
+    fn an_inventory_that_cannot_be_read_in_full_is_no_switch_evidence() {
+        let one = smoke_rollout(T1, "disabled", false);
+        // [session_meta, task_started, tool list, turn_context, task_complete]
+        let (started, list, complete) = (one[1].clone(), one[2].clone(), one[4].clone());
+        // turn 2 = task_started, the given tool list (its only evidence), task_complete
+        let with_second_turn = |tools: &str| {
+            let mut r = one.clone();
+            r.extend([started.clone(), tools.to_string(), complete.clone()]);
+            r
+        };
+        let check = |tag: &str, tools: &str| {
+            let (root, work, home) = switch_fixture(
+                tag,
+                &[(T1, Some(false)), (T1, Some(false))],
+                &[(T1, with_second_turn(tools))],
+            );
+            let got = subagent_switch_check(&work, &home, SMOKE_TURNS);
+            let _ = std::fs::remove_dir_all(&root);
+            got
+        };
+        let clock =
+            r#"{"type":"namespace","name":"clock","tools":[{"type":"function","name":"sleep"}]}"#;
+        assert!(list.contains(clock), "{list}");
+
+        // a fully readable list without multi-agent tools: proven as before
+        assert_eq!(check("inv-ok", &list), Smoke::Pass);
+
+        // the reviewer's shape: a namespace whose `tools` is an OBJECT
+        let opaque = list.replace(
+            clock,
+            r#"{"type":"namespace","name":"clock","tools":{"sleep":{"type":"function"}}}"#,
+        );
+        let got = check("inv-object", &opaque);
+        assert_eq!(
+            got.hold().map(|(word, _)| word),
+            Some("unproven"),
+            "an automatic update holds on it: {got:?}"
+        );
+        assert_eq!(
+            unproven_reason(got),
+            format!("the sub-agent switch is unproven: the rollout of thread {T1} holds 1 tool list(s) C3 cannot read in full, so they prove nothing - the tool list at line 7 (turn 2): entry 2 (a namespace) holds `tools` as an object, not an array")
+        );
+
+        // a nameless tool
+        let nameless = list.replace(
+            clock,
+            r#"{"type":"namespace","name":"clock","tools":[{"type":"function","parameters":{}}]}"#,
+        );
+        let why = unproven_reason(check("inv-nameless", &nameless));
+        assert!(
+            why.ends_with(
+                "the tool list at line 7 (turn 2): entry 2.1 (a `function` tool) has no name"
+            ),
+            "{why}"
+        );
+
+        // a multi-agent tool beside an unreadable entry: a breach, not merely unproven
+        let breached = smoke_rollout(T1, "disabled", true)[2].replace(
+            clock,
+            r#"{"type":"namespace","name":"clock","tools":{"sleep":{}}}"#,
+        );
+        let why = fail_reason(check("inv-breach", &breached));
+        assert!(
+            why.contains(&format!("thread {T1} - offers spawn_agent, wait_agent")),
             "{why}"
         );
     }

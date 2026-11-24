@@ -31,6 +31,13 @@ unicode-normalization = { workspace = true }
 surrealdb = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
+# (0.2.5, F57-10 / F02-2) the atomic exchange of `contain::publish_exchange`, per platform
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
+
 [features]
 # OPT-IN (flipped 2026-10-14): the default build is the light bundle - no surrealdb/tokio, and
 # every ContextIndex call is `Index: none`. `--features index-surreal` builds the embedded

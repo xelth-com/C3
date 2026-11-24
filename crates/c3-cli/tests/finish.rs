@@ -1175,6 +1175,101 @@ fn two_writers_at_once_leave_one_folder_with_both_records() {
     let _ = std::fs::remove_dir_all(&repo);
 }
 
+// (0.2.5, acceptance answer 2) A writer with the migration switch OFF while another process moves
+// `.eck/` (held inside the move by the test hook, before its rename): the writer creates no `.c3/`
+// beside the moving folder - a fresh `.c3/` beside a real `.eck/` is created only under the move
+// lock. When it waits for the lock it reads the state again under it and uses the moved `.c3/`;
+// when it finds the lock held it goes on in `.eck/` for that run and says so. Either way the mover's
+// rename succeeds, exactly one folder is left, and no record is lost.
+#[test]
+fn a_writer_with_the_switch_off_never_splits_a_move() {
+    for waits in [true, false] {
+        let repo = scratch_repo(if waits { "off-waits" } else { "off-held" });
+        seed_legacy_folder(&repo);
+        let release = repo.with_extension("release");
+        let release_s = release.to_string_lossy().to_string();
+        let mut held = release.clone().into_os_string();
+        held.push(".held");
+        let held = PathBuf::from(held);
+        let mover = spawn_c3(
+            &repo,
+            &["fail", "--status", "THE-MOVER"],
+            &[
+                ("CODEX_CONSULT_TEST_MODE", "1"),
+                ("CODEX_CONSULT_TEST_STATE_MOVE_HOLD", release_s.as_str()),
+                ("CODEX_CONSULT_TEST_STATE_LOCK_WAIT_MS", "60000"),
+            ],
+        );
+        assert!(wait_for(&held), "the mover never entered the move");
+        let wait_ms = if waits { "60000" } else { "300" };
+        let writer = spawn_c3(
+            &repo,
+            &[
+                "manifest",
+                "--file",
+                "ROADMAP.md",
+                "--action",
+                "replace_file",
+                "--content",
+                "# ROADMAP\n\nSWITCH-OFF-WRITER\n",
+            ],
+            &[
+                ("CODEX_CONSULT_TEST_MODE", "1"),
+                ("C3_STATE_MIGRATE", "off"),
+                ("CODEX_CONSULT_TEST_STATE_LOCK_WAIT_MS", wait_ms),
+            ],
+        );
+        let writer = if waits {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            assert!(
+                !exists_any(&repo.join(".c3")),
+                "the waiting writer created .c3/ beside the moving folder"
+            );
+            std::fs::write(&release, "go").unwrap();
+            writer.wait_with_output().unwrap()
+        } else {
+            let w = writer.wait_with_output().unwrap();
+            assert!(
+                !exists_any(&repo.join(".c3")),
+                "the writer created .c3/ beside the moving folder"
+            );
+            std::fs::write(&release, "go").unwrap();
+            w
+        };
+        let mover = mover.wait_with_output().unwrap();
+        for (o, who) in [(&mover, "mover"), (&writer, "writer")] {
+            assert!(
+                o.status.success(),
+                "{who} ({waits}): {}\n{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+        let mover_out = String::from_utf8_lossy(&mover.stdout);
+        assert!(mover_out.contains("moved .eck/ to .c3/"), "{mover_out}");
+        let writer_out = String::from_utf8_lossy(&writer.stdout);
+        assert_eq!(
+            writer_out.contains(".c3/ could not be created now (the move lock is held by c3 pid")
+                && writer_out.contains("using .eck/ for this run"),
+            !waits,
+            "{writer_out}"
+        );
+        assert!(!exists_any(&repo.join(".eck")), "one folder ({waits})");
+        assert_eq!(
+            std::fs::read_to_string(repo.join(".c3/ROADMAP.md")).unwrap(),
+            "# ROADMAP\n\nSWITCH-OFF-WRITER\n"
+        );
+        assert!(std::fs::read_to_string(repo.join(".c3/last-report.md"))
+            .unwrap()
+            .contains("THE-MOVER"));
+        assert!(repo.join(".c3/legacy/anchor").is_file());
+        assert!(repo.join(".c3/snapshots/old.md").is_file());
+        let _ = std::fs::remove_file(&release);
+        let _ = std::fs::remove_file(&held);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+}
+
 // (F36-2) A process killed between the leftover steps and the rename (test hook), then another
 // writing command: the result equals an uninterrupted move, and `.c3/anchor` is never the old tool's.
 #[test]

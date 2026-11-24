@@ -1066,6 +1066,92 @@ fn two_catalogs_on_one_host_the_private_first_never_publish_the_private_id() {
     let _ = std::fs::remove_dir_all(&e.work);
 }
 
+/// (F57-1, the reviewer's RC1) A page's label reused for another URL, end to end and offline:
+/// `c3 maintain --models` reads `zai-docs` while it names an internal page NOT declared public and
+/// records the id with that URL; the configuration then gives the label to a public vendor page on
+/// `docs.z.ai` - the backfill sends the earlier page's id as `other` (before the fix trust was
+/// joined by the label, and the plain id took the new URL's vendor class). A label-only record of
+/// an older build is withheld the same way. After a refresh reads the id from the public URL itself,
+/// it is sent by name.
+#[test]
+fn a_page_label_reused_for_a_public_url_never_publishes_the_earlier_pages_id() {
+    let e = setup("tel-published-page-reuse");
+    let mdir = e.home.join("c3").join("maintain");
+    std::fs::create_dir_all(&mdir).unwrap();
+    let internal = "https://wiki.acmecorp-internal.example/llm";
+    let public = "https://docs.z.ai/models";
+    let body = e.work.join("page.html");
+    std::fs::write(&body, "<code>glm-9-page</code>").unwrap();
+    let configure = |url: &str, public: bool| {
+        let cfg = serde_json::json!({"config_version": 1,
+            "model_pages": [{"name": "zai-docs", "url": url, "pattern": "<code>(glm-[0-9a-z.-]+)</code>", "public": public}]});
+        std::fs::write(e.home.join("c3").join("config.json"), cfg.to_string()).unwrap();
+    };
+    let maintain = |url: &str| {
+        let map = format!("{url}|{}", body.display());
+        let o = e.c3(
+            &["maintain", "--models"],
+            &[
+                ("CODEX_CONSULT_TEST_MODE", "1"),
+                ("C3_MAINTAIN_MODELS", "announce"),
+                ("C3_MAINTAIN_TEST_HTTP", map.as_str()),
+            ],
+        );
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    };
+    let page_record = || -> Value {
+        let st: Value =
+            serde_json::from_str(&std::fs::read_to_string(mdir.join("state.json")).unwrap())
+                .unwrap();
+        st["models"]["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["source"] == "page:zai-docs")
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    // each backfill below starts from an empty spool
+    let clear_spool = || {
+        let dir = e.home.join("c3").join("telemetry");
+        for f in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let n = f.file_name().to_string_lossy().into_owned();
+            if n.starts_with("spool") && n.ends_with(".ndjson") {
+                std::fs::remove_file(f.path()).unwrap();
+            }
+        }
+    };
+    let mut sent_by_name = CLOSED_LISTS_ONLY;
+    sent_by_name[3] = "glm-9-page"; // row 4: a zai reviewer on glm-9-page
+
+    // 1. the label names the internal page (not public): the id is recorded with that URL
+    configure(internal, false);
+    maintain(internal);
+    let rec = page_record();
+    assert_eq!(rec["ids"], serde_json::json!(["glm-9-page"]), "{rec}");
+    assert_eq!(rec["url"], "https://wiki.acmecorp-internal.example:443/llm");
+    assert!(rec.get("public").is_none(), "{rec}");
+    // 2. the label now names a public vendor page; no refresh yet: the id stays `other`
+    configure(public, true);
+    assert_eq!(backfilled_models(&e), CLOSED_LISTS_ONLY);
+    assert!(!e.spool_lines().join("\n").contains("glm-9-page"));
+    // 3. an older build's label-only record of the same page: withheld as well
+    let legacy = serde_json::json!({"models": {"sources": [
+        {"source": "page:zai-docs", "ids": ["glm-9-page"]}
+    ]}});
+    std::fs::write(mdir.join("state.json"), legacy.to_string()).unwrap();
+    clear_spool();
+    assert_eq!(backfilled_models(&e), CLOSED_LISTS_ONLY);
+    // 4. a refresh reads the id from the public URL itself: now it is sent by name
+    maintain(public);
+    let rec = page_record();
+    assert_eq!(rec["url"], "https://docs.z.ai:443/models", "{rec}");
+    assert_eq!(rec["public"], true, "{rec}");
+    clear_spool();
+    assert_eq!(backfilled_models(&e), sent_by_name);
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
 #[test]
 fn without_a_maintain_state_the_closed_lists_decide() {
     let e = setup("tel-published-none");

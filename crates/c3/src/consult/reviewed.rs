@@ -12,12 +12,16 @@
 //!   the run is at most a warning.
 //! * `--diff <range>` ([`plan_diff`], [`write_patch`]): `git diff <range>` (ignored and
 //!   `.c3ignore`d files left out, secret-shaped values redacted) written into the task's handoffs
-//!   as `<stem>.<sha8>.patch` - one file per content - next to the brief and named in the prompt.
+//!   as `<stem>.<sha256>.patch` - one file per content, (0.2.5 A4, F57-5) named by the FULL digest
+//!   and never replacing a file (without hard links: `<stem>.<sha256>.<32 hex>.patch`, a name of
+//!   the run's own) - next to the brief and named in the prompt.
 //! * The warnings: a brief that names a git range given to an engine without a shell and without
 //!   `--diff` ([`named_ranges`]); `--rev` resuming a thread recorded on another revision
 //!   ([`resume_revision_warning`]).
 //! * (0.2.5 D7) A resume of a worktree-isolated engine's thread makes its worktree at the parent
-//!   run's recorded path ([`plan_resume_worktree`]; the ledger's `worktree.path`).
+//!   run's recorded path ([`plan_resume_worktree`]; the ledger's `worktree.path`) - (0.2.5 A4,
+//!   F57-7) the temp directory joined with the recorded name, when the recorded parent IS the temp
+//!   directory by file identity.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -60,7 +64,8 @@ pub struct IsolationPlan {
     pub sha: String,
     /// (0.2.5 D7) Where the worktree is made when this run RESUMES a thread of a worktree-isolated
     /// engine: the parent run's worktree path ([`plan_resume_worktree`]); `None` = a fresh random
-    /// path.
+    /// path. (0.2.5 A4, F57-7) Built from the temp directory and the recorded name, never the
+    /// recorded spelling ([`worktree::reusable_worktree_path`]).
     pub at: Option<PathBuf>,
     /// (0.2.5 D7) The sentence a kimi "created under a different directory" failure adds when this
     /// run resumes a thread whose worktree path is not known or could not be reused (`""`: none).
@@ -389,12 +394,18 @@ fn source_step(e: crate::contain::StepError, shown: &Path) -> Result<bool, Strin
 ///
 /// (0.2.5 D7) A run that resumes a thread of a worktree-isolated engine makes the worktree at the
 /// parent run's path ([`IsolationPlan::at`]); a path that is taken refuses the seat before anything
-/// starts ([`worktree::occupied_refusal`]) - nothing there is removed or reused.
+/// starts ([`worktree::occupied_refusal`]) - nothing there is removed or reused. (0.2.5 A4, F57-7) A
+/// worktree directory swapped between its claim and the check after the checkout refuses the seat
+/// the same way ([`worktree::replaced_refusal`]).
 pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<ReviewTree, SetupError> {
     let wt = ThrowawayWorktree::create_at(s.repo_root, plan.checkout(), plan.at.as_deref())
         .map_err(|e| match e {
             worktree::CreateError::Occupied(p) => {
                 SetupError::Refused(worktree::occupied_refusal(s.engine, &p))
+            }
+            // (0.2.5 A4, F57-7) the claimed directory was swapped before the checkout was verified
+            worktree::CreateError::Replaced(p, why) => {
+                SetupError::Refused(worktree::replaced_refusal(s.engine, &p, &why))
             }
             worktree::CreateError::Failed(e) => SetupError::Capability(format!(
                 "the reviewer's throwaway worktree could not be created: {e}"
@@ -693,12 +704,14 @@ pub struct DiffPlan {
     /// The task's handoffs directory the patch is written into.
     pub dir: PathBuf,
     /// (R5, F19-3) The file name before its content hash: the written file is
-    /// `<stem>.<sha8>.patch` ([`patch_stem`]).
+    /// `<stem>.<sha256>.patch` ([`patch_stem`]; (0.2.5 A4, F57-5) the full digest), or without hard
+    /// links `<stem>.<sha256>.<32 hex>.patch` ([`place_patch`]).
     pub stem: String,
-    /// The written file (empty until [`write_patch`] ran).
+    /// The written file (empty until [`write_patch`] ran): (0.2.5 A4, F57-5) the file the placement
+    /// published - the content name, or the run's own name where there are no hard links.
     pub path: PathBuf,
     /// The path the prompt names: repo-relative (`/`-separated) when the collab directory lies in
-    /// the repository, else absolute. Before the write it shows `<sha8>` in place of the hash.
+    /// the repository, else absolute. Before the write it shows `<sha256>` in place of the hash.
     pub rel: String,
     pub sha256: String,
     pub files: i64,
@@ -730,7 +743,7 @@ impl DiffPlan {
 }
 
 /// The patch's file-name stem in the task's handoffs (the written name is
-/// `<stem>.<sha8>.patch`, [`write_patch`]): next to a brief named `<NN>-<prefix>-<slug>.md` in
+/// `<stem>.<sha256>.patch`, [`write_patch`]): next to a brief named `<NN>-<prefix>-<slug>.md` in
 /// those handoffs, the brief's own stem (`<NN>-<prefix>-<slug>`); otherwise `<nn>-<prefix>-diff`
 /// with the run's handoff number (a panel member: the panel's first, so members share it) and the
 /// coordinator's brief prefix. A brief named like a reply (`04-codex-reply.md`) is not taken as a
@@ -790,7 +803,7 @@ pub fn plan_diff(
     );
     // the name the prompt shows until the write knows the hash (a dry run shows this one)
     let rel = format!(
-        "{}/{stem}.<sha8>.patch",
+        "{}/{stem}.<sha256>.patch",
         shown_path(repo_root, handoffs_dir).trim_end_matches(['/', '\\'])
     );
     DiffPlan {
@@ -1070,12 +1083,15 @@ pub fn render_patch_with(
                     repo.join(p)
                 }
             };
-            // a fresh temporary copy of the real index (nothing when the repository has none yet)
+            // a fresh temporary copy of the real index (nothing when the repository has none yet),
+            // (0.2.5 A4) with the real index's modification time ([`copy_index`])
             let fresh_index = || -> Result<PathBuf, String> {
                 let tmp = temp_index_path();
                 if index.is_file() {
-                    std::fs::copy(&index, &tmp)
-                        .map_err(|e| format!("the index could not be copied ({e})"))?;
+                    if let Err(e) = copy_index(&index, &tmp) {
+                        remove_temp_index(&tmp);
+                        return Err(format!("the index could not be copied ({e})"));
+                    }
                 }
                 Ok(tmp)
             };
@@ -1223,6 +1239,27 @@ fn temp_index_path() -> PathBuf {
     std::env::temp_dir().join(format!("c3-diff-index-{}", uuid::Uuid::new_v4().simple()))
 }
 
+/// (0.2.5 A4) Copy the index file `index` to the NEW file `tmp`, keeping the original's
+/// modification time. Git tells a "racily clean" entry - a file changed in the same instant (on
+/// a git that compares whole seconds: the same second) as the index was written, to the same size -
+/// by the index FILE's own modification time: an entry recorded at or after it is checked by
+/// content, every other one is trusted by its stat data. A copy with a new modification time made
+/// such an entry look clean, and a one-revision `--diff` patch came out without that change -
+/// empty, when it was the only one (seen on a Linux CI runner; `std::fs::copy` keeps the time on
+/// Windows, not on Linux). With the original's time git judges the copy exactly as it judges the
+/// real index (and smudges those entries when it writes the copy). The time and the bytes come from
+/// ONE open handle, so they belong to the same file even when git replaces the index meanwhile.
+fn copy_index(index: &Path, tmp: &Path) -> std::io::Result<()> {
+    let mut src = std::fs::File::open(index)?;
+    let modified = src.metadata()?.modified()?;
+    let mut dst = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp)?;
+    std::io::copy(&mut src, &mut dst)?;
+    dst.set_modified(modified)
+}
+
 /// Remove a temporary index and its lock file (best effort).
 fn remove_temp_index(tmp: &Path) {
     let _ = std::fs::remove_file(tmp);
@@ -1297,8 +1334,8 @@ fn hide_in_index(
 }
 
 /// (0.2.5 D4) The test hook that makes the patch placement behave as on a file system without hard
-/// links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`, any value): the placement by one rename is then
-/// proved.
+/// links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`, any value): (0.2.5 A4, F57-5) the publication
+/// under the run's own name ([`place_patch`]) is then proved.
 pub(crate) const PATCH_NO_HARDLINK_HOOK: &str = "CODEX_CONSULT_TEST_PATCH_NO_HARDLINK";
 
 /// (0.2.5 R8, F53-4 / F43-7) From this age (seconds since its last change) a write-temp file of C3's
@@ -1312,15 +1349,13 @@ enum AtName {
     Missing,
     /// A regular file holding exactly this patch's bytes: reused.
     Same,
-    /// (0.2.5 R8) An EMPTY regular file - the name claim of an earlier build's placement: replaced
-    /// by the rename.
-    Empty,
 }
 
 /// (0.2.5 R8, F51-3 / F52-2 / F53-6) What is at the patch name `leaf` of `dir`, read through a
-/// handle opened without following it. The name is the patch's content (`<stem>.<sha8>.patch`), so a
-/// regular file there holding other bytes is not this patch: an `Err` ("holds other bytes"), never
-/// overwritten - as is anything that is not a regular file (a link, a directory).
+/// handle opened without following it. The name is the patch's content (`<stem>.<sha256>.patch`),
+/// so a regular file there holding other bytes - (0.2.5 A4, F57-5) an empty one included: no build
+/// ever left an empty claim at a full-digest name - is not this patch: an `Err` ("holds other
+/// bytes"), never overwritten; as is anything that is not a regular file (a link, a directory).
 fn judge_patch_name(
     dir: &cap_std::fs::Dir,
     leaf: &std::ffi::OsStr,
@@ -1330,7 +1365,6 @@ fn judge_patch_name(
     use crate::contain::Step;
     match crate::contain::read_file_in(dir, leaf) {
         Ok(b) if b == bytes => Ok(AtName::Same),
-        Ok(b) if b.is_empty() => Ok(AtName::Empty),
         Ok(_) => Err(format!(
             "{shown} already holds other bytes; a patch file is never overwritten"
         )),
@@ -1342,16 +1376,20 @@ fn judge_patch_name(
     }
 }
 
+/// Whether `s` is exactly `n` hex digits.
+fn is_hex(s: &str, n: usize) -> bool {
+    s.len() == n && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// (0.2.5 R8, F53-4 / F43-7) Whether `name` is a write-temp name of C3's own patch pattern:
-/// `<stem>.<sha8>.<32 hex>.tmp` ([`patch_temp_name`]).
+/// `<stem>.<sha256>.<32 hex>.tmp` ([`patch_temp_name`]; (0.2.5 A4, F57-5) the full digest).
 fn is_patch_temp_name(name: &str) -> bool {
-    let hex = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_hexdigit());
     let Some(rest) = name.strip_suffix(".tmp") else {
         return false;
     };
     let mut parts = rest.rsplitn(3, '.');
     match (parts.next(), parts.next(), parts.next()) {
-        (Some(id), Some(sha8), Some(stem)) => !stem.is_empty() && hex(id, 32) && hex(sha8, 8),
+        (Some(id), Some(sha), Some(stem)) => !stem.is_empty() && is_hex(id, 32) && is_hex(sha, 64),
         _ => false,
     }
 }
@@ -1413,18 +1451,38 @@ fn open_patch_dir(
 /// with the SAME bytes is reused (a panel sibling, or an earlier run, rendered the same patch); one
 /// with other bytes, or anything that is not a regular file (a link, a directory), is an `Err`.
 ///
-/// (0.2.5 R8, F51-3 / F52-2 / F53-6) The name IS the content (`<stem>.<sha8>.patch`), so there is no
-/// claim protocol: the bytes go into a new temporary file in the handoffs directory (an exclusive
-/// create relative to the directory's handle, synced); then the name is judged
-/// ([`judge_patch_name`]) - the same bytes: the temporary file is removed and the patch reused;
-/// other bytes: refused, nothing overwritten; nothing there: published by a hard link relative to
-/// the handle where the file system has hard links, else by ONE atomic rename of the complete
-/// temporary file onto the name (two runs with equal bytes may both do it - the result is the same
-/// file). An EMPTY file at the name (an earlier build's claim) is replaced by that rename. The name is
-/// never removed by name, and never holds partial bytes: on every error path the temporary file is
-/// removed again, and a removal that fails is named in the `Err` (or, when the patch itself is in
-/// place, said on stderr). Stale write-temp files of C3's own pattern are swept first
-/// ([`sweep_stale_patch_temps`]).
+/// (0.2.5 R8, F51-3 / F52-2 / F53-6) The name IS the content, so there is no claim protocol: the
+/// bytes go into a new temporary file in the handoffs directory (an exclusive create relative to the
+/// directory's handle, synced); then the name is judged ([`judge_patch_name`]) - the same bytes: the
+/// temporary file is removed and the patch reused; other bytes: refused, nothing overwritten;
+/// nothing there: published by a hard link relative to the handle. Stale write-temp files of C3's
+/// own pattern are swept first ([`sweep_stale_patch_temps`]).
+///
+/// (0.2.5 A4, F57-5) The name carries the FULL sha256 (`<stem>.<sha256>.patch`), so two different
+/// patches never share it, and NO publication replaces a file:
+///
+/// * with hard links (the normal case) the publication is the hard link, which fails on an existing
+///   name - a name taken between the look and the link is judged again (the same bytes: reused;
+///   other bytes: refused);
+/// * without hard links there is no replacing rename onto the content name any more: the patch is
+///   published under the run's OWN name, `<stem>.<sha256>.<32 hex>.patch` ([`patch_run_name`]; the
+///   id is drawn here and never shown before), by a rename of the complete temporary file onto that
+///   fresh name after the handle showed nothing there (something there: another id is drawn).
+///   [`rename_onto`]'s retry on "access denied" serves this one rename.
+///
+/// `Ok` is the name the patch was published under - the content name or the run's own name; that
+/// is the file the plan, the prompt, the ledger and the collab exemption carry ([`write_patch`]).
+///
+/// The invariant: after `Ok(published)`, the file `dir/published` holds exactly `bytes` (whose
+/// sha256 the ledger records), and no file that existed before the placement was overwritten or
+/// removed - neither at the content name, nor at the run's own name, nor elsewhere in the directory,
+/// except write-temp files of C3's own pattern older than a day ([`sweep_stale_patch_temps`]). The
+/// one assumption: nobody creates a file at the run's own name in the instant between the look and
+/// the rename - a name holding 128 random bits that nothing has shown yet. The name is never removed
+/// by name, and never holds partial bytes: on every error path the temporary file is removed again,
+/// and a removal that fails is named in the `Err` (or, when the patch itself is in place, said on
+/// stderr). A patch an earlier build wrote under the short name (`<stem>.<sha8>.patch`) is another
+/// file: never reused, never removed.
 ///
 /// (0.2.5 D1, F43-1) The handoffs directory is reached through handles from the start
 /// ([`open_patch_dir`]).
@@ -1434,7 +1492,7 @@ fn place_patch(
     collab_root: &Path,
     name: &str,
     bytes: &[u8],
-) -> Result<(), String> {
+) -> Result<String, String> {
     let dir = open_patch_dir(dir_path, repo_root, collab_root)?;
     place_patch_in(&dir, dir_path, name, bytes)
 }
@@ -1444,9 +1502,10 @@ const RENAME_TRIES: u32 = 6;
 const RENAME_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// The one rename of a patch's temporary file onto its name, relative to the directory handle.
-/// On Windows a rename onto a name that a virus scanner or an indexer holds open for an instant
-/// fails with "access denied" (seen on 2026-11-24 on a file written a moment before): that one
-/// failure is tried again [`RENAME_TRIES`] times, [`RENAME_PAUSE`] apart, before it is reported.
+/// (0.2.5 A4, F57-5) The name is the run's own fresh name ([`patch_run_name`]), never the content
+/// name. On Windows a rename onto a name that a virus scanner or an indexer holds open for an
+/// instant fails with "access denied" (seen on 2026-11-24 on a file written a moment before): that
+/// one failure is tried again [`RENAME_TRIES`] times, [`RENAME_PAUSE`] apart, before it is reported.
 /// Every other error is returned at once.
 fn rename_onto(
     dir: &cap_std::fs::Dir,
@@ -1473,7 +1532,7 @@ fn place_patch_in(
     dir_path: &Path,
     name: &str,
     bytes: &[u8],
-) -> Result<(), String> {
+) -> Result<String, String> {
     use std::ffi::OsStr;
     let shown = dir_path.join(name).display().to_string();
     let leaf = OsStr::new(name);
@@ -1513,54 +1572,33 @@ fn place_patch_in(
     }
     // a name taken between the look and the hard link is judged again
     for _ in 0..3 {
-        let at = match judge_patch_name(dir, leaf, bytes, &shown) {
-            Ok(a) => a,
+        match judge_patch_name(dir, leaf, bytes, &shown) {
+            Ok(AtName::Same) => {
+                warn_left(remove_tmp());
+                return Ok(name.to_string());
+            }
+            Ok(AtName::Missing) => {}
             Err(m) => return Err(noted(m, remove_tmp())),
+        }
+        crate::engines::worktree::interleave("patch-place");
+        let linked = if c3_core::test_hooks::hook(PATCH_NO_HARDLINK_HOOK).is_some() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "hard links refused (test hook)",
+            ))
+        } else {
+            dir.hard_link(tmp, dir, leaf)
         };
-        crate::contain::race_point("patch-place");
-        let renamed = match at {
-            AtName::Same => {
+        match linked {
+            Ok(()) => {
                 warn_left(remove_tmp());
-                return Ok(());
+                return Ok(name.to_string());
             }
-            // an earlier build's empty claim: replaced by the one rename
-            AtName::Empty => rename_onto(dir, tmp, leaf),
-            AtName::Missing => {
-                let linked = if c3_core::test_hooks::hook(PATCH_NO_HARDLINK_HOOK).is_some() {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::Unsupported,
-                        "hard links refused (test hook)",
-                    ))
-                } else {
-                    dir.hard_link(tmp, dir, leaf)
-                };
-                match linked {
-                    Ok(()) => {
-                        warn_left(remove_tmp());
-                        return Ok(());
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                    // no hard links on this file system: one atomic rename of the whole file.
-                    // The limit: the look above and this rename are two steps, and a rename
-                    // replaces - a foreign file with OTHER bytes that appears at this
-                    // content-addressed name between them is replaced (a sibling's file has the
-                    // same bytes). With hard links the name is judged again instead.
-                    Err(_) => rename_onto(dir, tmp, leaf),
-                }
-            }
-        };
-        return match renamed {
-            Ok(()) => Ok(()),
-            // a sibling with the same bytes published the name meanwhile (and may hold it open)
-            Err(_) if matches!(judge_patch_name(dir, leaf, bytes, &shown), Ok(AtName::Same)) => {
-                warn_left(remove_tmp());
-                Ok(())
-            }
-            Err(e) => Err(noted(
-                format!("{shown} could not be placed ({e})"),
-                remove_tmp(),
-            )),
-        };
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            // (0.2.5 A4, F57-5) no hard links here: never a rename onto the content name (a
+            // rename replaces) - the run's own name instead
+            Err(_) => return publish_under_run_name(dir, dir_path, name, tmp, &noted, &remove_tmp),
+        }
     }
     Err(noted(
         format!("{shown} could not be placed: the name kept changing while it was placed"),
@@ -1568,16 +1606,71 @@ fn place_patch_in(
     ))
 }
 
-/// (0.2.5 D4) The write-temp name of the patch file `name` (`<stem>.<sha8>.patch`):
-/// `<stem>.<sha8>.<uuid>.tmp`, `uuid` 32 lowercase hex digits.
+/// (0.2.5 A4, F57-5) Where the file system has no hard links: publish the complete temporary file
+/// `tmp` under the run's own name ([`patch_run_name`]) - a fresh 32-hex id, a look through the
+/// handle that nothing is at that name (something there: another id), then the one rename
+/// ([`rename_onto`]). `Ok` is that name. On failure the temporary file is removed (`remove_tmp`)
+/// and the message says so (`noted`).
+fn publish_under_run_name(
+    dir: &cap_std::fs::Dir,
+    dir_path: &Path,
+    name: &str,
+    tmp: &std::ffi::OsStr,
+    noted: &dyn Fn(String, Option<std::io::Error>) -> String,
+    remove_tmp: &dyn Fn() -> Option<std::io::Error>,
+) -> Result<String, String> {
+    for _ in 0..3 {
+        let run_name = patch_run_name(name, &uuid::Uuid::new_v4().simple().to_string());
+        let run_leaf = std::ffi::OsStr::new(&run_name);
+        let shown = dir_path.join(&run_name).display().to_string();
+        match crate::contain::entry(dir, run_leaf) {
+            Ok(None) => {}
+            Ok(Some(_)) => continue,
+            Err(e) => {
+                return Err(noted(
+                    format!("{shown} cannot be checked ({e})"),
+                    remove_tmp(),
+                ))
+            }
+        }
+        return match rename_onto(dir, tmp, run_leaf) {
+            Ok(()) => Ok(run_name),
+            Err(e) => Err(noted(
+                format!("{shown} could not be placed ({e})"),
+                remove_tmp(),
+            )),
+        };
+    }
+    Err(noted(
+        format!(
+            "{} could not be placed: no free name of the run's own was found",
+            dir_path.join(name).display()
+        ),
+        remove_tmp(),
+    ))
+}
+
+/// (0.2.5 D4) The write-temp name of the patch file `name` (`<stem>.<sha256>.patch`):
+/// `<stem>.<sha256>.<uuid>.tmp`, `uuid` 32 lowercase hex digits.
 fn patch_temp_name(name: &str, uuid: &str) -> String {
     format!("{}.{uuid}.tmp", name.trim_end_matches(".patch"))
 }
 
+/// (0.2.5 A4, F57-5) The run's own name of the patch file `name` (`<stem>.<sha256>.patch`), under
+/// which it is published where there are no hard links: `<stem>.<sha256>.<id>.patch`, `id` 32
+/// lowercase hex digits drawn for this placement.
+fn patch_run_name(name: &str, id: &str) -> String {
+    format!("{}.{id}.patch", name.trim_end_matches(".patch"))
+}
+
 /// (0.2.5 D1, F27-3) Whether the collab-relative path `key` (`<task>/handoffs/<file>`, `/`) is
-/// the run's OWN patch: exactly the file [`write_patch`] wrote, or its write-temp name
-/// ([`patch_temp_name`]: the written name without `.patch`, a dot, 32 hex digits, `.tmp`) - nothing
-/// else that shares the patch's stem. Compared case-insensitively (the collab compare's way).
+/// the run's OWN patch: exactly the file [`write_patch`] wrote ([`DiffPlan::path`]), or its
+/// write-temp name (`<stem>.<sha256>.<32 hex>.tmp`, [`patch_temp_name`]) - nothing else that shares
+/// the patch's stem. (0.2.5 A4, F57-5) Where the run published under its own name
+/// (`<stem>.<sha256>.<32 hex>.patch`: the file system has no hard links), a panel sibling that
+/// rendered the SAME bytes publishes under a name of its own too, so a name of that shape with the
+/// same stem and digest is exempt then as well - never where the run's patch has the content name
+/// (a sibling then shares that one file). Compared case-insensitively (the collab compare's way).
 /// `false` before the patch was written.
 pub fn is_run_patch_file(plan: &DiffPlan, task: &str, key: &str) -> bool {
     let Some(name) = plan.path.file_name().and_then(|n| n.to_str()) else {
@@ -1591,14 +1684,18 @@ pub fn is_run_patch_file(plan: &DiffPlan, task: &str, key: &str) -> bool {
     let Some(file) = key.strip_prefix(&dir) else {
         return false;
     };
-    let name = name.to_ascii_lowercase();
-    if file == name {
+    if file == name.to_ascii_lowercase() {
         return true;
     }
-    let stem = format!("{}.", name.trim_end_matches(".patch"));
-    file.strip_prefix(&stem)
-        .and_then(|rest| rest.strip_suffix(".tmp"))
-        .is_some_and(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+    let content = format!("{}.{}", plan.stem, plan.sha256).to_ascii_lowercase();
+    let Some(rest) = file.strip_prefix(&format!("{content}.")) else {
+        return false;
+    };
+    if let Some(id) = rest.strip_suffix(".tmp") {
+        return is_hex(id, 32);
+    }
+    let published_own_name = !name.eq_ignore_ascii_case(&format!("{content}.patch"));
+    published_own_name && rest.strip_suffix(".patch").is_some_and(|id| is_hex(id, 32))
 }
 
 /// (0.2.5 D1, F28-3) How many byte sequences of `raw` are not valid UTF-8 - each becomes one U+FFFD
@@ -1709,10 +1806,13 @@ pub fn untracked_notice(plan: &DiffPlan) -> Option<String> {
 /// Write the `--diff` patch, filling in its name, sha256, file count, size and redaction count.
 /// (R5, F19-2) The patch passes through the redactor packs for remote models use
 /// ([`crate::pack::redact`]): a secret-shaped value is replaced by its marker, the rest is kept, and
-/// the sha256 is of the file as written. (R5, F19-3) The file is `<stem>.<sha8>.patch` - one file
+/// the sha256 is of the file as written. (R5, F19-3) The file is `<stem>.<sha256>.patch` - one file
 /// per content, never overwritten ([`place_patch`]): panel members that render the same bytes
-/// share it, a member that renders other bytes gets its own. `Err` is the capability failure the
-/// run records.
+/// share it, a member that renders other bytes gets its own. (0.2.5 A4, F57-5) The name carries the
+/// full digest; where there are no hard links the patch is published under the run's own name
+/// (`<stem>.<sha256>.<32 hex>.patch`), and the plan's `path` / `rel` - so the prompt, the ledger's
+/// `diff.patch` and the collab exemption - name the file the placement published. `Err` is the
+/// capability failure the run records.
 pub fn write_patch(
     plan: &mut DiffPlan,
     repo_root: &Path,
@@ -1732,10 +1832,10 @@ pub fn write_patch(
     let (safe, redactions) = crate::pack::redact::redact(&String::from_utf8_lossy(&raw));
     let bytes = safe.into_bytes();
     let sha = c3_core::sha256_hex(&bytes);
-    let name = format!("{}.{}.patch", plan.stem, &sha[..8]);
-    let path = plan.dir.join(&name);
-    place_patch(&plan.dir, repo_root, collab_root, &name, &bytes)
+    let name = format!("{}.{sha}.patch", plan.stem);
+    let published = place_patch(&plan.dir, repo_root, collab_root, &name, &bytes)
         .map_err(|e| format!("the -Diff patch could not be written: {e}"))?;
+    let path = plan.dir.join(&published);
     plan.rel = shown_path(repo_root, &path);
     plan.path = path;
     plan.sha256 = sha;
@@ -2006,12 +2106,12 @@ mod tests {
         let mut plan = plan_diff(&r, &handoffs, Some(&brief), 4, "claude", "HEAD");
         // (0.2.5 R8) the new file only with --diff-untracked
         plan.include_untracked = true;
-        assert_eq!(plan.rel, ".collab/t/handoffs/01-claude-x.<sha8>.patch");
+        assert_eq!(plan.rel, ".collab/t/handoffs/01-claude-x.<sha256>.patch");
         assert!(!plan.written());
         write_patch(&mut plan, &r, &r.join(".collab")).unwrap();
         let on_disk = std::fs::read(&plan.path).unwrap();
         assert_eq!(plan.sha256, c3_core::sha256_hex(&on_disk));
-        let rel = format!(".collab/t/handoffs/01-claude-x.{}.patch", &plan.sha256[..8]);
+        let rel = format!(".collab/t/handoffs/01-claude-x.{}.patch", plan.sha256);
         assert_eq!(plan.rel, rel);
         assert_eq!(plan.files, 2);
         assert_eq!(plan.redactions, 0);
@@ -2566,52 +2666,79 @@ mod tests {
 
     // (0.2.5 D4, F28-1) A patch on a file system without hard links (the test hook) is still put in
     // place from a COMPLETE temporary file: a write that fails half-way leaves neither the patch nor
-    // a temporary file; the placement then puts the whole patch under its name; a sibling with the
-    // same bytes reuses it; two placements racing on a fresh name both succeed with one whole file;
-    // other bytes under the name are never overwritten. No temporary file is left at any point.
+    // a temporary file. (0.2.5 A4, F57-5) It is published under the run's OWN name
+    // `<stem>.<sha256>.<32 hex>.patch` - never at the content name, where a rename would replace -
+    // and the plan, the prompt, the ledger and the collab exemption carry that path; a sibling with
+    // the same bytes gets a name of its own (each exempt for the other); two placements racing on one
+    // content both succeed at two names, each holding the whole patch; a file at the content name
+    // with the same bytes (a run with hard links put it there) is reused, one with other bytes is
+    // refused and kept. No temporary file is left at any point.
     #[test]
-    fn a_patch_without_hard_links_is_placed_whole_and_nothing_partial_is_left() {
+    fn a_patch_without_hard_links_is_published_under_the_runs_own_name() {
         let r = repo("nolink");
         std::fs::write(r.join("app.txt"), "two\n").unwrap();
         let handoffs = r.join(".collab/t/handoffs");
         std::fs::create_dir_all(&handoffs).unwrap();
         let collab = r.join(".collab");
-        let names = |d: &Path| -> Vec<String> {
-            let mut v: Vec<String> = std::fs::read_dir(d)
-                .unwrap()
-                .flatten()
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .collect();
-            v.sort();
-            v
+        let clear = |d: &Path| {
+            for n in dir_names(d) {
+                std::fs::remove_file(d.join(n)).unwrap();
+            }
         };
+        let file_name = |p: &Path| p.file_name().unwrap().to_string_lossy().to_string();
         let _nolink = c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1");
         {
             let _fail = c3_core::test_hooks::set_thread_hook(crate::contain::WRITE_FAIL_HOOK, "1");
             let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
             let err = write_patch(&mut p, &r, &collab).unwrap_err();
             assert!(err.contains("injected write failure"), "{err}");
-            assert!(names(&handoffs).is_empty(), "{:?}", names(&handoffs));
+            assert!(
+                dir_names(&handoffs).is_empty(),
+                "{:?}",
+                dir_names(&handoffs)
+            );
         }
         let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
         write_patch(&mut p, &r, &collab).unwrap();
         let bytes = std::fs::read(&p.path).unwrap();
         assert_eq!(p.sha256, c3_core::sha256_hex(&bytes));
-        let name = p.path.file_name().unwrap().to_string_lossy().to_string();
-        assert_eq!(names(&handoffs), vec![name.clone()]);
-        // (a panel member shares the panel's first handoff number, so the same stem)
+        let content = format!("{}.{}.patch", p.stem, p.sha256);
+        let own = file_name(&p.path);
+        let id = own
+            .strip_prefix(&format!("{}.{}.", p.stem, p.sha256))
+            .and_then(|rest| rest.strip_suffix(".patch"))
+            .unwrap_or("");
+        assert!(is_hex(id, 32), "the run's own name: {own}");
+        assert_eq!(dir_names(&handoffs), vec![own.clone()]);
+        // the prompt, the ledger and the collab exemption carry the published path
+        assert_eq!(p.rel, format!(".collab/t/handoffs/{own}"));
+        assert_eq!(ledger_diff_value(&p)["patch"], p.rel.as_str());
+        let line = diff_prompt_line(&p);
+        assert!(line.contains(&format!("`{}`", p.rel)), "{line}");
+        assert!(is_run_patch_file(&p, "t", &format!("t/handoffs/{own}")));
+        assert!(!is_run_patch_file(
+            &p,
+            "t",
+            &format!("t/handoffs/{content}")
+        ));
+        // (a panel member shares the panel's first handoff number, so the same stem) a sibling with
+        // the same bytes: a name of its own, the same bytes; each is exempt for the other
         let mut p2 = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
         write_patch(&mut p2, &r, &collab).unwrap();
-        assert_eq!(p2.path, p.path, "a sibling reuses the file");
-        // two placements racing on a fresh name
-        std::fs::remove_file(&p.path).unwrap();
+        assert_ne!(p2.path, p.path);
+        assert_eq!(std::fs::read(&p2.path).unwrap(), bytes);
+        let own2 = file_name(&p2.path);
+        assert!(is_run_patch_file(&p, "t", &format!("t/handoffs/{own2}")));
+        assert!(is_run_patch_file(&p2, "t", &format!("t/handoffs/{own}")));
+        // two placements racing on one content: two names, each the whole patch
+        clear(&handoffs);
         let racers: Vec<_> = (0..2)
             .map(|_| {
                 let (dir, rr, cc, name, bytes) = (
                     handoffs.clone(),
                     r.clone(),
                     collab.clone(),
-                    name.clone(),
+                    content.clone(),
                     bytes.clone(),
                 );
                 std::thread::spawn(move || {
@@ -2620,21 +2747,230 @@ mod tests {
                 })
             })
             .collect();
-        for t in racers {
-            assert_eq!(t.join().unwrap(), Ok(()));
+        let mut placed: Vec<String> = racers
+            .into_iter()
+            .map(|t| t.join().unwrap().unwrap())
+            .collect();
+        placed.sort();
+        assert_ne!(placed[0], placed[1]);
+        assert!(!placed.contains(&content), "{placed:?}");
+        for n in &placed {
+            assert_eq!(std::fs::read(handoffs.join(n)).unwrap(), bytes, "{n}");
         }
-        assert_eq!(std::fs::read(&p.path).unwrap(), bytes);
-        assert_eq!(names(&handoffs), vec![name.clone()]);
-        // other bytes under the name are never overwritten
-        std::fs::remove_file(&p.path).unwrap();
-        std::fs::write(&p.path, "somebody else's bytes\n").unwrap();
-        let err = place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap_err();
+        assert_eq!(dir_names(&handoffs), placed);
+        // the same bytes at the content name (a run with hard links put them there): reused
+        clear(&handoffs);
+        std::fs::write(handoffs.join(&content), &bytes).unwrap();
+        assert_eq!(
+            place_patch(&handoffs, &r, &collab, &content, &bytes),
+            Ok(content.clone())
+        );
+        assert_eq!(dir_names(&handoffs), vec![content.clone()]);
+        // other bytes under the content name are never overwritten, and nothing is placed
+        std::fs::write(handoffs.join(&content), "somebody else's bytes\n").unwrap();
+        let err = place_patch(&handoffs, &r, &collab, &content, &bytes).unwrap_err();
         assert!(err.contains("never overwritten"), "{err}");
         assert_eq!(
-            std::fs::read_to_string(&p.path).unwrap(),
+            std::fs::read_to_string(handoffs.join(&content)).unwrap(),
             "somebody else's bytes\n"
         );
-        assert_eq!(names(&handoffs), vec![name]);
+        assert_eq!(dir_names(&handoffs), vec![content]);
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5 A4, F57-5; the reviewer's RC4) Two DIFFERENT patches forced to ONE final name (the name
+    // injected), the second placed at the first one's race point `patch-place` - after the first
+    // looked at the name, before it publishes. Without hard links both succeed at DIFFERENT paths
+    // (each its run's own name); with hard links the second takes the name and the first is refused
+    // ("holds other bytes"). Every successful placement's path holds its own bytes, and no
+    // temporary file is left. Equal bytes from two runs with hard links, interleaved the same way,
+    // share one file.
+    #[test]
+    fn two_different_patches_forced_to_one_name_never_share_a_path() {
+        let r = repo("rc4");
+        let handoffs = r.join(".collab/t/handoffs");
+        std::fs::create_dir_all(&handoffs).unwrap();
+        let collab = r.join(".collab");
+        let name = format!("01-claude-diff.{}.patch", "ab".repeat(32));
+        let first = b"diff --git a/one b/one\n+first\n".to_vec();
+        let second = b"diff --git a/two b/two\n+second\n".to_vec();
+        type Late = std::rc::Rc<std::cell::RefCell<Option<Result<String, String>>>>;
+        // place `bytes` under `name` at the next `patch-place` point of this thread
+        let at_race_point = |late: &Late, bytes: &[u8]| {
+            let (late, dir, rr, cc, name, bytes) = (
+                late.clone(),
+                handoffs.clone(),
+                r.clone(),
+                collab.clone(),
+                name.clone(),
+                bytes.to_vec(),
+            );
+            worktree::interleave_hook::at("patch-place", move || {
+                *late.borrow_mut() = Some(place_patch(&dir, &rr, &cc, &name, &bytes));
+            })
+        };
+        for nolink in [true, false] {
+            for n in dir_names(&handoffs) {
+                std::fs::remove_file(handoffs.join(n)).unwrap();
+            }
+            let _h =
+                nolink.then(|| c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1"));
+            let late = Late::default();
+            let _race = at_race_point(&late, &second);
+            let a = place_patch(&handoffs, &r, &collab, &name, &first);
+            let b = late
+                .borrow_mut()
+                .take()
+                .expect("the second placement ran at the race point");
+            let mut placed = Vec::new();
+            for (res, bytes) in [(&a, &first), (&b, &second)] {
+                if let Ok(published) = res {
+                    assert_eq!(
+                        &std::fs::read(handoffs.join(published)).unwrap(),
+                        bytes,
+                        "nolink {nolink}: {published} holds its own bytes"
+                    );
+                    placed.push(published.clone());
+                }
+            }
+            if nolink {
+                assert_eq!(placed.len(), 2, "both placed: {a:?} {b:?}");
+                assert_ne!(placed[0], placed[1], "two paths");
+                assert!(!placed.contains(&name), "{placed:?}");
+            } else {
+                assert_eq!(b, Ok(name.clone()));
+                let err = a.unwrap_err();
+                assert!(
+                    err.contains("holds other bytes") && err.contains("never overwritten"),
+                    "{err}"
+                );
+            }
+            placed.sort();
+            assert_eq!(dir_names(&handoffs), placed, "nolink {nolink}");
+        }
+        // equal bytes with hard links: the second run takes the name, the first reuses it
+        for n in dir_names(&handoffs) {
+            std::fs::remove_file(handoffs.join(n)).unwrap();
+        }
+        let late = Late::default();
+        let _race = at_race_point(&late, &first);
+        let a = place_patch(&handoffs, &r, &collab, &name, &first);
+        let b = late.borrow_mut().take().expect("ran at the race point");
+        assert_eq!((a, b), (Ok(name.clone()), Ok(name.clone())));
+        assert_eq!(dir_names(&handoffs), vec![name.clone()]);
+        assert_eq!(std::fs::read(handoffs.join(&name)).unwrap(), first);
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5 A4, F57-5) A foreign file that appears at the patch's content name between the look and
+    // the publication (the race point `patch-place`) survives byte for byte: with hard links the
+    // placement is refused; without them the patch is published under the run's own name beside it.
+    #[test]
+    fn a_foreign_file_appearing_at_the_patch_name_survives_byte_for_byte() {
+        let r = repo("foreign");
+        let handoffs = r.join(".collab/t/handoffs");
+        std::fs::create_dir_all(&handoffs).unwrap();
+        let collab = r.join(".collab");
+        let bytes = b"diff --git a/x b/x\n+x\n".to_vec();
+        let name = format!("01-claude-diff.{}.patch", c3_core::sha256_hex(&bytes));
+        let foreign = handoffs.join(&name);
+        for nolink in [false, true] {
+            for n in dir_names(&handoffs) {
+                std::fs::remove_file(handoffs.join(n)).unwrap();
+            }
+            let _h =
+                nolink.then(|| c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1"));
+            let _race = {
+                let foreign = foreign.clone();
+                worktree::interleave_hook::at("patch-place", move || {
+                    std::fs::write(&foreign, "a foreign file\n").unwrap();
+                })
+            };
+            let res = place_patch(&handoffs, &r, &collab, &name, &bytes);
+            assert_eq!(
+                std::fs::read_to_string(&foreign).unwrap(),
+                "a foreign file\n",
+                "nolink {nolink}: the foreign file survives"
+            );
+            if nolink {
+                let published = res.unwrap();
+                assert_ne!(published, name);
+                assert_eq!(std::fs::read(handoffs.join(&published)).unwrap(), bytes);
+                let mut want = vec![name.clone(), published];
+                want.sort();
+                assert_eq!(dir_names(&handoffs), want);
+            } else {
+                let err = res.unwrap_err();
+                assert!(err.contains("holds other bytes"), "{err}");
+                assert_eq!(dir_names(&handoffs), vec![name.clone()]);
+            }
+        }
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5 A4) THE RACY INDEX (CI run 45402117704): a tracked file changed to the same size in the
+    // same instant as the index was written is "racily clean" - git finds the change by content
+    // only because the entry is not older than the index FILE. The temporary index a one-revision
+    // patch is rendered with is a copy of the real one that keeps its modification time
+    // ([`copy_index`]), so the patch holds the change. The condition is made by hand: the entry's
+    // time and the index file's time are set to one past instant (ctime not trusted, so only the
+    // stat data that can be set decide), with something under `.collab/` for the patch to leave
+    // out. On Linux a plain copy (`std::fs::copy`: a new time) shows the empty diff the old copy gave.
+    #[test]
+    fn a_racily_clean_change_is_in_a_one_revision_patch() {
+        let r = repo("racy");
+        git_capture(&r, &["config", "core.trustctime", "false"]).unwrap();
+        let app = r.join("app.txt");
+        let index = r.join(".git").join("index");
+        let then = std::time::SystemTime::now() - std::time::Duration::from_secs(30);
+        let set_then = |p: &Path| {
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .unwrap()
+                .set_modified(then)
+                .unwrap()
+        };
+        // the index records app.txt ("one\n") with the past time
+        set_then(&app);
+        git_capture(&r, &["update-index", "--refresh"]).unwrap();
+        // the same size and the same time: its stat data match the entry; the index file gets that
+        // same instant, so the entry is racily clean
+        std::fs::write(&app, "two\n").unwrap();
+        set_then(&app);
+        set_then(&index);
+        std::fs::create_dir_all(r.join(".collab/t/handoffs")).unwrap();
+        std::fs::write(r.join(".collab/t/handoffs/01-claude-x.md"), "b\n").unwrap();
+        let ex = diff_excludes(&r, &r.join(".collab"));
+        let spec = parse_diff_spec("HEAD").unwrap();
+        for _ in 0..2 {
+            let p = String::from_utf8(render_patch(&r, &spec, &ex).unwrap()).unwrap();
+            assert!(
+                p.contains("-one") && p.contains("+two"),
+                "the change is in the patch: {p:?}"
+            );
+        }
+        let mut plan = plan_diff(&r, &r.join(".collab/t/handoffs"), None, 2, "claude", "HEAD");
+        write_patch(&mut plan, &r, &r.join(".collab")).unwrap();
+        assert_ne!(
+            plan.sha256,
+            c3_core::sha256_hex(b""),
+            "never an empty patch for a changed file"
+        );
+        assert_eq!(plan.files, 1);
+        #[cfg(target_os = "linux")]
+        {
+            let plain = temp_index_path();
+            std::fs::copy(&index, &plain).unwrap();
+            let d = git_out(&r, &["diff", "HEAD", "--", "app.txt"], Some(&plain), None);
+            remove_temp_index(&plain);
+            let d = d.unwrap();
+            assert!(
+                d.is_empty(),
+                "a copy with a new time hides the change: {}",
+                String::from_utf8_lossy(&d)
+            );
+        }
         let _ = std::fs::remove_dir_all(r.parent().unwrap());
     }
 
@@ -2866,10 +3202,13 @@ mod tests {
 
     // (0.2.5 D1, F27-3) The collab comparison exempts exactly the patch the run wrote and its
     // write-temp name - nothing else that shares the patch's stem (a reviewer's `<stem>.notes.md`
-    // stays a change).
+    // stays a change). (0.2.5 A4, F57-5) The names carry the full digest; an earlier build's short
+    // name is not the run's; where the run published under its own name (no hard links), a
+    // sibling's own name for the same content is exempt too - never where it has the content name.
     #[test]
     fn the_runs_own_patch_is_the_only_exempt_file() {
-        let sha = format!("{}{}", "ab12cd34", "0".repeat(56));
+        let sha = format!("ab12cd34{}", "0".repeat(56));
+        let content = format!("04-claude-diff.{sha}.patch");
         let mut plan = DiffPlan {
             stem: "04-claude-diff".into(),
             dir: PathBuf::from("c/t/handoffs"),
@@ -2879,34 +3218,63 @@ mod tests {
         assert!(!is_run_patch_file(
             &plan,
             "t",
-            "t/handoffs/04-claude-diff.ab12cd34.patch"
+            &format!("t/handoffs/{content}")
         ));
-        plan.sha256 = sha;
-        plan.path = PathBuf::from("c/t/handoffs/04-claude-diff.ab12cd34.patch");
+        plan.sha256 = sha.clone();
+        plan.path = PathBuf::from(format!("c/t/handoffs/{content}"));
         let uuid = uuid::Uuid::new_v4().simple().to_string();
+        let other = uuid::Uuid::new_v4().simple().to_string();
         assert_eq!(
-            patch_temp_name("04-claude-diff.ab12cd34.patch", &uuid),
-            format!("04-claude-diff.ab12cd34.{uuid}.tmp")
+            patch_temp_name(&content, &uuid),
+            format!("04-claude-diff.{sha}.{uuid}.tmp")
+        );
+        assert_eq!(
+            patch_run_name(&content, &uuid),
+            format!("04-claude-diff.{sha}.{uuid}.patch")
         );
         for exempt in [
-            "t/handoffs/04-claude-diff.ab12cd34.patch".to_string(),
-            "T/Handoffs/04-CLAUDE-DIFF.AB12CD34.PATCH".to_string(),
-            format!("t/handoffs/04-claude-diff.ab12cd34.{uuid}.tmp"),
+            format!("t/handoffs/{content}"),
+            format!("T/Handoffs/{}", content.to_uppercase()),
+            format!("t/handoffs/04-claude-diff.{sha}.{uuid}.tmp"),
         ] {
             assert!(is_run_patch_file(&plan, "t", &exempt), "{exempt}");
         }
-        for watched in [
-            "t/handoffs/04-claude-diff.notes.md",
-            "t/handoffs/04-claude-diff.ab12cd34.notes.md",
-            "t/handoffs/04-claude-diff.ffffffff.patch",
-            "t/handoffs/04-claude-diff.ab12cd34.patch.bak",
-            "t/handoffs/04-claude-diff.ab12cd34.not-a-uuid.tmp",
-            "t/handoffs/04-claude-diff.ab12cd34.0123456789abcdef0123456789abcdeg.tmp",
-            "t/04-claude-diff.ab12cd34.patch",
-            "other/handoffs/04-claude-diff.ab12cd34.patch",
+        let watched = |plan: &DiffPlan, extra: &[String]| {
+            let mut v: Vec<String> = vec![
+                "t/handoffs/04-claude-diff.notes.md".into(),
+                format!("t/handoffs/04-claude-diff.{sha}.notes.md"),
+                format!("t/handoffs/04-claude-diff.{}.patch", "f".repeat(64)),
+                // an earlier build's short name of the same content
+                "t/handoffs/04-claude-diff.ab12cd34.patch".into(),
+                format!("t/handoffs/04-claude-diff.ab12cd34.{uuid}.tmp"),
+                format!("t/handoffs/{content}.bak"),
+                format!("t/handoffs/04-claude-diff.{sha}.not-a-uuid.tmp"),
+                format!("t/handoffs/04-claude-diff.{sha}.0123456789abcdef0123456789abcdeg.tmp"),
+                format!("t/handoffs/04-claude-diff.{}.{uuid}.patch", "f".repeat(64)),
+                format!("t/{content}"),
+                format!("other/handoffs/{content}"),
+            ];
+            v.extend_from_slice(extra);
+            for w in &v {
+                assert!(!is_run_patch_file(plan, "t", w), "{w}");
+            }
+        };
+        // the run's patch has the content name: a name of the run-own shape is not exempt
+        watched(
+            &plan,
+            &[format!("t/handoffs/04-claude-diff.{sha}.{other}.patch")],
+        );
+        // the run published under its own name (no hard links): a sibling's own name for the SAME
+        // content is exempt as well; the content name is not the run's file then
+        plan.path = PathBuf::from(format!("c/t/handoffs/{}", patch_run_name(&content, &uuid)));
+        for exempt in [
+            format!("t/handoffs/04-claude-diff.{sha}.{uuid}.patch"),
+            format!("t/handoffs/04-claude-diff.{sha}.{other}.patch"),
+            format!("t/handoffs/04-claude-diff.{sha}.{other}.tmp"),
         ] {
-            assert!(!is_run_patch_file(&plan, "t", watched), "{watched}");
+            assert!(is_run_patch_file(&plan, "t", &exempt), "{exempt}");
         }
+        watched(&plan, &[format!("t/handoffs/{content}")]);
     }
 
     // (0.2.5 D1, F28-2) More than 500 changed paths excluded by the ignore rules no longer refuse a
@@ -3297,12 +3665,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(r2.parent().unwrap());
     }
 
-    // (0.2.5 R8, F51-3 / F52-2 / F53-6) No claims: an EMPTY file at the patch name (an earlier
-    // build's claim) is replaced by the patch at once - with and without hard links -, nothing else is
-    // left in the directory, and a file with other bytes is still never overwritten (nothing is
-    // removed by name).
+    // (0.2.5 A4, F57-5) Nothing is replaced any more: an EMPTY file at the full-digest name is a file
+    // with other bytes - refused and kept, with and without hard links (no build ever left an empty
+    // claim at a full-digest name: the earlier builds' names were short). A patch an earlier build
+    // wrote under the SHORT name (`<stem>.<sha8>.patch`), and an earlier build's empty claim, are
+    // other files: the patch is placed at its own full-digest name beside them, and they are never
+    // reused or removed.
     #[test]
-    fn an_empty_leftover_claim_is_replaced_and_other_bytes_are_refused() {
+    fn an_empty_file_at_the_patch_name_is_refused_and_a_short_name_is_left_alone() {
         let r = repo("empty-claim");
         std::fs::write(r.join("app.txt"), "two\n").unwrap();
         let handoffs = r.join(".collab/t/handoffs");
@@ -3311,16 +3681,9 @@ mod tests {
         write_patch(&mut p, &r, &collab).unwrap();
         let bytes = std::fs::read(&p.path).unwrap();
         let name = p.path.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(name, format!("02-claude-diff.{}.patch", p.sha256));
         for nolink in [false, true] {
             std::fs::write(&p.path, b"").unwrap();
-            let _h =
-                nolink.then(|| c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1"));
-            place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap();
-            assert_eq!(std::fs::read(&p.path).unwrap(), bytes, "nolink {nolink}");
-            assert_eq!(dir_names(&handoffs), vec![name.clone()]);
-        }
-        for nolink in [false, true] {
-            std::fs::write(&p.path, "somebody else's bytes\n").unwrap();
             let _h =
                 nolink.then(|| c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1"));
             let err = place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap_err();
@@ -3328,18 +3691,34 @@ mod tests {
                 err.contains("holds other bytes") && err.contains("never overwritten"),
                 "{err}"
             );
-            assert_eq!(
-                std::fs::read_to_string(&p.path).unwrap(),
-                "somebody else's bytes\n"
+            assert!(
+                std::fs::read(&p.path).unwrap().is_empty(),
+                "nolink {nolink}: the empty file is kept"
             );
             assert_eq!(dir_names(&handoffs), vec![name.clone()]);
         }
+        // an earlier build's short names: its patch of these bytes, and an empty claim
+        std::fs::remove_file(&p.path).unwrap();
+        let short = format!("02-claude-diff.{}.patch", &p.sha256[..8]);
+        let claim = "02-claude-diff.deadbeef.patch".to_string();
+        std::fs::write(handoffs.join(&short), &bytes).unwrap();
+        std::fs::write(handoffs.join(&claim), b"").unwrap();
+        let mut p2 = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        write_patch(&mut p2, &r, &collab).unwrap();
+        assert_eq!(p2.path, p.path, "placed at its full-digest name");
+        assert_eq!(std::fs::read(&p2.path).unwrap(), bytes);
+        assert_eq!(std::fs::read(handoffs.join(&short)).unwrap(), bytes);
+        assert!(std::fs::read(handoffs.join(&claim)).unwrap().is_empty());
+        let mut want = vec![name, short.clone(), claim];
+        want.sort();
+        assert_eq!(dir_names(&handoffs), want);
+        assert!(!is_run_patch_file(&p2, "t", &format!("t/handoffs/{short}")));
         let _ = std::fs::remove_dir_all(r.parent().unwrap());
     }
 
     // (0.2.5 R8, F53-4 / F43-7) A placement sweeps the write-temp files of C3's own pattern older
     // than a day from the handoffs directory; a fresh one (a sibling's placement in flight) and a
-    // name of another pattern stay.
+    // name of another pattern stay. (0.2.5 A4, F57-5) The pattern carries the full digest.
     #[test]
     fn stale_patch_temps_are_swept_when_a_patch_is_placed() {
         let r = repo("sweep");
@@ -3348,8 +3727,9 @@ mod tests {
         std::fs::create_dir_all(&handoffs).unwrap();
         let collab = r.join(".collab");
         let id = "0123456789abcdef0123456789abcdef";
-        let stale = handoffs.join(format!("01-claude-diff.deadbeef.{id}.tmp"));
-        let fresh = handoffs.join(format!("01-claude-diff.cafef00d.{id}.tmp"));
+        let (dead, cafe) = ("deadbeef".repeat(8), "cafef00d".repeat(8));
+        let stale = handoffs.join(format!("01-claude-diff.{dead}.{id}.tmp"));
+        let fresh = handoffs.join(format!("01-claude-diff.{cafe}.{id}.tmp"));
         let foreign = handoffs.join("notes.deadbeef.tmp");
         for f in [&stale, &fresh, &foreign] {
             std::fs::write(f, "partial").unwrap();
@@ -3368,7 +3748,11 @@ mod tests {
             &stale.file_name().unwrap().to_string_lossy()
         ));
         assert!(!is_patch_temp_name("notes.deadbeef.tmp"));
-        assert!(!is_patch_temp_name(&format!(".deadbeef.{id}.tmp")));
+        assert!(!is_patch_temp_name(&format!(".{dead}.{id}.tmp")));
+        // the short-digest temp name of an earlier build is not this pattern
+        assert!(!is_patch_temp_name(&format!(
+            "01-claude-diff.deadbeef.{id}.tmp"
+        )));
         let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
         write_patch(&mut p, &r, &collab).unwrap();
         let names = dir_names(&handoffs);

@@ -482,6 +482,7 @@ dependencies = [
  "globset",
  "ignore",
  "regex",
+ "rustix",
  "rustls",
  "serde",
  "serde_json",
@@ -493,6 +494,7 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots 0.26.11",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -74,7 +74,7 @@ pub struct ConsultArgs {
     /// Hand the reviewer the change as a patch: `git diff <range>` (base..head, base...head, or one
     /// revision against the working tree: its tracked changes, new files with `--diff-untracked`) is
     /// written into the task's handoffs as
-    /// `<stem>.<sha8>.patch` (.collab/, .c3/ and ignored or .c3ignore'd files left out,
+    /// `<stem>.<sha256>.patch` (.collab/, .c3/ and ignored or .c3ignore'd files left out,
     /// secret-shaped values redacted) and named in the prompt (an http reviewer gets it in its
     /// pack); the ledger records the range, the patch's sha256 and the redaction count.
     #[arg(long, default_value = "")]

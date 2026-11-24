@@ -693,3 +693,57 @@ stderr:
     assert!(task_lock_released(&f.repo), "the task lock is released");
     let _ = std::fs::remove_dir_all(&f.work);
 }
+
+/// (0.2.5, acceptance F57-6 / RC5) A real panel whose collab directory is a real `.c3/collab` and
+/// whose task directory is a junction to an empty directory elsewhere: refused at its start, in one
+/// line that names the junction, before any member starts - nothing (no handoff, task lock, reserved
+/// record or ledger) appears at the junction's target.
+#[test]
+fn a_panel_with_a_linked_task_directory_in_the_project_folder_is_refused() {
+    let f = fixture("panel-linked-task", ROSTER_LIGHT);
+    let target = f.work.join("elsewhere");
+    std::fs::create_dir_all(&target).unwrap();
+    let collab = f.repo.join(".c3").join("collab");
+    std::fs::create_dir_all(&collab).unwrap();
+    let made = Command::new("cmd")
+        .args(["/c", "mklink", "/J"])
+        .arg(collab.join("t"))
+        .arg(&target)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    assert!(made, "mklink /J");
+    let out = f.run(&[
+        "consult",
+        "--task",
+        "t",
+        "--panel",
+        "--collab-dir",
+        ".c3/collab",
+        "--prompt",
+        "x",
+        "--purpose",
+        "acceptance",
+        "--require",
+        "#2",
+        "--reply-name",
+        "lr",
+    ]);
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(1), "{all}");
+    assert!(
+        all.contains(".c3/collab/t is a link") && all.contains("nothing was started"),
+        "{all}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&target).unwrap().count(),
+        0,
+        "nothing at the junction's target: {all}"
+    );
+    let _ = std::fs::remove_dir(collab.join("t"));
+    let _ = std::fs::remove_dir_all(&f.work);
+}

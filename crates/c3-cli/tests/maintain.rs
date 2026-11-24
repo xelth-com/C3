@@ -772,6 +772,101 @@ fn a_pending_recovery_whose_smoke_passes_clears_the_record() {
     );
 }
 
+// --------------------------------------- (F57-3) a recovery never credits a smoke to a version that did not run
+
+fn grok_state(e: &Env) -> serde_json::Value {
+    let state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(e.state_path()).unwrap()).unwrap();
+    state["engines"][0].clone()
+}
+
+/// (F57-3, the reviewer's RC2 second half) previous, target and installed are three distinct
+/// versions (1.0.77 -> 1.0.80 was pending, 1.0.79 is installed): a passing smoke is recorded for
+/// 1.0.79 - the action and the state name it - and the pending target is NOT verified; a failing
+/// smoke of the third version names it too and rolls back to the recorded previous version.
+#[test]
+fn a_pending_recovery_never_credits_a_third_installed_version_to_the_target() {
+    let e = setup("pend-third");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let env = e.grok_env("1.0.79", "1.0.80", "grok::grok-4.7=pass");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.79 - pending update to 1.0.80 not verified: 1.0.79 is installed instead (changed since the update was recorded); the smoke passed on 1.0.79"),
+        "{t}"
+    );
+    assert!(!t.contains("update to 1.0.80 verified"), "{t}");
+    assert!(!t.contains("recovered"), "{t}");
+    let rec = grok_state(&e);
+    assert_eq!(rec["installed"], "1.0.79", "{rec}");
+    let action = rec["action"].as_str().unwrap_or_default();
+    assert!(
+        action.starts_with("pending update to 1.0.80 not verified: 1.0.79 is installed instead")
+            && action.ends_with("the smoke passed on 1.0.79"),
+        "{rec}"
+    );
+    // the record is cleared, the truth stays in the state; nothing was installed or rolled back
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+    assert_eq!(verfile(&e.grok_verfile), "1.0.79");
+    assert!(!e.mnt_log().contains("update --version"), "{}", e.mnt_log());
+
+    // the third version FAILS its smoke: named in the clause, rolled back to the previous version
+    let e = setup("pend-third-fail");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let env = e.grok_env("1.0.79", "1.0.80", "grok::grok-4.7=fail");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.79 - recovered (1.0.79 is installed, not the pending target 1.0.80): smoke failed, rolled back to 1.0.77"),
+        "{t}"
+    );
+    assert!(!t.contains("verified"), "{t}");
+    assert_eq!(verfile(&e.grok_verfile), "1.0.77");
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+}
+
+/// (F57-3) An installed version that cannot be read verifies nothing: no smoke is run, the action
+/// and the state say the pending update to the target is not verified, and the record is kept.
+#[test]
+fn a_pending_recovery_with_an_unreadable_installed_version_verifies_nothing() {
+    let e = setup("pend-unknown");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    // the fake prints "grok nightly" -> no version token -> the installed version is unknown
+    let env = e.grok_env("nightly", "1.0.80", "grok::grok-4.7=pass");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok unknown - pending update to 1.0.80 unresolved: the installed version cannot be read, so the update is not verified (no smoke run)"),
+        "{t}"
+    );
+    assert!(!t.contains("verified after"), "{t}");
+    assert!(!t.contains("recovered"), "{t}");
+    let rec = grok_state(&e);
+    assert_eq!(rec["installed"], "unknown", "{rec}");
+    assert!(
+        rec["action"].as_str().unwrap_or_default().starts_with(
+            "pending update to 1.0.80 unresolved: the installed version cannot be read"
+        ),
+        "{rec}"
+    );
+    let pending = e.pending_json();
+    assert!(
+        pending.contains("\"engine\":\"grok\"") && pending.contains("\"target\":\"1.0.80\""),
+        "the record is kept: {pending}"
+    );
+    assert_eq!(verfile(&e.grok_verfile), "nightly", "nothing was installed");
+    assert!(!e.mnt_log().contains("update --version"), "{}", e.mnt_log());
+}
+
 // ------------------------------------------------------------------ (R2) a pending record that cannot be persisted holds the install
 
 #[test]

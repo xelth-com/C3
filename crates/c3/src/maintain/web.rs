@@ -30,12 +30,14 @@ pub const MAX_IDS: usize = 5000;
 const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A configured documentation page: a label, an https URL and a regex with ONE capture group whose
-/// every capture is a candidate id.
+/// every capture is a candidate id. (F57-1) `public` is the page's `"public": true` at the time it
+/// is read - recorded with its ids ([`SourceList::public`]).
 #[derive(Debug, Clone)]
 pub struct Page {
     pub name: String,
     pub url: String,
     pub pattern: regex::Regex,
+    pub public: bool,
 }
 
 /// Whether the public sources are fetched: `C3_MODEL_WEB=off` (environment wins) or `"model_web":
@@ -67,6 +69,7 @@ pub fn configured_sources() -> (Vec<String>, Vec<Page>) {
                         name: p.name.clone(),
                         url: p.url.clone(),
                         pattern: re,
+                        public: p.public,
                     })
                 })
                 .collect();
@@ -79,12 +82,11 @@ pub fn configured_sources() -> (Vec<String>, Vec<Page>) {
     }
 }
 
-/// (F16-1, F17-5) The source name of a catalog: `web:<url>` - its FULL canonical URL, the identity
-/// of the source: the lower-case scheme and host, the port (the scheme's default when none is
-/// written), the path and the query (`web:https://openrouter.ai:443/api/v1/models`). Two catalogs
-/// on one host are two sources, each fetched and recorded under its own name, each trusted only
-/// by its own config entry.
-pub fn catalog_source(url: &str) -> Option<String> {
+/// (F16-1, F17-5, F57-1) The canonical form of a public source's URL - the ONE rule by which a
+/// catalog and a page are identified, recorded and trusted: `https://` only, the lower-case host,
+/// the port (the scheme's default when none is written), the path and the query
+/// (`https://openrouter.ai:443/api/v1/models`); the fragment is dropped. `None` for anything else.
+pub fn canonical_url(url: &str) -> Option<String> {
     let u = url::Url::parse(url).ok()?;
     if u.scheme() != "https" {
         return None;
@@ -95,10 +97,46 @@ pub fn catalog_source(url: &str) -> Option<String> {
     }
     let query = u.query().map(|q| format!("?{q}")).unwrap_or_default();
     Some(format!(
-        "web:https://{host}:{}{}{query}",
+        "https://{host}:{}{}{query}",
         u.port_or_known_default().unwrap_or(443),
         u.path()
     ))
+}
+
+/// (F16-1, F17-5) The source name of a catalog: `web:<url>` - its FULL canonical URL
+/// ([`canonical_url`]), the identity of the source (`web:https://openrouter.ai:443/api/v1/models`).
+/// Two catalogs on one host are two sources, each fetched and recorded under its own name, each
+/// trusted only by its own config entry.
+pub fn catalog_source(url: &str) -> Option<String> {
+    canonical_url(url).map(|u| format!("web:{u}"))
+}
+
+/// (F57-1) The trust key of a page: `page:` + its canonical URL ([`canonical_url`]) - never its
+/// label, which a later configuration may give to another URL.
+pub fn page_key(url: &str) -> Option<String> {
+    canonical_url(url).map(|u| format!("page:{u}"))
+}
+
+/// (F57-1) The provenance of a recorded source: the key [`trusted_sources`] must hold for its ids
+/// to be published, or `None` when they never are. ONE rule for both public kinds - the exact URL
+/// the ids were read from, in its canonical form ([`canonical_url`]):
+///
+/// * a catalog: its name, which IS its canonical URL (`web:<url>`, F16-1); a legacy host-keyed
+///   record (`web:<host>`, [`is_legacy_catalog_source`]) has none;
+/// * a page: `page:<url>` from the URL recorded with its ids ([`SourceList::url`]) - and only when
+///   that URL was declared `"public": true` when the ids were collected ([`SourceList::public`]).
+///   A page record of an older build carries its label alone (`page:<name>`, no URL): it has none
+///   and is withheld until the next refresh rewrites it, so a label reused for another URL never
+///   lends its trust to ids read from the earlier one;
+/// * anything else (an engine's or an endpoint's own list): none.
+pub fn provenance(s: &SourceList) -> Option<String> {
+    if s.source.starts_with("web:") {
+        return (!is_legacy_catalog_source(&s.source)).then(|| s.source.clone());
+    }
+    if s.source.starts_with("page:") && s.public {
+        return s.url.as_deref().and_then(page_key);
+    }
+    None
 }
 
 /// A source name as it is SHOWN - in a printed line, a report, the hook line, anything a person or
@@ -168,7 +206,8 @@ pub fn is_public_source(source: &str) -> bool {
 /// attributes an id WITHOUT a `<vendor>/` part to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustedSource {
-    /// The source name (`web:<url>` / `page:<name>`).
+    /// (F57-1) The trust key a record's [`provenance`] must equal: a catalog's `web:<url>`, a
+    /// page's `page:<url>` ([`page_key`]) - by canonical URL, never by a page's label.
     pub source: String,
     /// The vendor class of the source's own host (a vendor's documentation page on `docs.z.ai` is
     /// `zai`) - the attribution of its plain ids; `None` (any other host, and OpenRouter, whose ids
@@ -183,7 +222,8 @@ pub struct TrustedSource {
 /// name it lists is no proof that the name is no private endpoint's secret. (F16-1, F17-5) Trust
 /// is per catalog URL ([`catalog_source`]), never per host: another URL on a trusted host - the
 /// built-in catalog's included - is trusted only by its own entry, and a legacy host-keyed record
-/// ([`is_legacy_catalog_source`]) matches no trusted source.
+/// ([`is_legacy_catalog_source`]) matches no trusted source. (F57-1) A page is trusted by its
+/// canonical URL too ([`page_key`]) - the same rule, so the two kinds cannot drift apart.
 pub fn trusted_sources(cfg: Option<&crate::c3config::C3Config>) -> Vec<TrustedSource> {
     let mut out: Vec<TrustedSource> = Vec::new();
     let mut add = |source: String, url: &str| {
@@ -207,7 +247,9 @@ pub fn trusted_sources(cfg: Option<&crate::c3config::C3Config>) -> Vec<TrustedSo
             }
         }
         for p in cfg.model_pages.iter().filter(|p| p.public) {
-            add(format!("page:{}", p.name), &p.url);
+            if let Some(key) = page_key(&p.url) {
+                add(key, &p.url);
+            }
         }
     }
     out
@@ -219,8 +261,10 @@ pub fn strip_vendor(id: &str) -> &str {
 }
 
 /// Collect every configured public source: (F16-1, F17-5) every distinct catalog URL under its own
-/// name ([`catalog_source`]), every page under its label. A source that fails (network, status,
-/// cap, parse) is left out; a source with no valid id is left out.
+/// name ([`catalog_source`]), every page under its label - (F57-1) with the canonical URL it was
+/// read from and whether that URL was declared public, recorded with its ids ([`provenance`]). A
+/// source that fails (network, status, cap, parse) is left out; a source with no valid id is left
+/// out.
 pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<SourceList> {
     let mut out: Vec<SourceList> = Vec::new();
     let mut fetched: Vec<String> = Vec::new();
@@ -242,9 +286,12 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
     }
     for p in pages {
         let source = format!("page:{}", p.name);
-        if out.iter().any(|s| s.source == source) || !p.url.starts_with("https://") {
+        if out.iter().any(|s| s.source == source) {
             continue;
         }
+        let Some(url) = canonical_url(&p.url) else {
+            continue;
+        };
         let Some(body) = keyless_get(env, &p.url) else {
             continue;
         };
@@ -253,6 +300,8 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
             out.push(SourceList {
                 source,
                 ids,
+                url: Some(url),
+                public: p.public,
                 ..Default::default()
             });
         }
@@ -781,6 +830,7 @@ mod tests {
             name: format!("p-{}", url.len()),
             url: url.into(),
             pattern: regex::Regex::new(r"(m-\d+)").unwrap(),
+            public: true,
         };
         let out = collect(
             &env,
@@ -798,6 +848,8 @@ mod tests {
         assert!(env.seen.borrow().is_empty(), "{:?}", env.seen.borrow());
     }
 
+    /// A page is named by its label; (F57-1) its record carries the canonical URL it was read from
+    /// and whether that URL was declared public then - its provenance.
     #[test]
     fn a_page_source_is_named_by_its_label() {
         let env = FakeHttp {
@@ -807,11 +859,83 @@ mod tests {
         };
         let page = Page {
             name: "zai-docs".into(),
-            url: "https://docs.z.ai/models".into(),
+            url: "https://Docs.Z.ai/models#list".into(),
             pattern: regex::Regex::new(r"\b(glm-[0-9][a-z0-9.-]*)").unwrap(),
+            public: true,
         };
         let out = collect(&env, &[], &[page]);
         assert_eq!(out[0].source, "page:zai-docs");
         assert_eq!(out[0].ids, vec!["glm-6", "glm-6-air"]);
+        assert_eq!(out[0].url.as_deref(), Some("https://docs.z.ai:443/models"));
+        assert!(out[0].public);
+        assert_eq!(
+            provenance(&out[0]).as_deref(),
+            Some("page:https://docs.z.ai:443/models")
+        );
+    }
+
+    /// (F57-1, the reviewer's RC1 at collection level) Ids read from a page that was NOT declared
+    /// public are recorded as such; when a later configuration reuses the page's label for another
+    /// URL declared public, the trusted key is that URL and the earlier record matches nothing.
+    /// After a refresh from the public URL the same label's record is published.
+    #[test]
+    fn a_reused_page_label_never_lends_its_trust_to_ids_of_the_earlier_url() {
+        let internal = "https://wiki.acmecorp-internal.example/llm";
+        let public = "https://docs.z.ai/models";
+        let env = MapHttp {
+            bodies: vec![
+                (internal, "model glm-9-private".to_string()),
+                (public, "model glm-9-private and glm-9-public".to_string()),
+            ],
+            seen: Default::default(),
+        };
+        let pattern = regex::Regex::new(r"\b(glm-[0-9][a-z0-9.-]*)").unwrap();
+        let earlier = Page {
+            name: "docs".into(),
+            url: internal.into(),
+            pattern: pattern.clone(),
+            public: false,
+        };
+        let recorded = collect(&env, &[], &[earlier]);
+        assert_eq!(recorded[0].source, "page:docs");
+        assert!(!recorded[0].public);
+        assert_eq!(provenance(&recorded[0]), None, "read while not public");
+        let state = crate::maintain::models::ModelsState {
+            sources: recorded,
+            ..Default::default()
+        };
+        let cfg = crate::c3config::C3Config {
+            model_pages: vec![crate::c3config::ModelPageConfig {
+                name: "docs".into(),
+                url: public.into(),
+                pattern: pattern.as_str().into(),
+                public: true,
+            }],
+            ..Default::default()
+        };
+        let trusted = trusted_sources(Some(&cfg));
+        let published = crate::maintain::models::published_from(&state, &trusted);
+        assert!(published.is_empty(), "{published:?}");
+        // the refresh from the public URL rewrites the record: now published
+        let refreshed = collect(
+            &env,
+            &[],
+            &[Page {
+                name: "docs".into(),
+                url: public.into(),
+                pattern,
+                public: true,
+            }],
+        );
+        let state = crate::maintain::models::ModelsState {
+            sources: refreshed,
+            ..Default::default()
+        };
+        let published = crate::maintain::models::published_from(&state, &trusted);
+        assert!(published.contains(&("zai".to_string(), "glm-9-public".to_string())));
+        assert!(
+            published.contains(&("zai".to_string(), "glm-9-private".to_string())),
+            "the public page lists it itself now: {published:?}"
+        );
     }
 }

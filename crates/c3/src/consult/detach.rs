@@ -559,7 +559,11 @@ pub fn start_detached_run(
     // under the legacy folder `.eck/` the task directory and the `starting` record are created
     // under the folder's move lock, so the run cannot begin between a mover's check and its rename
     let collab_root = providers::resolve_collab_root_moving(&repo_root, &o.collab_dir);
-    let start = match crate::state_dir::begin_run(&repo_root, &collab_root) {
+    // (0.2.5, acceptance F57-6) the task directory and its `handoffs/` are made ready by the run
+    // start (inside C3's project folder through handles, a link at either refusing the run before
+    // anything is written)
+    let start = match crate::state_dir::begin_run(&repo_root, &collab_root, &o.task, &["handoffs"])
+    {
         Ok(s) => s,
         Err(e) => return refuse(&e),
     };
@@ -579,12 +583,6 @@ pub fn start_detached_run(
     }
     for _ in 0..16 {
         tries.push(uuid::Uuid::new_v4().to_string());
-    }
-    if let Err(e) = std::fs::create_dir_all(&task_dir) {
-        return refuse(&format!(
-            "could not create the task directory '{}' ({e}); nothing was started.",
-            task_dir.display()
-        ));
     }
     let mut chosen: Option<(String, DetachedPaths)> = None;
     for cand in &tries {

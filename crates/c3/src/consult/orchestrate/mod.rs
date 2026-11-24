@@ -4029,18 +4029,30 @@ fn run_live(mut ctx: Context) -> i32 {
     // handoffs directory, the task lock, the recovery record) under the folder's move lock, so it
     // cannot begin between a mover's live-run check and its rename; a panel member runs under the
     // records its panel run made.
+    // (0.2.5, acceptance F57-6) The task directory and its `handoffs/` are made ready there too
+    // (inside C3's project folder through handles, a link at either refusing the run before
+    // anything is written); a member checks its panel's directories again, without the move lock.
     let start = if ctx.panel_member.is_some() {
+        if let Err(e) = crate::state_dir::run_dirs(
+            &ctx.repo_root,
+            &ctx.collab_root,
+            ctx.task.as_str(),
+            &["handoffs"],
+        ) {
+            return refuse(&format!("{e}; nothing was started"));
+        }
         None
     } else {
-        match crate::state_dir::begin_run(&ctx.repo_root, &ctx.collab_root) {
+        match crate::state_dir::begin_run(
+            &ctx.repo_root,
+            &ctx.collab_root,
+            ctx.task.as_str(),
+            &["handoffs"],
+        ) {
             Ok(s) => Some(s),
             Err(e) => return refuse(&e),
         }
     };
-    // Ensure the handoffs dir exists.
-    if let Err(e) = std::fs::create_dir_all(&ctx.handoffs_dir) {
-        return refuse(&format!("could not create the handoffs directory: {e}"));
-    }
     // The roster decision line prints before the lock on a real run (`codex-consult.ps1:2968`).
     if !ctx.roster_line.is_empty() {
         println!("{}", ctx.roster_line);

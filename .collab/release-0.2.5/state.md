@@ -953,3 +953,59 @@ swap -> xelth.com/C3 page after the tag.
   only, the path must be free); the fake kimi CLI learns the real one's directory rule.
 - CI commit 681af51 pushed: the Windows job excludes its build and scratch directories from the
   virus scanner (an experiment against the launcher-start flake).
+
+## 2026-11-24 14:24 - 5031982 pushed (wave D7 + the rename retry); the acceptance run 2 is live; D7 seen working on the real kimi
+
+- 5031982 on origin/main: wave D7 (a resumed thread of a worktree-isolated engine runs at its
+  parent's worktree path), the patch rename retried on "access denied" (the lib test
+  an_empty_leftover_claim_is_replaced_and_other_bytes_are_refused failed once with os error 5 on
+  the rename over a file written a moment before - a scanner holding it), brief 56 updated.
+  Verified in the foreground: clippy clean, c3 lib 946, kimi_engine 24.
+- CI: green for d476520 (rerun), 55ea230, 681af51; 0f52246 and 5031982 running.
+- **Parked: the acceptance run 2.** Detach id 11e86185 (11e86185-e664-4d87-8db8-9d9bea9eabd5),
+  started 14:19:40, brief handoffs/56-claude-acceptance-2.md, new thread, `--rev HEAD` (5031982),
+  bridge build c3 0.2.5 (5031982) = scratchpad/bin/c3-review6.exe. The 5-hour window was fresh.
+  Come back: `c3 consult --task release-0.2.5 --status --id 11e86185`.
+- **D7 on the real kimi CLI (task smoke-kimi, the same build):** handoff 06 a new thread, usable,
+  worktree c3-kimi-wt-bf2a4f10...; handoff 07 `--mode resume`: usable, the SAME worktree path,
+  the same session 2d183b84, and the model named what it had answered in the turn before. The kimi
+  observation of the tech-debt list is closed. Open items there: 5.
+
+## 2026-11-24 14:39 - the acceptance run 2: REJECT (6 blockers, 3 majors, 1 minor); four fix waves launched
+
+- Run 11e86185, handoff 57 (handoffs/57-codex-acceptance-2.md), 660 s, usable, rated yes. Quota
+  after it: 5-hour window 56 % until 19:10, WEEK 78 % until Nov 29 - one more pass fits under the
+  reviewer's reserve (15 %), not two. The delta brief must be small and the fixes right.
+- Verdict REJECT at 5031982. Findings and their routing:
+  - F57-1 [blocker] a page label reused for another URL publishes the earlier page's private ids
+    in telemetry -> A1.
+  - F57-2 [blocker] an unreadable nested tool inventory counts as switch evidence -> A2.
+  - F57-3 [blocker] a pending recovery records the target version verified after smoking a third
+    installed version -> A2.
+  - F57-4 [blocker] the lock's creation is outside the gate: a creator suspended after the
+    exclusive create returns as a second owner -> A3.
+  - F57-5 [blocker] 8 hex digits in the patch name collide, and the no-hard-link rename replaces
+    -> A4 (full digest in the name; without hard links an exclusive per-run name).
+  - F57-6 [blocker] a linked TASK directory below a real .c3/collab redirects the records -> A3
+    (inside C3's folder: task and handoffs made through handles, a link refuses; a collab root
+    outside the folder stays the operator's anchor; the swap-after-check limit is said).
+  - F57-7 [major] the D7 resume claim does not bind checkout and cleanup to the claimed directory
+    -> A4. F57-8 [minor] format characters in the isolation prompt's tracked names -> A4.
+  - F57-9 [major] the test-mode plain-http exception accepts the NAME localhost -> A2 (loopback
+    literals only).
+  - F57-10 [major] the roster write can lose a hand edit, and F02-2 (the repair's rename, judged
+    still open) -> A1: publish by an atomic exchange (ReplaceFileW / renameat2 EXCHANGE /
+    RENAME_SWAP) and keep the displaced file when it is not the basis.
+  - Her answer 2, unnumbered: a writer with the migration switch off creates .c3 beside a running
+    move -> two folders -> A3.
+- Closed in her reading: F02-1, F02-16, F02-21, F03-1, F11-3, F32-1, F13-1, F19-1; the gate closes
+  the takeover she traced; D6's test inspects the real POST body.
+- Workers (opus, isolated worktrees, briefs scratchpad/briefs/A-common.md + A1..A4, shared build
+  directory C:/Users/Dmytro/C3/target, cargo in the foreground): A1
+  worktree-agent-afe78aa41678e4cff, A2 ...a76de6a03b3444e02, A3 ...a25efa81418ed1b5f, A4
+  ...a7176f103262d6171.
+- The release pre-build (cargo build --release -p c3-cli) finished: the dependencies are warm.
+- D7 seen working live on the real kimi (smoke-kimi handoffs 06, 07).
+- Next: land A1-A4 (3-way, conflicts in CHANGELOG and consult/orchestrate/mod.rs expected), the
+  whole foreground verification, CI, then ONE delta pass (a new thread, a short brief that lists
+  each finding with its fix and closing test).

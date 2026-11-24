@@ -8,10 +8,17 @@
 //!
 //! (0.2.5, F02-1 / F02-2) A file is never written through: the new content goes to a sibling
 //! temporary file in the same directory, which is read back, the original is re-read immediately
-//! before the rename and compared with the snapshot the edit was computed from (when it changed,
-//! the repair is dropped and the file left as it is), and the temporary file then REPLACES the
-//! original by rename - so a failed or interrupted repair never leaves a truncated file, and a
-//! second name of the file (a hard link) never sees the edit. A file with more than one hard link,
+//! before the publication and compared with the snapshot the edit was computed from (when it
+//! changed, the repair is dropped and the file left as it is), and the temporary file then REPLACES
+//! the original - so a failed or interrupted repair never leaves a truncated file, and a second
+//! name of the file (a hard link) never sees the edit. (F57-10) The replacement is an atomic
+//! EXCHANGE of the two names ([`crate::contain::publish_exchange`]): an editor's save that lands
+//! after the comparison is displaced, not lost - it is kept next to the file as
+//! `<name>.displaced-<UTC time>`, the hook line and `c3 doctor --fix` say so, and `c3 doctor` names
+//! every such file until it is removed ([`displaced_files`]). Where the system has no exchange (a
+//! Unix other than Linux / macOS, a file system that refuses it) the file is replaced by rename and
+//! the notice says that the moment between the comparison and the rename is not protected there.
+//! A file with more than one hard link,
 //! a link (symlink, junction) or another reparse point, and a file under a linked `.claude` /
 //! `.claude/agents` are not edited at all; the file is checked again immediately before the rename.
 //! Every repair that was not made is reported with its reason.
@@ -20,9 +27,10 @@
 //! HANDLES: the repository root is opened once ([`crate::contain::Root::open_anchor`]), each
 //! directory on the way to the file is opened relative to its parent's handle without following it
 //! (a link refuses), the file is checked, read and re-read through handles opened without following
-//! it, and the temporary file is created, renamed onto the file and - on a failure - removed
-//! relative to the file's directory handle ([`crate::contain::publish`]). A directory swapped for a
-//! link between the last check and the rename cannot carry the replacement out of the repository.
+//! it, and the temporary file is created, exchanged with the file and - on a failure - removed
+//! relative to the file's directory handle ([`crate::contain::publish_exchange`]). A directory
+//! swapped for a link between the last check and the exchange cannot carry the replacement out of
+//! the repository.
 //! (0.2.5 R7b, F43-5) The candidates are found the same way: `.claude/agents` is listed and each
 //! file read through those handles ([`read_candidate`]), so a linked `.claude`, `.claude/agents` or
 //! file supplies no bytes - it is reported with the edit path's refusal ([`NOT_READ`] for the
@@ -53,6 +61,10 @@ pub struct ModelFix {
     pub old: String,
     /// The model id after the edit.
     pub new: String,
+    /// (F57-10, F02-2) Said loudly with the fix: a hand edit saved during the write was displaced
+    /// and is kept next to the file (`<name>.displaced-<UTC time>`), or the file was replaced by
+    /// rename because this system has no atomic exchange ([`replace_file`]); `None` otherwise.
+    pub notice: Option<String>,
 }
 
 /// One repair C3 did NOT make, and why (a link, a second hard link, a concurrent edit, a failed
@@ -332,10 +344,11 @@ fn apply(report: &mut RepairReport, edit: &Edit<'_>, old: String, new: String) {
         None => replace_file(edit),
     };
     match result {
-        Ok(()) => report.fixes.push(ModelFix {
+        Ok(notice) => report.fixes.push(ModelFix {
             file: edit.file.clone(),
             old,
             new,
+            notice,
         }),
         Err(why) => report.problems.push(RepairProblem {
             file: edit.file.clone(),
@@ -439,11 +452,15 @@ pub(crate) fn edit_refusal(edit: &Edit<'_>) -> Option<String> {
 
 /// Replace `edit.file` with `edit.new_content` without writing through it: a sibling temporary
 /// file is written, synced and read back; the file is checked again and re-read and compared with
-/// `edit.snapshot`; then the temporary file is renamed over the original. On any failure the
-/// temporary file is removed (a removal that fails is named in the `Err`) and the original is
+/// `edit.snapshot`; then (F57-10, F02-2) the temporary file and the original are ATOMICALLY
+/// EXCHANGED ([`crate::contain::publish_exchange`]) and the displaced version is read back: when it
+/// is not `edit.snapshot` - an editor's save that landed after the comparison - it is kept next to
+/// the file as `<name>.displaced-<UTC time>` and `Ok(Some(notice))` says so in one line (where the
+/// system has no exchange, the notice says the file was replaced by rename instead). On any failure
+/// the temporary file is removed (a removal that fails is named in the `Err`) and the original is
 /// untouched. (0.2.5 D4, F13-9) All of it relative to the file's directory HANDLE, reached from the
-/// repository root without following any component ([`open_edit_dir`], [`crate::contain::publish`]).
-pub(crate) fn replace_file(edit: &Edit<'_>) -> Result<(), String> {
+/// repository root without following any component ([`open_edit_dir`]).
+pub(crate) fn replace_file(edit: &Edit<'_>) -> Result<Option<String>, String> {
     use std::io::Read;
     let (dir, leaf) = open_edit_dir(edit)?;
     let original = open_edit_file(&dir, &leaf)?;
@@ -491,14 +508,28 @@ pub(crate) fn replace_file(edit: &Edit<'_>) -> Result<(), String> {
         crate::contain::race_point("repair-replace");
         Ok(())
     };
-    crate::contain::publish(&crate::contain::Publish {
-        dir: &dir,
-        leaf: &leaf,
-        tmp: &tmp_os,
-        bytes: edit.new_content,
-        permissions,
-        check: &check,
-        race: "repair",
+    // (F57-10, F02-2) published by an atomic exchange: an editor's save that lands after the
+    // comparison above is displaced, not lost - kept next to the file and named in the notice
+    let dir_part = match edit.file.rfind('/') {
+        Some(i) => &edit.file[..=i],
+        None => "",
+    };
+    crate::contain::publish_exchange(
+        &crate::contain::Publish {
+            dir: &dir,
+            leaf: &leaf,
+            tmp: &tmp_os,
+            bytes: edit.new_content,
+            permissions,
+            check: &check,
+            race: "repair",
+        },
+        edit.snapshot,
+    )
+    .map(|done| {
+        done.notice(&edit.file, |name| {
+            format!("{dir_part}{}", name.to_string_lossy())
+        })
     })
     .map_err(|f| {
         let msg = match &f.error {
@@ -863,18 +894,57 @@ pub fn hook_line_for(report: &RepairReport) -> Option<String> {
         .map(|p| format!("{} {} -> {}: {}", p.file, p.old, p.new, p.why))
         .collect::<Vec<_>>()
         .join("; ");
-    match (fixed.is_empty(), failed.is_empty()) {
-        (true, true) => None,
-        (false, true) => Some(format!(
-            "c3: model settings refreshed in this repository - {fixed} (left uncommitted)"
-        )),
-        (true, false) => Some(format!(
-            "c3: model settings NOT refreshed in this repository - {failed}"
-        )),
-        (false, false) => Some(format!(
+    // (F57-10, F02-2) a hand edit displaced by a write (kept next to the file), said loudly
+    let notices = report
+        .fixes
+        .iter()
+        .filter_map(|f| f.notice.as_deref())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let line = match (fixed.is_empty(), failed.is_empty()) {
+        (true, true) => return None,
+        (false, true) => {
+            format!("c3: model settings refreshed in this repository - {fixed} (left uncommitted)")
+        }
+        (true, false) => format!("c3: model settings NOT refreshed in this repository - {failed}"),
+        (false, false) => format!(
             "c3: model settings refreshed in this repository - {fixed} (left uncommitted); NOT refreshed - {failed}"
-        )),
+        ),
+    };
+    if notices.is_empty() {
+        Some(line)
+    } else {
+        Some(format!("{line}; ATTENTION: {notices}"))
     }
+}
+
+/// (F57-10, F02-2) The displaced versions a write of the repair kept and nobody removed yet:
+/// `<name>.displaced-<UTC time>` files in the directories the repair writes (the repository root,
+/// `.claude/agents`, `.claude/rules`), repository-relative, listed through handles (a linked
+/// directory is not listed). `c3 doctor` names each one until the operator has compared it with the
+/// file and removed it.
+pub fn displaced_files(repo_root: &Path) -> Vec<String> {
+    let Ok(root) = crate::contain::Root::open_anchor(repo_root) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for dirs in [
+        &[][..],
+        &[".claude", "agents"][..],
+        &[".claude", "rules"][..],
+    ] {
+        let Ok(dir) = open_dirs(&root, dirs) else {
+            continue;
+        };
+        let prefix: String = dirs.iter().map(|d| format!("{d}/")).collect();
+        for name in crate::contain::list(&dir).unwrap_or_default() {
+            let name = name.to_string_lossy();
+            if name.contains(".displaced-") {
+                out.push(format!("{prefix}{name}"));
+            }
+        }
+    }
+    out
 }
 
 /// The `c3 hook` line: apply the refresh to the current repository and return ONE line when
@@ -1458,8 +1528,56 @@ mod tests {
         }
     }
 
-    // (0.2.5, F02-1 / F02-2) The ordinary repair replaces the file by rename: the new bytes are in
-    // place, no temporary file is left, and AGENTS.md follows its one successor.
+    // (F02-2, F57-10) An editor's save that lands after the repair's last comparison, right before
+    // the publication (the race hook writes it at `repair-publish`), is never lost: the file holds
+    // the repair, the operator's version is kept byte for byte next to it as
+    // `w.md.displaced-<UTC time>`, the fix carries the notice, the hook line says it loudly, and
+    // `c3 doctor`'s listing names the kept file until it is removed.
+    #[test]
+    fn an_edit_saved_during_the_repair_is_kept_beside_the_file_and_reported() {
+        let (base, repo) = repo_with_agents("displaced");
+        let agents = repo.join(".claude").join("agents");
+        let path = agents.join("w.md");
+        std::fs::write(&path, PINNED).unwrap();
+        // (the race hook writes one line of text)
+        let edited = "--- name: w, model: claude-opus-4-8 --- the operator's new line";
+        let hook = c3_core::test_hooks::set_thread_hook(
+            crate::contain::RACE_HOOK,
+            &format!("repair-publish|write:{}|{edited}", path.display()),
+        );
+        let r = refresh_repo_models_at(&repo, &[]);
+        drop(hook);
+        assert!(r.problems.is_empty(), "{r:?}");
+        assert_eq!(r.fixes.len(), 1, "{r:?}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "---\nname: w\nmodel: opus\n---\nbody\n"
+        );
+        let names = names_in(&agents);
+        assert_eq!(names.len(), 2, "{names:?}");
+        let kept = names[1].clone();
+        assert!(kept.starts_with("w.md.displaced-"), "{kept}");
+        assert_eq!(std::fs::read_to_string(agents.join(&kept)).unwrap(), edited);
+        let notice = r.fixes[0].notice.clone().expect("a notice");
+        assert!(
+            notice.contains("a hand edit of .claude/agents/w.md landed during C3's write")
+                && notice.contains(&format!(".claude/agents/{kept}")),
+            "{notice}"
+        );
+        let line = hook_line_for(&r).unwrap();
+        assert!(line.contains("; ATTENTION: a hand edit of"), "{line}");
+        assert_eq!(
+            displaced_files(&repo),
+            vec![format!(".claude/agents/{kept}")]
+        );
+        // the operator removes it: nothing is listed
+        std::fs::remove_file(agents.join(&kept)).unwrap();
+        assert!(displaced_files(&repo).is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (0.2.5, F02-1 / F02-2) The ordinary repair replaces the file (F57-10: by the exchange): the new
+    // bytes are in place, no temporary file is left, and AGENTS.md follows its one successor.
     #[test]
     fn a_repair_replaces_the_file_and_leaves_no_temporary_file() {
         let (base, repo) = repo_with_agents("replace");

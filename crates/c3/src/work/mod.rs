@@ -1243,7 +1243,15 @@ pub fn run(mut o: Options) -> i32 {
     // background (claimed within its first second).
     // (0.2.5, S2 F36-6) Under the legacy folder `.eck/` the records are created under the folder's
     // move lock, so the run cannot begin between a mover's live-run check and its rename.
-    let start = match crate::state_dir::begin_run(&pre.repo_root, &pre.collab_root) {
+    // (0.2.5, acceptance F57-6) The run start makes the task directory and its `work/` ready
+    // (inside C3's project folder through handles, a link at either refusing the run before any
+    // record exists).
+    let start = match crate::state_dir::begin_run(
+        &pre.repo_root,
+        &pre.collab_root,
+        o.task.trim(),
+        &["work"],
+    ) {
         Ok(s) => s,
         Err(e) => return refuse(&e),
     };

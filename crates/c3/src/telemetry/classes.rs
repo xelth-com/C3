@@ -1206,10 +1206,12 @@ mod tests {
                 {"source":"web:https://openrouter.ai:443/api/v1/models","ids":["qwen/qwen4-max","google/gemini-4-hydrogen","anthropic/claude-opus-6-1","mistralai/mistral-9"]},
                 {"source":"web:https://models.example.com:443/v1/models","ids":["z-ai/glm-9-cfg","glm-9-plain"]},
                 {"source":"endpoint:https://api.z.ai:443/api/v1|ZAI_API_KEY|zai","ids":["glm-9-secret"]},
-                {"source":"page:zai-docs","ids":["glm-6"]}
+                {"source":"page:zai-docs","url":"https://docs.z.ai:443/models","public":true,"ids":["glm-6"]}
             ]}"#,
         )
         .unwrap();
+        // (F57-1: the page record carries the URL its ids were read from and that it was public
+        // then - a label-only record of an older build is published by nothing)
         // no config: only the built-in catalog is trusted (F02-19)
         let published = published_from(&state, &trusted_sources(None));
         let alibaba = vendor_of_class("alibaba");

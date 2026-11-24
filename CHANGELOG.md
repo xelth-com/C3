@@ -132,10 +132,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   existed.** `c3 init` writes `.claude/rules/02-delegation.md` only when it is missing, so a project
   set up before the "BRANCHES AND WORKTREES" section never got it. Doctor now reports such a file
   (exit 1) when it still carries C3's own title line, and `c3 doctor --fix` appends exactly that
-  section, taken from the embedded template, in the file's own line ending, through a temp file and a
-  rename (a link and a hard-linked file are refused and reported; the file is read again immediately
-  before the rename and left as it is when it changed - the moment between that re-read and the
-  rename itself remains). `c3 doctor` recognises a C3-written rule by its title line alone (a file
+  section, taken from the embedded template, in the file's own line ending, through a temp file (a
+  link and a hard-linked file are refused and reported; the file is read again immediately before
+  the publication and left as it is when it changed; the temp file then takes its place by an atomic
+  exchange that keeps an edit saved after that re-read next to the file - see F02-2 under Fixed).
+  `c3 doctor` recognises a C3-written rule by its title line alone (a file
   that keeps that line counts as C3's, whatever its body); `--fix` only ever appends the missing
   section and changes no existing byte; a file without the title line is reported as a warning and
   never edited. The SessionStart hook does not do this, and nothing happens inside a C3 child.
@@ -243,27 +244,28 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `agy_tool_step_classifier_reads_the_tools_name`,
   `agy_readers_are_readers_whatever_their_parameters_say`, `worktree_isolated_is_kimi_and_agy`.
 - **A patch name is its content: no claims (F51-3, F52-2, F53-6).** The `--diff` patch file is
-  `<stem>.<sha8>.patch` after its own bytes, yet where hard links were unavailable the placement
-  claimed the name with an empty file and renamed onto it, with a takeover of old claims and a
-  cleanup by name - and each step had a race (a sibling's finished patch removed, a stalled owner
-  replacing another run's file). The claim protocol is removed. The bytes go into a temporary file
-  in the handoffs directory through its handle; if the name exists its bytes are compared - equal:
-  the temporary file is removed and the patch reused; different: refused ("holds other bytes"),
-  nothing overwritten; if it does not exist the patch is published by a hard link, or where there
-  are none by ONE atomic rename of the temporary file onto the name (two runs with equal bytes may
-  both do it - the result is the same file). An empty file at the name (an earlier build's claim)
-  is replaced by the rename. Nothing ever removes the final name. The limit that remains: the
-  comparison and the publication are two steps, so on a file system WITHOUT hard links a foreign
-  file with other bytes that appears at this content-addressed name between them is replaced by
-  the rename (with hard links the publication fails on an existing name and the name is judged
-  again). (F53-4, F43-7) Write-temp files
-  of C3's own pattern (`<stem>.<sha8>.<32 hex>.tmp`) older than a day are removed when a patch is
-  placed in that directory. Removed: `reuse_patch`, `place_without_link`, `drop_own_claim`, the
-  stale-claim age `PATCH_CLAIM_STALE_SECS` and the hooks `CODEX_CONSULT_TEST_PATCH_RENAME_FAIL` and
-  `CODEX_CONSULT_TEST_PATCH_CLAIM_STALE_SEC` (with their tests); `CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`
-  stays. Tests: `an_empty_leftover_claim_is_replaced_and_other_bytes_are_refused`,
-  `stale_patch_temps_are_swept_when_a_patch_is_placed`,
-  `a_patch_without_hard_links_is_placed_whole_and_nothing_partial_is_left`.
+  named after its own bytes ((0.2.5 A4, F57-5) since then `<stem>.<sha256>.patch`, the full
+  digest; this wave still used `<stem>.<sha8>.patch`), yet where hard links were unavailable the
+  placement claimed the name with an empty file and renamed onto it, with a takeover of old claims
+  and a cleanup by name - and each step had a race (a sibling's finished patch removed, a stalled
+  owner replacing another run's file). The claim protocol is removed. The bytes go into a temporary
+  file in the handoffs directory through its handle; if the name exists its bytes are compared -
+  equal: the temporary file is removed and the patch reused; different: refused ("holds other
+  bytes"), nothing overwritten; if it does not exist the patch is published by a hard link. Where
+  there are none this wave published by ONE atomic rename onto the name and replaced an empty file
+  there (an earlier build's claim) - a rename replaces, so a foreign file with other bytes that
+  appeared at the name between the comparison and the rename was overwritten. (0.2.5 A4, F57-5)
+  That rename and the empty-claim branch are gone: without hard links the patch is published under
+  a name of the run's own (`<stem>.<sha256>.<32 hex>.patch`), and an empty file at the name is a
+  file with other bytes (refused). Nothing ever removes the final name. (F53-4, F43-7) Write-temp
+  files of C3's own pattern (`<stem>.<sha256>.<32 hex>.tmp` since A4) older than a day are removed
+  when a patch is placed in that directory. Removed: `reuse_patch`, `place_without_link`,
+  `drop_own_claim`, the stale-claim age `PATCH_CLAIM_STALE_SECS` and the hooks
+  `CODEX_CONSULT_TEST_PATCH_RENAME_FAIL` and `CODEX_CONSULT_TEST_PATCH_CLAIM_STALE_SEC` (with their
+  tests); `CODEX_CONSULT_TEST_PATCH_NO_HARDLINK` stays. Tests:
+  `stale_patch_temps_are_swept_when_a_patch_is_placed` and (renamed and rewritten by A4)
+  `an_empty_file_at_the_patch_name_is_refused_and_a_short_name_is_left_alone`,
+  `a_patch_without_hard_links_is_published_under_the_runs_own_name`.
 - **A one-revision `--diff` carries the tracked changes only unless asked (F18-4, F19-2, F20-6,
   F51-5, F53-5, F53-7).** `--diff <one revision>` puts the tracked changes into the patch; the
   untracked files are left out and the run says so before the reviewer starts - how many, up to
@@ -487,6 +489,166 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **A tool inventory the codex smoke cannot read in full is no longer switch evidence (F57-2,
+  found by the acceptance review; makes F11-8's tool-list rule strict).** The rollout reader
+  marked a turn as having evidence as soon as it saw an `additional_tools` record with a `tools`
+  array, and the walk through that array skipped every entry it did not understand - a tool
+  without a name, a namespace whose inner `tools` was not an array - without saying so, so a changed
+  rollout schema read as a clean inventory and could pass the smoke: the false pass `unproven`
+  exists to prevent. The inventory is now read by `c3_core::quota::tool_inventory`, which answers
+  one of three. COMPLETE: every entry is of a supported shape - a namespace with a name and a
+  `tools` array (read the same way, nested), a `function` or `custom` tool with a name (or the chat
+  form's `function.name`), or a hosted tool identified by its kind alone (the closed list
+  `local_shell`, `web_search`, `web_search_preview`, `image_generation`, `file_search`,
+  `code_interpreter`, `computer_use_preview`). BREACHED: a multi-agent tool is offered - a breach
+  (a failed smoke) whatever else in the list is unreadable. UNPROVEN: anything else - a missing or
+  non-array list, an entry that is not an object, an entry without a string `type` or of an unknown
+  kind, a tool without a name, a `name` that is not a string, a namespace without a name or whose
+  inner list is missing or not an array. Only a COMPLETE list is evidence for its turn. An UNPROVEN
+  list is counted against its turn - a `multi_agent_version` beside it does not make that turn
+  proven - and anywhere in the rollout (outside a turn too, as the breach check reads the whole
+  rollout) it makes the smoke unproven, which holds an automatic update or rolls it back like a
+  failure; the reason names the line, the turn and the entry's position and kind or key, never its
+  content (``the tool list at line 7 (turn 2): entry 2 (a namespace) holds `tools` as an object,
+  not an array``). The smoke's per-turn check now asks `TurnEvidence::proven()` (evidence of its own
+  and no unreadable list); `SubagentSurface::tool_lists` counts complete lists only. Limit: the
+  supported shapes are codex-cli 0.169.0's as C3's fixtures record them, not re-checked against a
+  fresh live rollout here; a later CLI that adds a tool kind holds its update as unproven until the
+  list is extended. Tests: `a_tool_inventory_is_complete_breached_or_unproven`,
+  `an_unreadable_tool_list_leaves_its_turn_unproven` (c3-core), and the reviewer's RC2 first half,
+  `an_inventory_that_cannot_be_read_in_full_is_no_switch_evidence`: a two-turn smoke rollout whose
+  second turn's only evidence is a namespace with an object `tools` is unproven and the update is
+  held; a nameless tool is unproven; a fully readable list without multi-agent tools still proves
+  its turn; a multi-agent tool beside an unreadable entry is a breach.
+- **A pending-update recovery never credits a smoke to a version that did not run (F57-3, found by
+  the acceptance review).** An update interrupted between install and smoke leaves a pending record
+  that the next pass recovers. The record was matched by engine; the recovery treated "installed ==
+  previous" specially and otherwise smoked the launcher and recorded a pass as `update to <target>
+  verified` - also when a THIRD version was installed (by hand or by another updater meanwhile) or
+  when the installed version could not be read. The installed version, measured first, now decides.
+  The previous version: cleared as before. The target: smoked, and only a pass with `--version`
+  read again after the smoke still showing the target records `recovered: update to <target>
+  verified after an interrupted pass`. A third version: smoked for itself; a pass is recorded as
+  `pending update to <target> not verified: <installed> is installed instead (changed since the
+  update was recorded); the smoke passed on <installed>` - the state's `installed` is that version,
+  and the record is cleared with that truth in the state and the report; a failure names it too
+  (`recovered (<installed> is installed, not the pending target <target>): smoke failed, rolled
+  back to <previous>`, or unresolved as before when the rollback does not restore). A version that
+  cannot be read: no smoke is run (its result could not be attributed to a version), the action says
+  `pending update to <target> unresolved: the installed version cannot be read, so the update is not
+  verified (no smoke run)`, and the record is kept. A passing smoke during which the installed
+  version changed is credited to no version and the record is kept. Limit: the version is read
+  before and after the smoke, not during it, so a change and a change back inside one smoke is not
+  seen. Tests: the reviewer's RC2 second half,
+  `a_pending_recovery_never_credits_a_third_installed_version_to_the_target` (previous 1.0.77,
+  target 1.0.80, installed 1.0.79: the action and the state name 1.0.79, the target is not verified;
+  a failing smoke of 1.0.79 is named and rolled back), and
+  `a_pending_recovery_with_an_unreadable_installed_version_verifies_nothing`; the existing
+  `a_pending_update_whose_install_never_took_is_cleared` and
+  `a_pending_update_whose_new_binary_smokes_clean_is_recorded_verified` keep their meaning.
+- **Plain http in test mode goes only to a loopback IP literal (F57-9, found by the acceptance
+  review).** Wave D6 accepted `http://` under `CODEX_CONSULT_TEST_MODE=1` for `127.0.0.0/8`, `::1`
+  and the NAME `localhost`; a name is resolved by the system resolver at connect time, which need not
+  answer with a loopback address, so the plaintext request - with a configured bearer credential -
+  could reach another machine. The exception is now loopback IP literals only (an IPv4 address in
+  `127.0.0.0/8` or the IPv6 `[::1]`, as the URL parser reads the host): `http://localhost/...` is
+  refused with `base_url must be https://` like any other host name, in test mode or not. No
+  connection to a name is made over plain http any more, so no resolver answer is trusted.
+  `https://localhost` is unaffected (TLS checks the peer). The end-to-end test already uses
+  `127.0.0.1`. The telemetry intake's own test-mode rule (`telemetry::hub`) follows: a loopback
+  literal only, the name `localhost` refused. Test: `s2_plain_http_only_to_a_loopback_host_in_test_mode`
+  (`localhost`, `LocalHost` and `localhost.` refused in both states; `https://localhost` accepted).
+- **Two different patches never share a path, and no patch publication replaces a file (F57-5,
+  found by the acceptance review).** The `--diff` patch was `<stem>.<sha8>.patch`: only 32 bits of
+  its sha256 were in the name, so two different patches with the same stem could meet at one name;
+  and where hard links were unavailable the publication was a rename, which replaces - a different
+  file that appeared at the name after the placement looked (a colliding sibling's patch, or a
+  foreign file) was overwritten, and one consultation's ledger then named the other's bytes. The
+  name now carries the full digest, `<stem>.<sha256>.patch`; the write-temp name
+  (`<stem>.<sha256>.<32 hex>.tmp`), the stale-temp sweep, the collab exemption, the prompt's patch
+  line, the ledger's `diff.patch`, the dry run, the CLI help, README and the consult reference
+  follow. With hard links (the normal case) the publication stays the hard link, which fails on an
+  existing name: the name is judged again - the same bytes are reused, other bytes refused.
+  Without hard links the replacing rename is gone: the patch is published under a name of the
+  run's own, `<stem>.<sha256>.<32 hex>.patch` (an id drawn for the placement; when the directory
+  handle shows anything at that name another id is drawn), by a rename onto that fresh name, and
+  THAT path is the one the plan, the prompt, the ledger and the collab exemption carry. The
+  empty-claim branch is removed, not kept: an empty file at a full-digest name is a file with
+  other bytes and is refused (no build ever left one there). A patch an earlier build wrote under
+  the short name is another file - never reused, never removed. The invariant is stated on
+  `place_patch` and proved by the tests: after a successful placement the file at the recorded path
+  holds exactly the bytes whose sha256 the ledger records, and no file that existed before was
+  overwritten or removed (C3's own write-temp debris older than a day excepted, as before). What
+  remains: without hard links every run writes its own copy (panel members with equal bytes no
+  longer share one file; in that mode a sibling's own name for the same stem and digest is exempt
+  from the collab comparison, so a reviewer file of exactly that shape is not seen there - as with
+  the write-temp name); the rename onto the run's own name assumes nobody creates a file at a name
+  of 128 random bits, shown nowhere, in the instant between the look and the rename; no real
+  file system without hard links ran (the hook stands in for one). Tests:
+  `two_different_patches_forced_to_one_name_never_share_a_path` (RC4: two payloads forced to one
+  name, the second placed at the first one's race point `patch-place`, without and with hard links;
+  equal bytes with hard links share one file),
+  `a_foreign_file_appearing_at_the_patch_name_survives_byte_for_byte` (both modes),
+  `a_patch_without_hard_links_is_published_under_the_runs_own_name`,
+  `an_empty_file_at_the_patch_name_is_refused_and_a_short_name_is_left_alone` (replaces
+  `an_empty_leftover_claim_is_replaced_and_other_bytes_are_refused`),
+  `the_runs_own_patch_is_the_only_exempt_file`, `stale_patch_temps_are_swept_when_a_patch_is_placed`,
+  `a_patch_holds_the_change_and_new_files_and_leaves_collab_out`, and the c3-cli test
+  `diff_hands_the_reviewer_a_patch_and_a_named_range_without_it_is_warned`.
+- **A resumed worktree is the directory that was claimed (F57-7, found by the acceptance
+  review).** D7 reused the parent's recorded worktree path verbatim: the claim proved only that the
+  name was free at `mkdir` time; `mkdir`, `git worktree add` and the failure cleanup each resolved
+  the path again; the parent was compared as text after canonicalisation (on Unix a literal
+  backslash counted as a separator); and the first handle C3 kept was opened after the checkout.
+  The path is now BUILT: the current temp directory (`std::env::temp_dir()`, opened once as a
+  directory handle) joined with the validated name (`c3-kimi-wt-` and 32 lower-case hex). The
+  recorded parent must be that directory by native file identity (volume and file index on
+  Windows, device and inode elsewhere, of the two opened directories) - never by string, with no
+  separator rewriting; anything else is not reusable (the fresh-path fallback and its warning, as
+  before). Every throwaway worktree - a resumed one and a fresh one - is claimed through the temp
+  directory's handle: made exclusively, opened through it without following it, and that handle
+  kept (a link or a non-empty directory found there refuses). After `git worktree add` the path is
+  opened again by name without following it and must be the same directory as the kept handle
+  BEFORE anything is staged or a reviewer starts; the root the run uses is that verified directory.
+  A mismatch refuses the seat in one preflight-class line, removes NOTHING at the path and prunes
+  the registration git made. A failed `git worktree add` removes only the claimed directory -
+  through the temp directory's handle, while the name still opens to that same directory, and only
+  when empty. What remains: between the exclusive create and the open there is no handle yet, so an
+  EMPTY directory swapped in at that instant cannot be told from the one made (it holds nothing to
+  lose; one with content, or a link, is refused); from the claim on, Windows refuses any rename of
+  the held directory, while on Linux and macOS a swap is caught by the identity check. Tests:
+  `a_claimed_worktree_directory_replaced_before_the_check_refuses_and_is_kept` (a replacement
+  directory with content swapped in at the race points `worktree-claim`, `worktree-add` and
+  `worktree-checkout`: refused, the replacement and its content preserved, nothing staged, no
+  registration left; where the system refuses the swap the worktree is used and removed as usual),
+  `a_reusable_path_is_built_from_the_temp_directory_by_identity` (a directory that only looks like
+  temp is not reused, an alias of temp yields the path built from temp, on Unix a directory named
+  `a\b` is not `a/b`), `a_reusable_worktree_path_has_exactly_c3s_shape`, the D7 unit tests and the
+  three D7 integration tests in `kimi_engine.rs`.
+- **The isolation prompt never shows a tracked name with a format character (F57-8).** The HEAD
+  isolation paragraph listed a modified tracked file's name when it held no backtick and no control
+  character, so a bidi override (U+202E) or another invisible format character could reorder or
+  hide what the name shows. Its filter now uses the shared `crate::unicode::is_format_char` (D5):
+  such a name is counted, never shown - in the sentence on links removed after the checkout too,
+  which uses the same filter. The `--rev` paragraph names no live paths and is unchanged. Test:
+  `the_isolation_prompt_names_tracked_changes_and_counts_the_rest` (a tracked name holding U+202E
+  is counted and none of its bytes is in the line).
+- **A `--diff` patch is never empty for a changed file edited in the same instant as the index
+  (found in CI run 45402117704).** A one-revision patch is rendered with a temporary COPY of the
+  real index; `std::fs::copy` gives that copy a new modification time on Linux (it keeps it on
+  Windows). Git tells a "racily clean" entry - a file changed to the same size in the same instant
+  (on a git that compares whole seconds: the same second) as the index was written - by the index
+  file's own time: an entry recorded at or after it is checked by content, every other one is
+  trusted by its stat data. In the copy such an entry looked clean, and the patch came out without
+  that change - in the CI run an empty patch (`e3b0c442...`, the sha256 of nothing) for a changed
+  file. The copy now keeps the real index's modification time (read from the same open handle as
+  its bytes), so git judges it exactly as the real index and smudges those entries when it writes
+  the copy. Every temporary index of the patch was checked: the render's and the untracked listing's
+  copies and the D5 per-file probe all come from that one copy function (changed); the range form
+  builds its index with `git read-tree` and diffs `--cached`, which never reads the working tree's
+  stat data (safe); no other code makes an index. Test: `a_racily_clean_change_is_in_a_one_revision_patch`
+  (the racy condition made by hand - the entry's and the index file's time set to one past instant,
+  ctime not trusted - the change is in the patch; on Linux a plain copy shows the empty diff).
 - **A kimi thread can be resumed: the resumed run works at its parent's worktree path (found in a
   live run).** A kimi review runs in a throwaway git worktree whose path was random per run
   (`<temp>/c3-kimi-wt-<32 hex>`), and the kimi CLI binds a session to the directory it was created
@@ -494,8 +656,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   a different directory.` - already so in 0.2.4. The ledger's `worktree` record now names the
   worktree's directory (`path`), and a run that RESUMES a thread of a worktree-isolated engine (kimi,
   agy; a panel member too) makes its throwaway worktree at the path of the run it resumes. That path
-  is taken only when it has C3's own shape - directly under the current system temp directory
-  (compared canonically), named `c3-kimi-wt-` and 32 lower-case hex digits; another path gives a
+  is taken only when it has C3's own shape - directly under the current system temp directory,
+  named `c3-kimi-wt-` and 32 lower-case hex digits ((0.2.5 A4, F57-7) the parent decided by file
+  identity, not canonical text, and the path BUILT from the temp directory and the recorded name,
+  never the recorded spelling - see the F57-7 entry); another path gives a
   fresh one and a run warning that the parent's path could not be reused. The path must be free: its
   directory is made exclusively, and when anything is there (a live run of the same thread, a
   crashed run's leftover) the seat is refused before any reviewer starts, in one line that names the
@@ -521,11 +685,82 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   its own lock between the second's compare and its removal; the second then removed THAT lock
   and created another, and both ran the move. The compare and the removal are now one step among
   C3 processes: they happen under an OS lock on the gate file `<lock>.gate` next to the lock (in
-  git's directory), and the owner's release goes through the same gate. The OS drops that lock
-  when its holder dies, so the gate has no stale state; the gate file is never removed. A taker
-  that cannot get the gate within a second removes nothing. Test:
+  git's directory), and the owner's release goes through the same gate - and (F57-4, entry below)
+  so does the lock's creation, from before the exclusive create through the complete record. The
+  OS drops that lock when its holder dies, so the gate has no stale state; the gate file is never
+  removed. A taker that cannot get the gate within a second removes nothing. Test:
   `the_move_lock_is_exclusive_and_a_dead_owners_lock_is_taken_over` (nothing is taken while the
   gate is held; a taker that judged the dead record does not remove the lock that replaced it).
+- **The move lock is owned from its creation: a creator paused before its record is never a second
+  owner (F57-4).** The gate above covered the takeover and the release, not the creation: a process
+  created the lock file exclusively and THEN wrote its record. Suspended in between for longer than
+  the garbage interval (10 s), its still-empty file was taken over by another process as garbage;
+  when it resumed, its write into the unlinked file succeeded (Unix) and it returned as a second
+  owner of the lock - two movers again. Now the creator takes the gate BEFORE the exclusive create
+  and holds it through the complete, flushed record (or, when the write fails, the removal of the
+  file), and before it returns it reads the file back, still under the gate: only exactly its own
+  record makes the lock its own; another record means "held" (the caller waits or reports the
+  holder), a vanished file means "try again". A creator that cannot get the gate within a second
+  creates nothing and waits like a taker. So an empty lock file exists only while its creator holds
+  the gate, and the garbage rule applies only to a creator that died. What remains: the gate is an
+  OS lock - a process of ANOTHER host on a file system without working OS locks is held only by the
+  age rules (the read-back still keeps such a creator from returning as an owner when its file was
+  replaced), and a c3 older than 0.2.5 takes no gate at all. Tests:
+  `a_lock_creator_paused_after_its_exclusive_create_is_never_a_second_owner` (a creator paused
+  inside the gate past the interval while a second acquirer runs with the interval shortened to
+  zero by the new test hook `CODEX_CONSULT_TEST_STATE_LOCK_GARBAGE_SECS`: the empty file is not
+  taken over, the paused creator completes as the owner, the second gets the lock only after it,
+  never two owners at once), the existing move-lock tests.
+- **No writer creates `.c3/` while another process moves `.eck/` (found by the acceptance review,
+  its answer 2).** A process with the migration switch off (`C3_STATE_MIGRATE=off` or
+  `"state_migrate": false`) reached `ensure` and created a fresh `.c3/` with its marker while
+  another process moved `.eck/` to `.c3/`; the mover's rename then failed on the non-empty folder
+  and the project had two folders. Every place that can create `.c3/` - `ensure`, a writer's
+  directory (`prepare_dir` / `write_in`), a run start whose collab directory lies in `.c3/`, the
+  move of a legacy collab cache - now goes through one function that applies the rule the module
+  states: while `.eck/` exists as a real directory, a fresh `.c3/` is created only under the move
+  lock, after the state was read again under it, whatever the migration switch says. The mover holds
+  that lock from its re-read through its rename, so no `.c3/` can appear between them. The switch's
+  promise is kept: with it off, `.eck/` is not moved and C3 creates and uses `.c3/` for its own files
+  - under the lock. A writer that finds the lock held goes on in `.eck/` for that run and says so
+  (`.c3/ could not be created now (<who holds the lock>); using .eck/ for this run`) - a write it
+  makes there moves with the folder; a run start refuses with one line, nothing started; the cache
+  move leaves its entries. A writer that waits for the lock sees the moved `.c3/` and uses it. With
+  no `.eck/` (or a `.eck` that is a link, which is never moved) no lock is taken. Inside a C3 child
+  `.c3/` is never created by any of these paths (a run start there refuses like `ensure`). The
+  `rename_folder` doc no longer counts on an empty `.c3/` made in the same instant: no C3 writer can
+  make one; only something outside C3 can. Tests: `a_writer_with_the_switch_off_never_splits_a_move`
+  (c3-cli: a mover held before its rename while a switch-off `c3 manifest` writer waits for the lock,
+  and while it finds the lock held - one folder, both records, the second says it used `.eck/`),
+  `a_fresh_folder_beside_the_old_one_is_created_only_under_the_move_lock`.
+- **A linked task directory inside C3's project folder refuses the run (F57-6).** A run start checked
+  and prepared the collab ROOT through handles; the callers then appended `<task>/handoffs` and
+  created it with `create_dir_all`, so a task directory that already was a link (no race needed)
+  sent the handoff, the reply, the events, the task lock and the ledger wherever it pointed. Now one
+  function (`state_dir::run_dirs`, called by the run start of a single run, a detached run, a panel
+  and a work run, and by every panel member itself) makes the task directory and its `handoffs/`
+  (`work/` for a work run) ready: inside C3's project folder - the collab directory lies in `.c3/` or
+  in the legacy `.eck/` - they are created and opened through handles from the collab directory, no
+  component followed, and a link (a symlink, a junction, another reparse point) or anything else that
+  is not a real directory at either refuses the run before anything is written, in one line that
+  names it (`.c3/collab/t is a link (a symlink or junction) - C3 never writes a run's records through
+  a link inside its project folder (its target is untouched); nothing was started`). The callers no
+  longer create these directories themselves. A collab directory OUTSIDE the project folder (the
+  default `.collab/`, a `--collab-dir` elsewhere) is the operator's own anchor and stays as it was:
+  created by path, a link in it followed (the 0.2.5 entry on the contained handoffs directory says
+  so). A run whose collab directory names `.eck/` while neither folder exists is refused instead of
+  creating a new `.eck/` (C3 never creates it again). What remains: the run's later writes (the
+  handoff, the reply, the events, the lock, the ledger) still go by path into the directories
+  checked at the start - a component swapped for a link AFTER the check, while the run writes, is
+  not caught; binding every write of a run to those handles is not in this release. Tests:
+  `a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing` (the task
+  directory, `handoffs/` and `work/` as links under `.c3/collab` and, under the move lock,
+  `.eck/collab`; a panel member's check; a normal start; a linked task directory under `.collab/`
+  still followed), the c3-cli tests
+  `a_linked_task_directory_in_the_project_folder_refuses_the_run_and_writes_nothing_there` (a kimi
+  consultation and `--detach`, the task directory and `handoffs/` as junctions; a normal run lands
+  its reply), `a_panel_with_a_linked_task_directory_in_the_project_folder_is_refused`,
+  `a_linked_task_directory_in_the_project_folder_refuses_the_work_run` (Windows and Unix).
 - **One table of the Unicode format characters.** The untracked-file names of a `--diff` patch
   (`consult/reviewed.rs`) and the branch name of the red-CI line (`ci_check.rs`) each had their own
   table of the format characters (category Cf) that keep a name from being shown; the CI line's
@@ -580,6 +815,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   Windows with "access denied" - seen on 2026-11-24 on an earlier build's empty claim written a
   moment before, where it failed the placement and with it the run. That one failure is now tried
   again (six tries, 50 ms apart) before it is reported; every other error is reported at once.
+  ((0.2.5 A4, F57-5) The one rename left is onto the run's own fresh name, where there are no hard
+  links; the retry stays for it.)
 - **A hung CI step fails with its log, and the steps after it still run (F38-1).** The per-crate
   test steps of the `ci` workflow ran with `if: success() || failure()` under a job-level limit
   only: a step that hung was cancelled with the whole job, its log was lost and the remaining
@@ -670,15 +907,18 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - **Only the run's own patch is exempt from the collab comparison (F27-3).** Every collab path that
   started with `<task>/handoffs/<stem>.` was ignored, so a reviewer could write
   `handoffs/<stem>.notes.md` and the run still looked clean. Exactly the patch file the run wrote
-  and its write-temp name (`<stem>.<sha8>.<32 hex>.tmp`) are exempt now, nothing else with that
-  prefix. Test: `the_runs_own_patch_is_the_only_exempt_file`.
+  and its write-temp name (`<stem>.<sha8>.<32 hex>.tmp`; (0.2.5 A4, F57-5) since then
+  `<stem>.<sha256>.<32 hex>.tmp`, and without hard links the run's own name and a sibling's own name
+  for the same bytes) are exempt now, nothing else with that prefix. Test:
+  `the_runs_own_patch_is_the_only_exempt_file`.
 - **The `--diff` patch placement is contained from the start (F43-1).** The handoffs directory was
   created by path name (`create_dir_all`) before the anchor was opened on it, so a link above it
   redirected the create; it is now opened - and what is missing of it created - through handles
   from a root on the repository (or on the collab directory when that lies outside it), and a link
   anywhere above `handoffs/` refuses the placement. (0.2.5 R8) The claim protocol this wave added
   for file systems without hard links (F43-2, F43-3: the stale-claim takeover, the removal of the
-  own claim) is gone - a patch name is its content and is published by one rename (see Changed).
+  own claim) is gone - a patch name is its content (see Changed; (0.2.5 A4, F57-5) published by a
+  hard link, or without hard links under a name of the run's own - never by a replacing rename).
   Test: `a_link_above_the_handoffs_directory_refuses_the_patch`.
 - **Many excluded paths no longer refuse a review (F28-2).** A diff with more than 500 changed paths
   excluded by the ignore rules or `.c3ignore` / `.eckignore` was refused outright, because each
@@ -854,14 +1094,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   reparse point counts as a link (a cloud-sync placeholder too); and the worktree's directory cannot
   be renamed while a reviewer runs in it. Two roots ARE followed by design: the repository root and
   a task's handoffs directory when their own path is a link (where they live is not C3's to judge;
-  only what lies below them is contained). A staged or repaired file is written to a new temporary
+  only what lies below them is contained) - ((0.2.5, F57-6) except inside C3's project folder: a
+  task directory or `handoffs/` that is a link under `.c3/` or `.eck/` refuses the run). A staged or repaired file is written to a new temporary
   name and renamed relative to its directory's handle, and a temporary file whose removal fails is
   reported instead of ignored; the removal unlinks and deletes through the handles and then runs
   only `git worktree prune` (no `git worktree remove --force`, no `remove_dir_all` on a path); the
   patch is always written to a temporary file first and placed from it - a hard link, or
   ((0.2.5 R8) instead of the claim of this wave) on a file system without hard links one atomic
-  rename onto its content-addressed name - so an interrupted placement never leaves a partial patch
-  under its name. What can remain: after a crash, a temporary file (C3's own patch temp files older
+  rename ((0.2.5 A4, F57-5) onto a fresh name of the run's own, `<stem>.<sha256>.<32 hex>.patch` -
+  no longer onto the content-addressed name, where a rename replaced a file that appeared there) -
+  so an interrupted placement never leaves a partial patch under its name. What can remain: after a crash, a temporary file (C3's own patch temp files older
   than a day are removed when a patch is placed in that directory); after a failed removal, the
   entries that could not be removed (named in the error, the worktree kept for `c3 doctor --fix`).
   On Windows the protection rests on
@@ -1116,9 +1358,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   nothing of the live tree, the request carries no `Authorization` header (the proxy auth mode for
   that host), the pack kept in the handoffs is the request's user message, and the ledger names the
   reviewed revision (`worktree.sha`, `reviewed_revision`, the `diff` record). For that, `base_url`
-  (`--base-url` and a roster entry alike) accepts plain `http://` in one case only: a loopback host
-  (`127.0.0.0/8`, `::1`, `localhost` - the URL parser's host, so `127.0.0.1.example.com` is not one)
-  while `CODEX_CONSULT_TEST_MODE=1` is set, the rule the telemetry intake already follows. It is a
+  (`--base-url` and a roster entry alike) accepts plain `http://` in one case only: a loopback IP
+  literal (`127.0.0.0/8`, `[::1]` - the URL parser's host, so `127.0.0.1.example.com` is not one;
+  since F57-9 the name `localhost` is not one either) while `CODEX_CONSULT_TEST_MODE=1` is set, a
+  narrower form of the rule the telemetry intake follows. It is a
   test harness's own listener on the same machine, not a way to reach any other host over plain
   http: without test mode, or for any other host, the URL is refused as before (`base_url must be
   https://`). Unit test: `s2_plain_http_only_to_a_loopback_host_in_test_mode`.
@@ -1134,7 +1377,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   ignored file.
 - **One patch file per content (F19-3, F20-3).** The patch was named after the brief only, so two
   runs (or two panel members) with different ranges wrote the same path and a ledger `diff.sha256`
-  could describe bytes another run wrote. The file is now `<stem>.<sha8>.patch`, written by an
+  could describe bytes another run wrote. The file is now `<stem>.<sha8>.patch` ((0.2.5 A4,
+  F57-5) `<stem>.<sha256>.patch`: eight hex digits let two different patches meet), written by an
   exclusive create (a new temp file hard-linked to the name, so a sibling never reads half a file):
   the same bytes reuse the existing file, other bytes get their own name, and a file of that name
   holding other bytes - or a link - is never overwritten (the run fails instead). Panel members
@@ -1339,9 +1583,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   is no symlink or junction (a cloud-sync placeholder) "a reparse point" instead of "a link". The
   sentences that said a concurrent edit is "never written over" (`c3 branches --set` / `--clear`,
   the repair's rename) now say what is checked: the description or file is read again immediately
-  before the write, and the write is skipped when it changed; the moment between that re-read and
-  the write itself remains - a decided boundary (closing it needs a local process with write access
-  to the repository, which can edit the files directly).
+  before the write, and the write is skipped when it changed. For `c3 branches` the moment between
+  that re-read and the write itself remains - a decided boundary (closing it needs a local process
+  with write access to the repository, which can edit the files directly). For the repair (and the
+  roster swap of `c3 maintain`) that boundary is withdrawn: an edit saved in that moment is kept
+  (F02-2, F57-10 below).
 - **Brief staging never writes outside the reviewer's throwaway worktree (F11-3).** The brief and
   the task's handoffs are copied into the worktree at their repo-relative paths, and the checked-out
   revision can carry a link there. A staging destination is now checked twice: in the revision's own
@@ -1702,8 +1948,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   save between the read and the write was lost. The new content now goes to a sibling temporary file
   in the same directory, which is synced and read back; the links are checked again and the
   original is re-read immediately before the rename and compared with the snapshot the edit was
-  computed from (a changed file is left as it is; an edit landing between that re-read and the
-  rename itself is not seen); only then does the temporary file replace the original by rename. A file with more
+  computed from (a changed file is left as it is); only then does the temporary file replace the
+  original - by rename in this fix; an edit landing between that re-read and the rename was still
+  lost, which the acceptance review judged open: since the F02-2 entry below the replacement is an
+  atomic exchange that keeps such an edit. A file with more
   than one hard link is not edited, as before neither is a symlink, a junction or a file under a
   linked `.claude` / `.claude/agents`. Every repair not made is reported with its reason - in the
   hook line (`c3: model settings NOT refreshed in this repository - <file> <old> -> <new>: <why>`)
@@ -1743,6 +1991,72 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   block on Windows). Tests start a fake launcher that records the variable for a claude reviewer
   turn and its probes, a codex-style and a claude-style turn, a `c3 work` worker on each engine path
   and the detached spawn.
+- **A page's ids are published only by the exact public URL they were read from (F57-1, found by
+  the acceptance review; it supersedes F02-19 for pages).** The maintain state recorded a configured
+  page's ids under its label (`page:<name>`) and telemetry trusted a page by the same label, so a
+  configuration that later gave the label to another URL declared `"public": true` made telemetry
+  publish ids read from the earlier, non-public page - a plain id even took the new URL's vendor
+  class. A page record now carries the canonical URL its ids were read from (`url`, in the form the
+  trust decision uses: https, lower-case host, port, path, query) and whether that URL was declared
+  public when they were read (`public`). A page is trusted by `page:<canonical URL>`, never by its
+  label, and its ids count only when the CURRENT configuration declares exactly that URL public AND
+  the record says it was public when read. A page record of an older build (label only, no URL) is
+  withheld until the next `c3 maintain` refresh rewrites it. Catalogs keep their per-URL rule
+  (F16-1); both kinds now go through one rule (`maintain::web::canonical_url` for the URL,
+  `maintain::web::provenance` for a record's trust key), so they cannot drift apart. What remains: a
+  page whose URL stays the same and is declared public only later is published after the next
+  refresh, not at once. Tests: `maintain::models::tests::a_page_id_is_published_only_by_the_exact_public_url_it_was_read_from`,
+  `maintain::web::tests::a_reused_page_label_never_lends_its_trust_to_ids_of_the_earlier_url`,
+  `a_page_source_is_named_by_its_label` (extended), and `telemetry_parity.rs`'s
+  `a_page_label_reused_for_a_public_url_never_publishes_the_earlier_pages_id` (the reviewers' RC1,
+  offline through the real binary: `c3 maintain --models` records an id from a non-public page, the
+  label then names a public `docs.z.ai` page - the backfilled event's model is `other`; an older
+  build's label-only record - `other`; after a refresh from the public URL - the id by name).
+- **A roster edit saved while `c3 maintain` writes the roster is kept (F57-10, found by the
+  acceptance review).** The swap re-read the roster, compared it with the snapshot the smoke was
+  judged on, and then replaced it by a separate temp-file-and-rename: an edit saved between that
+  last comparison and the rename was lost - and not even the day's backup (`.bak-maintain-<date>`,
+  the older basis) had it. The roster is now published by an atomic EXCHANGE of the temp file and the
+  roster (`contain::publish_exchange`: Windows `ReplaceFileW`, Linux `renameat2(RENAME_EXCHANGE)`,
+  macOS `renamex_np(RENAME_SWAP)`), after the same comparison. The version it displaces is read
+  back: when it is the compared snapshot it is removed; otherwise it is kept next to the roster as
+  `<roster>.displaced-<UTC time>`, and `c3 maintain` prints `c3 maintain: ATTENTION: a hand edit of
+  the roster <path> landed during C3's write: it is kept at <path>; the file now holds C3's version`
+  and records that line in its report. The roster's directory (the codex home) is reached by its
+  path and opened once as a handle; a roster that is a link is followed to the file it names, which
+  is the file exchanged; the new roster keeps the old one's permission bits on Unix. On Windows a
+  sharing violation (an editor holding the file) is retried up to 8 times, 250 ms apart, as the
+  earlier write did. What remains: where the system has no exchange (a Unix other than Linux and
+  macOS, a file system that refuses it - `EINVAL`, `ENOSYS`, `ENOTSUP` - or `ReplaceFileW`
+  unsupported) the roster is replaced by the earlier compare-then-rename and the report says so
+  (`... was replaced by rename, not by an atomic exchange (<why>)`); a kept file is the operator's to
+  compare and remove. Tests: `maintain::models::tests::a_roster_edit_saved_at_the_publication_boundary_is_kept_byte_for_byte`
+  (the reviewer's Verify: an unrelated roster change saved at the pre-publication boundary stays
+  recoverable byte for byte), `contain::tests::publish_exchange_keeps_an_edit_saved_before_the_exchange_and_nothing_without_one`,
+  `contain::tests::without_an_exchange_publication_falls_back_to_the_rename_and_says_so` (the new
+  hook `CODEX_CONSULT_TEST_CONTAIN_NO_EXCHANGE`; a first write too) and, on Unix,
+  `contain::tests::publish_exchange_on_unix_swaps_relative_to_the_directory_descriptor`. The race
+  hook `CODEX_CONSULT_TEST_CONTAIN_RACE` takes `<point>|write:<file>|<text>` for an editor's save at
+  a named point.
+- **A repository repair never loses an editor's save (F02-2, judged still open by the acceptance
+  review).** The model repair - and the rules repair, which takes the same path - re-read the file,
+  compared it with the snapshot the edit was computed from, and then renamed the temp file over it:
+  a save between that comparison and the rename was lost. The file is now published by the same
+  atomic exchange (F57-10), relative to the directory handle the repair already holds; the link and
+  hard-link checks before it are unchanged. A displaced version that is not the snapshot is kept
+  next to the file as `<file>.displaced-<UTC time>`; the SessionStart hook line ends with `;
+  ATTENTION: a hand edit of <file> landed during C3's write: it is kept at <file>.displaced-<time>;
+  the file now holds C3's version`, `c3 doctor --fix` prints the same as `[!]` (JSON
+  `fixed[].notice`, `rule_notice`, `state_sentence_notices`), and `c3 doctor` names every kept
+  `.displaced-` file in the repository root, `.claude/agents` and `.claude/rules` until it is
+  removed (`[!] <file>: a version a C3 write displaced (a hand edit saved during it) is kept here -
+  compare it with the file and remove it`, JSON `displaced_files`; not a finding). On Windows a file
+  held open by an editor is retried as for the roster. What remains: as for the roster, a system
+  without an exchange falls back to compare-then-rename and the line says so; a kept file lies in the
+  working tree, so `c3 finish` commits it unless the operator removes it first. Tests:
+  `setup::repo_models::tests::an_edit_saved_during_the_repair_is_kept_beside_the_file_and_reported`,
+  the `contain` tests of F57-10, and the earlier repair tests (an edit before the comparison, a held
+  file, a directory swapped for a link, the ordinary replace) unchanged.
 
 ## [0.2.4] - 2026-11-18
 
