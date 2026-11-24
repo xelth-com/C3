@@ -1357,3 +1357,32 @@ swap -> xelth.com/C3 page after the tag.
   pushed; the release build from the clean tag commit and the install; `c3 doctor --fix`;
   `.c3/config.json` with the finish check; the global skills to `.c3/collab`; the real
   `c3 maintain --run`; the xelth.com page.
+
+## 2026-11-24 23:15-23:40 - released: tag v0.2.5, installed, the page deployed
+
+- CI for b4b2e3d (the acceptance-records commit; run 45494896623): GREEN on all three jobs, first
+  attempt, 23:15. Annotated tag `v0.2.5` on b4b2e3d, pushed 23:15.
+- Release build from the clean tag commit (9 min 42 s): `c3 0.2.5 (b4b2e3d)`; installed 23:16 as
+  `~/.cargo/bin/c3.exe` (sha256 e3c07ec8...; the 0.2.4 binary kept beside it as
+  `c3-0.2.4-ba43ff6.exe.old`).
+- This repository: `c3 doctor` named one stub (`.c3/ARCHITECTURE.md`, written at the folder's
+  move) - filled; `.c3/config.json` holds `finish_checks: ["cargo fmt --all -- --check"]`;
+  `c3 doctor`: clean. The folder itself moved at 17:34 (see above).
+- Global skill `astra`: the ledger location is `--collab-dir .c3/collab` (a `.eck/collab`
+  spelling follows the move). The peer sessions (9eck-com-1c, 9eck-com-2d, eckwms-movfast-39) were
+  told what 0.2.5 changes for them.
+- First live CLI update with the installed build, `c3 maintain --run --engine grok --engine kimi`:
+  "grok 1.0.77 -> 1.0.92 ok" (smoke passed; `grok --version` 1.0.92); "kimi 2.5.3 -> 2.7.3 held:
+  no quota for a smoke" (nothing installed). codex 0.169.0 -> 0.172.0 was left alone: its smoke
+  runs on the ChatGPT account (95 % of the week); the scheduled pass of Nov 26 will meet it.
+- xelth.com: `scratchpad/apply_page.py 2026-11-24 --findings 240 --write` - nine locales, the
+  clone command and links at v0.2.5, display names for six model ids (GLM-5.4 among them), the
+  assistant's facts; commit a411c40 in that repository; `./deploy.sh` (the frontend build took
+  12 min; the server build 47 s; restart). The script stopped at its second health check with a
+  502 two seconds after the restart; all six checks done by hand at 23:38: health 200, i18n 200,
+  forum 200, T/health ok (db true), C3 200, ws 101. https://xelth.com/C3/ shows 0.2.5 in en, de,
+  fr, ja and ru ("0.2.5 (24.11.2026)") and the v0.2.5 clone command.
+- Open after the release (tech-debt file): the Windows CI flake's cause; agy's first live run
+  (its plan is out of quota until Nov 28); the codex CLI update and a kimi update with quota;
+  the first other project's folder move; the exchange tests' file-system probe; a run's writes
+  bound to handles; the field proposals of `.c3/RATIONALIZATION.md`.
