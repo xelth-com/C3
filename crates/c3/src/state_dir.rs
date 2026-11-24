@@ -1745,10 +1745,18 @@ pub fn begin_run(
 /// root and created it with `create_dir_all`: a task directory that already was a link sent the
 /// handoff, the reply, the events, the task lock and the ledger wherever it pointed.
 ///
-/// A collab root OUTSIDE the folder (the default `.collab/`, a `--collab-dir` elsewhere) is the
-/// operator's own anchor and stays as it was: the directories are created by path and a link in
-/// it is followed. [`begin_run`] calls this for a single run, a detached run, a panel and a work
-/// run; a panel member, whose panel made these directories under the move lock, calls it itself.
+/// A collab root OUTSIDE the folder gets the same care for what lies below it (the coordinator's
+/// reading of F57-6: a linked task directory is no safer under the default `.collab/`, which is
+/// tracked content and so can arrive with a clone, than under `.c3/`):
+/// - inside the repository (the default `.collab/`): every component from the repository root
+///   down to the collab root, then the task directory and each of `dirs`, is created when missing
+///   and opened without following it - a link at any of them refuses the run;
+/// - outside the repository (a `--collab-dir` elsewhere): the collab root ITSELF is the operator's
+///   own anchor, created by path and followed as given (F52-3); the task directory and each of
+///   `dirs` below it are opened without following them, and a link there refuses.
+///
+/// [`begin_run`] calls this for a single run, a detached run, a panel and a work run; a panel
+/// member, whose panel made these directories under the move lock, calls it itself.
 /// What it does not do: the run's later writes go by path into the directories checked here, so a
 /// component swapped for a link AFTER this check, while the run writes, is not caught.
 pub fn run_dirs(
@@ -1764,16 +1772,37 @@ pub fn run_dirs(
     {
         return Err(format!("'{bad}' is not one plain directory name"));
     }
-    let task_path = collab_root.join(task);
     if split_state_path(repo_root, collab_root).is_none() {
-        let leaves: Vec<PathBuf> = if dirs.is_empty() {
-            vec![task_path]
-        } else {
-            dirs.iter().map(|d| task_path.join(d)).collect()
+        // outside C3's project folder: where the collab root lives decides how IT is reached,
+        // never whether what lies below it is followed
+        let (base, base_path) = match repo_relative_normal(repo_root, collab_root) {
+            Some(rel) => {
+                let root = Root::open_anchor(repo_root).map_err(|e| {
+                    format!("the repository root {} - nothing was written", e.words())
+                })?;
+                let mut cur = root
+                    .dir()
+                    .try_clone()
+                    .map_err(|e| format!("the repository root could not be opened ({e})"))?;
+                let mut cur_path = repo_root.to_path_buf();
+                for comp in rel.split('/').filter(|c| !c.is_empty()) {
+                    cur_path.push(comp);
+                    cur = run_dir(repo_root, &cur, comp, &cur_path)?;
+                }
+                (cur, cur_path)
+            }
+            None => {
+                std::fs::create_dir_all(collab_root)
+                    .map_err(|e| format!("could not create {} ({e})", collab_root.display()))?;
+                let d = Dir::open_ambient_dir(collab_root, cap_std::ambient_authority())
+                    .map_err(|e| format!("could not open {} ({e})", collab_root.display()))?;
+                (d, collab_root.to_path_buf())
+            }
         };
-        for p in leaves {
-            std::fs::create_dir_all(&p)
-                .map_err(|e| format!("could not create {} ({e})", p.display()))?;
+        let task_path = base_path.join(task);
+        let task_dir = run_dir(repo_root, &base, task, &task_path)?;
+        for d in dirs {
+            run_dir(repo_root, &task_dir, d, &task_path.join(d))?;
         }
         return Ok(());
     }
@@ -1792,7 +1821,7 @@ fn run_dir(repo_root: &Path, parent: &Dir, name: &str, p: &Path) -> Result<Dir, 
     match contain::open_child(parent, OsStr::new(name), true) {
         Ok(d) => Ok(d),
         Err(Step::Link { .. }) => Err(format!(
-            "{} is {} - C3 never writes a run's records through a link inside its project folder (its target is untouched)",
+            "{} is {} - C3 never writes a run's records through a link (its target is untouched)",
             shown(repo_root, p),
             link_words(p)
         )),

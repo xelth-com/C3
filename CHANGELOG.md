@@ -733,7 +733,7 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   (c3-cli: a mover held before its rename while a switch-off `c3 manifest` writer waits for the lock,
   and while it finds the lock held - one folder, both records, the second says it used `.eck/`),
   `a_fresh_folder_beside_the_old_one_is_created_only_under_the_move_lock`.
-- **A linked task directory inside C3's project folder refuses the run (F57-6).** A run start checked
+- **A linked task directory refuses the run (F57-6).** A run start checked
   and prepared the collab ROOT through handles; the callers then appended `<task>/handoffs` and
   created it with `create_dir_all`, so a task directory that already was a link (no race needed)
   sent the handoff, the reply, the events, the task lock and the ledger wherever it pointed. Now one
@@ -744,11 +744,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   component followed, and a link (a symlink, a junction, another reparse point) or anything else that
   is not a real directory at either refuses the run before anything is written, in one line that
   names it (`.c3/collab/t is a link (a symlink or junction) - C3 never writes a run's records through
-  a link inside its project folder (its target is untouched); nothing was started`). The callers no
-  longer create these directories themselves. A collab directory OUTSIDE the project folder (the
-  default `.collab/`, a `--collab-dir` elsewhere) is the operator's own anchor and stays as it was:
-  created by path, a link in it followed (the 0.2.5 entry on the contained handoffs directory says
-  so). A run whose collab directory names `.eck/` while neither folder exists is refused instead of
+  a link (its target is untouched); nothing was started`). The callers no longer create these
+  directories themselves. The same holds OUTSIDE the project folder for what lies below the collab
+  directory - a linked task directory is no safer under the default `.collab/`, which is tracked
+  content and can arrive with a clone: inside the repository every component from the repository
+  root down to the collab directory, the task directory and `handoffs/` is opened without
+  following it, and a link at any of them refuses the run; a collab directory outside the
+  repository (a `--collab-dir` elsewhere) is the operator's own anchor - created by path and
+  followed as given (F52-3) - while the task directory and `handoffs/` below it are not followed.
+  A setup that reached its task directory through a link must name the real place with
+  `--collab-dir`. A run whose collab directory names `.eck/` while neither folder exists is refused instead of
   creating a new `.eck/` (C3 never creates it again). What remains: the run's later writes (the
   handoff, the reply, the events, the lock, the ledger) still go by path into the directories
   checked at the start - a component swapped for a link AFTER the check, while the run writes, is
@@ -1094,8 +1099,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   reparse point counts as a link (a cloud-sync placeholder too); and the worktree's directory cannot
   be renamed while a reviewer runs in it. Two roots ARE followed by design: the repository root and
   a task's handoffs directory when their own path is a link (where they live is not C3's to judge;
-  only what lies below them is contained) - ((0.2.5, F57-6) except inside C3's project folder: a
-  task directory or `handoffs/` that is a link under `.c3/` or `.eck/` refuses the run). A staged or repaired file is written to a new temporary
+  only what lies below them is contained) - ((0.2.5, F57-6) a run now refuses at its start when its
+  task directory or `handoffs/` is a link; of a collab directory only one OUTSIDE the repository is
+  followed). A staged or repaired file is written to a new temporary
   name and renamed relative to its directory's handle, and a temporary file whose removal fails is
   reported instead of ignored; the removal unlinks and deletes through the handles and then runs
   only `git worktree prune` (no `git worktree remove --force`, no `remove_dir_all` on a path); the

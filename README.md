@@ -184,7 +184,7 @@ a consultation — no evidence check, no findings, no rating prompt, no review-l
 (`c3 consult --status` never lists it). A roster entry opts in with `"roles": ["worker"]` (the
 existing `roles` key) on one of three engines:
 
-- **`claude`** — GLM-5.3, GLM-5.3-flash (z.ai), DeepSeek-4.1-flash (byteplus): the engine that
+- **`claude`** — GLM-5.4, GLM-5.3-flash (z.ai), DeepSeek-4.1-flash (byteplus): the engine that
   already drives them for reviews; writes with the Claude Code tools under the `--allow` list.
 - **`codex`** — `openai :: gpt-6.2-sol`, for complex programs: `codex exec --sandbox
   workspace-write`; the write mode is the sandbox, so `--allow` does not apply.

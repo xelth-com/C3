@@ -851,8 +851,10 @@ fn a_collab_directory_under_a_linked_folder_refuses_the_run_and_creates_nothing(
 // `work/` - that is a link (a junction on Windows, a symlink elsewhere) refuses the run before
 // anything is written, in one line that names it: for a run start under `.c3/collab` and (under the
 // move lock, released again) `.eck/collab`, and for a panel member; nothing appears at the link's
-// target. A normal start makes both directories. Outside the folder the collab root is the
-// operator's anchor: a linked task directory is followed, as before.
+// target. A normal start makes both directories. Outside the folder the same holds for what lies
+// below the collab root: under the default `.collab/` every component from the repository root is
+// opened without following it; a collab root outside the repository is the operator's own anchor
+// and is followed itself, a linked task directory below it is not.
 #[test]
 fn a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing() {
     let r = scratch("linked-task");
@@ -912,16 +914,56 @@ fn a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing
     empty(&err);
     assert!(!lock_path(&r2).exists(), "the move lock was released");
     drop_link(&ecollab.join("x"));
-    // outside the folder: followed, as before
+    // outside the folder, inside the repository (the default `.collab/`): a linked task
+    // directory refuses too - it is tracked content and can arrive with a clone
     let c = r.join(".collab");
     std::fs::create_dir_all(&c).unwrap();
     assert!(dir_link(&c.join("t"), &outside));
-    begin_run(&r, &c, "t", &["handoffs"]).unwrap();
+    let err = begin_run(&r, &c, "t", &["handoffs"]).unwrap_err();
     assert!(
-        outside.join("handoffs").is_dir(),
-        "a collab root outside the folder is followed"
+        err.contains(".collab/t is a link") && err.contains("through a link"),
+        "{err}"
     );
+    empty(&err);
     drop_link(&c.join("t"));
+    // ... `handoffs/` the link
+    std::fs::create_dir_all(c.join("t")).unwrap();
+    assert!(dir_link(&c.join("t").join("handoffs"), &outside));
+    let err = begin_run(&r, &c, "t", &["handoffs"]).unwrap_err();
+    assert!(err.contains(".collab/t/handoffs is a link"), "{err}");
+    empty(&err);
+    drop_link(&c.join("t").join("handoffs"));
+    // ... and the default collab root itself a link
+    let c2 = r.join(".collab2");
+    assert!(dir_link(&c2, &outside));
+    let err = begin_run(&r, &c2, "t", &["handoffs"]).unwrap_err();
+    assert!(err.contains(".collab2 is a link"), "{err}");
+    empty(&err);
+    drop_link(&c2);
+    // a normal start under `.collab/` makes real directories
+    begin_run(&r, &c, "n", &["handoffs"]).unwrap();
+    assert!(real_dir(&c.join("n")) && real_dir(&c.join("n").join("handoffs")));
+    // a collab root OUTSIDE the repository is the operator's own anchor: reached through a link
+    // it is followed; a linked task directory below it is not
+    let far = r.with_extension("far");
+    let anchor = r.with_extension("anchor");
+    std::fs::create_dir_all(&far).unwrap();
+    assert!(dir_link(&anchor, &far));
+    begin_run(&r, &anchor, "t", &["handoffs"]).unwrap();
+    assert!(
+        real_dir(&far.join("t").join("handoffs")),
+        "the anchor itself is followed"
+    );
+    assert!(dir_link(&far.join("x"), &outside));
+    let err = begin_run(&r, &anchor, "x", &["handoffs"]).unwrap_err();
+    assert!(
+        err.contains("is a link") && err.contains("through a link"),
+        "{err}"
+    );
+    empty(&err);
+    drop_link(&far.join("x"));
+    drop_link(&anchor);
+    let _ = std::fs::remove_dir_all(&far);
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(&r2);
     let _ = std::fs::remove_dir_all(&outside);

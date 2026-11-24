@@ -1056,3 +1056,58 @@ swap -> xelth.com/C3 page after the tag.
 - Launch at 19:11: `scratchpad/bin/c3-review7.exe consult --task release-0.2.5 --purpose
   acceptance --mode new --brief .collab/release-0.2.5/handoffs/58-claude-acceptance-delta.md
   --reply-name acceptance-delta --rev HEAD --detach` (rebuild the binary if the head moved).
+
+## 2026-11-24 16:44 - waiting for the 19:10 window: the move rehearsed on a copy of this repository's folder; the release build is warm
+
+- 4b21f1e on origin/main (brief 58 with the live kimi observations).
+- **The move rehearsed on real data (the reviewer's first-run checklist, point 2).** A scratch
+  repository with a COPY of this repository's `.eck/` (23 files, 60 MB), the head's build,
+  `c3 doctor` then `c3 doctor --fix`: "moved .eck/ to .c3/"; the old tool's anchor, update_seq
+  and telemetry_queue.json went to .c3/legacy/; lastsnapshot/AnswerToSA.md became
+  .c3/last-report.md; `.c3/` was added to .gitignore; the layout marker was written. Inventory
+  by sha256 before and after: 19 files with the same name and hash, 4 moved as said, 1 new
+  (layout), no content lost; `.eck` gone, one folder. The real move happens at the install.
+- Release build of 4b21f1e: 8 min 28 s, target/release/c3.exe says "c3 0.2.5 (4b21f1e)". After
+  ACCEPT only the tag commit's rebuild of c3-cli is left.
+- Memory files updated: cargo in the foreground and never one build directory for several
+  worktrees; the ChatGPT account is shared by all sessions (what a pass costs, agree first).
+
+## 2026-11-24 17:03 - the operator: "GLM-5.3 -> GLM-5.4, it has just come out" - done by c3 maintain, live
+
+- The operator's word (in Russian, 2026-11-24 about 16:55): GLM-5.3 is to be replaced by GLM-5.4,
+  released today.
+- Done with the tool built for it, the 0.2.5 release build (c3 0.2.5 (4b21f1e)):
+  `c3 maintain --models --dry-run` - the public catalog (OpenRouter, 350 ids) names glm-5.4 as
+  the candidate for ZAI-claude :: glm-5.3 ("would smoke and seat"); grok-4.20 refused by the
+  catalog's date; nothing for glm-5.3-flash (only a "flashx-legal" announced); the ChatGPT entries
+  only announced (gpt-6.2-astra-pro, gpt-6.2-sol-pro) - no smoke on that account.
+  `c3 maintain --models` - "model ZAI-claude :: glm-5.3 -> glm-5.4, smoke passed (roster edited,
+  backup taken)". Roster entry 3 is glm-5.4 now; entry 4 stays glm-5.3-flash. No displaced file
+  (the roster's first write through the atomic exchange). Backups of the roster and the maintain
+  state before it are in the scratchpad.
+- **This is the first live model swap of c3 maintain** - the observation "never swapped a model in
+  a live pass" of the tech-debt list is closed for the model step. The CLI-update step (codex
+  0.169 -> 0.171 with the sub-agent smoke) stays for after the acceptance.
+- Also: the global workers skill (~/.claude/skills/workers/SKILL.md) maps opus/sonnet to
+  glm-5.4[1m] now (haiku stays glm-5.3-flash[1m]). Still naming 5.3 and left to their own
+  mechanisms: AGENTS.md of each project (the 0.2.5 hook repair follows the roster once 0.2.5 is
+  installed), the roster table of the xelth.com page (with the page update), README examples.
+- In flight: the uniform task-directory rule (run_dirs: a linked task directory refuses under ANY
+  collab root; only a collab root outside the repository is followed itself) - clippy clean,
+  state_dir tests 30, c3 lib 961, kimi_engine 25; work and panel_light_required running.
+
+## 2026-11-24 17:50 - the uniform task-directory rule, verified and committed
+
+- The coordinator's own reading of F57-6 (not a reviewer's finding): wave A3 refused a linked task
+  directory only inside C3's project folder; the default `.collab/` is tracked content and can
+  arrive with a clone, so a link there was still followed. `state_dir::run_dirs` now has one rule:
+  inside the repository every component from the repository root down to the collab root, the task
+  directory and each sub-directory is opened without following it; a collab root OUTSIDE the
+  repository is the operator's own anchor (followed, F52-3), what lies below it is not followed.
+- Verified in the foreground on the working tree: fmt clean, clippy -D warnings clean, c3 lib 961,
+  c3-core 256, c3-cli kimi_engine 25, work 30, panel_light_required 6, claude_engine 19,
+  grok_engine 18, compat_wave2b 21, wave6_live_diffs 6.
+- With it: README names GLM-5.4 for the claude worker engine; AGENTS.md of this repository was
+  moved to GLM-5.4 by the SessionStart repair of the running build (it follows the roster).
+- Next: push, CI, the dev build of the new head, brief 58 with the new commit named, the delta
+  pass at 19:11 (the ChatGPT 5-hour window resets 19:10).

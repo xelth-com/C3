@@ -1,7 +1,7 @@
 ---
 mode: primary
 description: Worker - executes one scoped task from a brief
-model: GLM-5.3
+model: GLM-5.4
 steps: 5
 permission:
   read: allow
