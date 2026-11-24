@@ -911,3 +911,28 @@ swap -> xelth.com/C3 page after the tag.
   (needs an occurrence with its log), the http end-to-end test (D6), the operator's open question
   about a knowledge base for reviewers.
 - Next: land D6, green CI, then at 14:10 the acceptance pass 2 with a self-contained brief 56.
+
+## 2026-11-24 13:26 - 0f52246 pushed (wave D6); brief 56 written; the acceptance run 2 waits for 14:09
+
+- 0f52246: the http engine under --rev proved end to end
+  (wave6_live_diffs.rs::an_http_review_under_rev_sends_the_revision_not_the_live_tree). The worker
+  was blocked first - base_url must be https - and I decided the exception: plain http only to a
+  loopback host and only in test mode (parse_base_url, the telemetry intake's rule). Verified in
+  the foreground: clippy clean, c3-core 254, wave6_live_diffs 6. The D6 worktree is removed (no
+  force), its branch was already gone.
+- CI: d476520's Windows job FAILED once - claude_engine.rs
+  a_decomposed_config_dir_inside_an_nfc_repository_refuses_the_endpoint_run: "claude --version did
+  not finish within 15 s" (the fake launcher's start on the runner). Not the change; rerun started
+  (run 45389095446). This is the first LOG of the Windows trouble - recorded in the tech-debt file
+  with the likely common cause (a fake CLI's process start that is very slow on a loaded runner).
+  Run 45393203031 (0f52246) in progress.
+- Tech-debt file: 6 open items - four observations that need a live run, the Windows CI flake,
+  the operator's question about a knowledge base for reviewers.
+- Brief 56 (handoffs/56-claude-acceptance-2.md) replaces 54: self-contained, with "Since your
+  first run", the budget advice (read narrowly, about sixty calls), the new decided items (the
+  loopback exception, the patch placement limit, the Unix rename of an empty .c3).
+- The ChatGPT 5-hour window stood at 96 % at 13:25 (somebody else on the account spends it too);
+  it resets at 14:09. Launch the acceptance right after that:
+  `c3 consult --task release-0.2.5 --purpose acceptance --mode new --brief
+  .collab/release-0.2.5/handoffs/56-claude-acceptance-2.md --reply-name acceptance-2 --rev HEAD
+  --detach` with the build of the head.
