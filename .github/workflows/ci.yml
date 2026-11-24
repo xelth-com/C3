@@ -87,6 +87,16 @@ jobs:
         # the job-level limit alone cancels the job and leaves no log of the step that hung
         timeout-minutes: 15
         run: cargo test -p c3 --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
+      # The Windows flake - a fake launcher's `claude --version` "did not finish within 15 s", twice
+      # in the first test of `claude_engine` - never showed in 66 runs of a hand-started loop whose
+      # test binaries were ALREADY built (workflow `flake-probe`), and 2 times in about 20 runs of
+      # this job, where the test step compiled and linked twenty-five test binaries and ran them at
+      # once. An experiment, not a proven cure: build them in a step of their own. (Since 0.2.6 a
+      # probe that hits its limit also says which processes were still running.)
+      - name: Build the c3-cli tests (default features)
+        if: success() || failure()
+        timeout-minutes: 25
+        run: cargo test -p c3-cli --no-run
       - name: Test c3-cli (default features)
         if: success() || failure()
         # (F38-1) a hung step is stopped as FAILED with its log kept, and the next steps still run;

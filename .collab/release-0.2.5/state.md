@@ -1386,3 +1386,15 @@ swap -> xelth.com/C3 page after the tag.
   (its plan is out of quota until Nov 28); the codex CLI update and a kimi update with quota;
   the first other project's folder move; the exchange tests' file-system probe; a run's writes
   bound to handles; the field proposals of `.c3/RATIONALIZATION.md`.
+
+## 2026-11-25 00:13 - after the release: two tech-debt items worked off (unreleased, on main)
+
+- The exchange tests ask the file system (`can_exchange`: one real exchange of two scratch files)
+  instead of the build target, and expect the refusal where it does not work - what acceptance
+  pass 69 left of F67-3.
+- The Windows CI flake: a launcher probe that hits its limit now names the processes of the
+  launcher's tree that were still running (names and pids, read before the kill) and what it had
+  printed; the `ci` job builds the c3-cli test binaries in a step of their own (the loops with
+  prebuilt binaries never failed: 0 of 66). The next failure, if any, names the process.
+- Verified in the foreground (a cold build): clippy -D warnings clean, c3 lib 969 (the new
+  `a_probe_that_hits_its_limit_names_what_was_still_running` among them).

@@ -77,6 +77,65 @@ pub struct Probe {
     pub timed_out: bool,
     pub out: String,
     pub err: String,
+    /// (0.2.6) After a timeout: what was still running, read BEFORE the kill - the names and pids
+    /// of the launcher's process and its descendants - and what it had printed (one line, cut).
+    /// `""` otherwise, and when the process table could not be read.
+    pub hung: String,
+}
+
+/// (0.2.6) The launcher's process and its descendants as `name pid, name pid ...` from one read of
+/// the process table (`""` when it cannot be read): names and pids only, never a command line.
+fn hung_tree(root: u32) -> String {
+    let Ok(table) = crate::liveness::proc::enumerate_processes_checked() else {
+        return String::new();
+    };
+    let mut pids = vec![root];
+    pids.extend(crate::liveness::proc::descendants_in(&table, root));
+    pids.iter()
+        .filter_map(|pid| table.iter().find(|p| p.pid == *pid))
+        .map(|p| format!("{} {}", p.name, p.pid))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// (0.2.6) What a killed probe had printed: its two readers end once the tree is gone; they get
+/// two seconds (a survivor that still holds a pipe must not hang the caller a second time).
+fn printed_so_far(
+    out: std::thread::JoinHandle<String>,
+    err: std::thread::JoinHandle<String>,
+) -> String {
+    let until = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < until && !(out.is_finished() && err.is_finished()) {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let mut text = String::new();
+    if out.is_finished() {
+        text.push_str(&out.join().unwrap_or_default());
+    }
+    if err.is_finished() {
+        text.push(' ');
+        text.push_str(&err.join().unwrap_or_default());
+    }
+    let line = one_line(text.trim());
+    line.chars().take(160).collect()
+}
+
+/// (0.2.6) The note of a probe that ran into its limit: `still running: <tree>; printed: <text>`
+/// with either half left out when it is unknown or empty (`""` when both are).
+fn hung_note(tree: &str, printed: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !tree.is_empty() {
+        parts.push(format!("still running: {tree}"));
+    }
+    parts.push(if printed.is_empty() {
+        "printed nothing".to_string()
+    } else {
+        format!("printed: {printed}")
+    });
+    if tree.is_empty() && printed.is_empty() {
+        return String::new();
+    }
+    parts.join("; ")
 }
 
 /// `Invoke-ClaudeProbe`: `<launcher> <args>` in the child environment of `auth` (D3), nothing on
@@ -134,10 +193,13 @@ pub fn probe(launcher: &str, args: &[&str], timeout_sec: u64, env: &ChildEnv) ->
             }
             Ok(None) => {
                 if start.elapsed() >= Duration::from_secs(timeout_sec) {
+                    // (0.2.6) who was still there, before the kill: the next hang names itself
+                    let tree = hung_tree(child.id());
                     super::subprocess::kill_tree_by_pid(child.id());
                     let _ = child.kill();
                     let _ = child.wait();
                     p.timed_out = true;
+                    p.hung = hung_note(&tree, &printed_so_far(oh, eh));
                     return p;
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -274,7 +336,8 @@ pub fn sign_in(
     }
     if cap.timed_out {
         return CredentialResult::unknown(format!(
-            "not checked - `claude auth status` did not finish within {t} s"
+            "not checked - `claude auth status` did not finish within {t} s{}",
+            in_brackets(&cap.hung)
         ));
     }
     let out = cap.out.clone();
@@ -627,6 +690,17 @@ pub struct VersionProbe {
     pub exit: i32,
     /// The version token it printed (`""` = none).
     pub version: String,
+    /// (0.2.6) After a timeout: [`Probe::hung`].
+    pub hung: String,
+}
+
+/// ` (<text>)`, or nothing for an empty text.
+fn in_brackets(text: &str) -> String {
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!(" ({text})")
+    }
 }
 
 /// The time the `--version` probe gets (`Get-ClaudeHarness`: 15 s).
@@ -672,6 +746,7 @@ pub fn version_probe(
         timed_out: cap.timed_out,
         exit: cap.exit,
         version: String::new(),
+        hung: cap.hung.clone(),
     };
     if cap.started && !cap.timed_out && cap.exit == 0 {
         for tok in format!("{}\n{}", cap.out, cap.err).split_whitespace() {
@@ -704,7 +779,8 @@ pub fn launcher_verdict(v: &VersionProbe) -> Option<CredentialResult> {
     }
     if v.timed_out {
         return Some(CredentialResult::unknown(format!(
-            "not checked - `claude --version` did not finish within {VERSION_PROBE_SEC} s"
+            "not checked - `claude --version` did not finish within {VERSION_PROBE_SEC} s{}",
+            in_brackets(&v.hung)
         )));
     }
     if v.exit != 0 {
@@ -809,6 +885,74 @@ mod tests {
             "",
         )
         .unwrap()
+    }
+
+    /// (0.2.6) A probe that runs into its limit says what was still running - names and pids of
+    /// the launcher's tree, read before the kill - and what it had printed; the verdict carries it
+    /// in brackets after the unchanged sentence. (Why: twice a Windows CI run failed on "`claude
+    /// --version` did not finish within 15 s" and nothing said which process had hung.)
+    #[test]
+    fn a_probe_that_hits_its_limit_names_what_was_still_running() {
+        let d = scratch("hung-probe");
+        let launcher = if cfg!(windows) {
+            let p = d.join("claude.cmd");
+            std::fs::write(&p, "@echo started 9.9.9\r\n@ping -n 30 127.0.0.1 >nul\r\n").unwrap();
+            p
+        } else {
+            let p = d.join("claude");
+            std::fs::write(&p, "#!/bin/sh\necho 'started 9.9.9'\nsleep 30\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            p
+        };
+        let started = Instant::now();
+        let cap = probe(
+            &launcher.to_string_lossy(),
+            &["--version"],
+            2,
+            &probe_env("subscription", None),
+        );
+        assert!(cap.started && cap.timed_out, "{cap:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the kill and the read-back are bounded"
+        );
+        assert!(
+            cap.hung.contains("still running: ") && cap.hung.contains("printed: started 9.9.9"),
+            "{}",
+            cap.hung
+        );
+        if cfg!(windows) {
+            assert!(cap.hung.to_lowercase().contains("cmd.exe"), "{}", cap.hung);
+        }
+        // the verdict: the sentence as it always was, then the note in brackets
+        let v = VersionProbe {
+            started: true,
+            timed_out: true,
+            exit: -1,
+            hung: cap.hung.clone(),
+            ..Default::default()
+        };
+        let r = launcher_verdict(&v).unwrap();
+        assert_eq!(r.state, State::Unknown);
+        assert_eq!(
+            r.reason,
+            format!(
+                "not checked - `claude --version` did not finish within 15 s ({})",
+                cap.hung
+            )
+        );
+        // the note's halves
+        assert_eq!(hung_note("", ""), "");
+        assert_eq!(
+            hung_note("a.exe 1", ""),
+            "still running: a.exe 1; printed nothing"
+        );
+        assert_eq!(hung_note("", "x"), "printed: x");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// (F25-1) The launcher verdict of the `--version` probe: not started or a non-zero exit is

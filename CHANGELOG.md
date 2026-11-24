@@ -9,6 +9,28 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ## [Unreleased]
 
+### Changed
+
+- **A launcher probe that runs into its time limit says what was still running.** `claude
+  --version` (15 s) and `claude auth status` reported only "did not finish within N s" and killed
+  the tree. The note now follows in brackets: the names and pids of the launcher's process and its
+  descendants, read from the process table before the kill (never a command line), and the first
+  160 characters of what it had printed - `not checked - `claude --version` did not finish within
+  15 s (still running: cmd.exe 4120, powershell.exe 5516; printed nothing)`. The read-back of the
+  output is bounded (two seconds), so a survivor holding a pipe cannot hang the caller again.
+  Why: the Windows CI job failed twice in one test with that sentence and nothing said which
+  process had hung; the next occurrence names it. Test:
+  `engines::claude_auth::tests::a_probe_that_hits_its_limit_names_what_was_still_running`.
+
+### Fixed
+
+- **The exchange tests ask the file system, not the build target (what was left of F67-3).** They
+  chose their expectation by `cfg!(windows | linux | android | apple)`; a Linux build whose scratch
+  directory lies on a file system that rejects `RENAME_EXCHANGE` failed them although the
+  production code does the right thing there (it refuses). They now make one real exchange of two
+  scratch files in the test's own directory (`can_exchange`) and expect the refusal - the file's
+  bytes kept, nothing left behind - where it does not work.
+
 ## [0.2.5] - 2026-11-24
 
 ### Added

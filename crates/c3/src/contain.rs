@@ -1839,18 +1839,63 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Whether this build has an atomic exchange ([`exchange`]): Windows, Linux, Android, Apple.
-    const HAS_EXCHANGE: bool = cfg!(any(
-        windows,
-        target_os = "linux",
-        target_os = "android",
-        target_vendor = "apple"
-    ));
+    /// (acceptance pass 69, what was left of F67-3) Whether the FILE SYSTEM of `dir_path` can
+    /// exchange two names - asked of that directory with one real [`exchange`] of two scratch
+    /// files, not of the build target: a Linux build whose scratch directory lies on a file system
+    /// that rejects `RENAME_EXCHANGE` must expect the refusal, like a target that has no exchange.
+    fn can_exchange(dir_path: &Path) -> bool {
+        let dir = Dir::open_ambient_dir(dir_path, ambient_authority()).unwrap();
+        let (a, b, kept) = (".c3-probe-a", ".c3-probe-b", ".c3-probe-a.displaced");
+        std::fs::write(dir_path.join(a), b"a").unwrap();
+        std::fs::write(dir_path.join(b), b"b").unwrap();
+        let swapped = matches!(
+            exchange(&dir, OsStr::new(a), OsStr::new(b), OsStr::new(kept)),
+            Exchange::Swapped(_)
+        );
+        for n in [a, b, kept] {
+            let _ = std::fs::remove_file(dir_path.join(n));
+        }
+        swapped
+    }
+
+    /// What a write of `inner/own.txt` must do where the file system has no exchange: refuse with
+    /// the reason, leave the file's bytes and leave nothing else behind.
+    fn assert_refused_for_want_of_an_exchange(root: &Root, root_p: &Path) {
+        let (dir, leaf) = root.open_parent(Path::new("inner/own.txt"), false).unwrap();
+        let before = std::fs::read(root_p.join("inner").join("own.txt")).unwrap();
+        let any = |_: Stage| -> Result<(), String> { Ok(()) };
+        let refused = publish_exchange(
+            &Publish {
+                dir: &dir,
+                leaf: &leaf,
+                tmp: OsStr::new(".own.refused.tmp"),
+                bytes: b"NEW\n",
+                permissions: None,
+                check: &any,
+                race: "x",
+            },
+            &before,
+        )
+        .unwrap_err();
+        match &refused.error {
+            PublishError::Rename(e) => {
+                assert_eq!(e.kind(), io::ErrorKind::Unsupported, "{e}");
+                assert!(e.to_string().contains("the file was not written"), "{e}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(refused.cleanup.is_none(), "the temporary file is removed");
+        assert_eq!(
+            std::fs::read(root_p.join("inner").join("own.txt")).unwrap(),
+            before
+        );
+        assert_eq!(names(&root_p.join("inner")), vec!["own.txt".to_string()]);
+    }
 
     /// A [`publish_exchange`] of `bytes` onto `<root>/inner/own.txt` whose check (at both stages)
     /// requires the file to read as `basis` - the comparison of the roster writer and the repair.
-    /// (F67-3) Only for a target that HAS an atomic exchange: elsewhere the write is refused, and
-    /// a test that calls this returns first ([`HAS_EXCHANGE`]).
+    /// (F67-3) Only where the file system HAS an atomic exchange: elsewhere the write is refused,
+    /// and a test that calls this asks first ([`can_exchange`]).
     fn exchange_own(root: &Root, tmp: &str, bytes: &[u8], basis: &[u8]) -> Exchanged {
         let (dir, leaf) = root.open_parent(Path::new("inner/own.txt"), false).unwrap();
         let check = |_: Stage| -> Result<(), String> {
@@ -1924,14 +1969,16 @@ pub(crate) mod tests {
 
     #[test]
     fn publish_exchange_keeps_an_edit_saved_before_the_exchange_and_nothing_without_one() {
-        if !HAS_EXCHANGE {
-            // (F67-3) no atomic exchange on this target: the write is refused, which
-            // `without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was` proves here too
-            return;
-        }
         let (base, root_p, _outside) = scratch("exchange");
         let root = Root::open(&root_p).unwrap();
         let file = root_p.join("inner").join("own.txt");
+        if !can_exchange(&root_p.join("inner")) {
+            // (F67-3) this file system has no atomic exchange: the write is refused
+            assert_refused_for_want_of_an_exchange(&root, &root_p);
+            drop(root);
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
         let hook = c3_core::test_hooks::set_thread_hook(
             RACE_HOOK,
             &format!(
@@ -1942,9 +1989,7 @@ pub(crate) mod tests {
         let done = exchange_own(&root, ".own.t1.tmp", b"NEW\n", b"INSIDE\n");
         drop(hook);
         assert_eq!(std::fs::read(&file).unwrap(), b"NEW\n");
-        if HAS_EXCHANGE {
-            assert_eq!(done.how, Publication::Exchange);
-        }
+        assert_eq!(done.how, Publication::Exchange);
         let kept = done.kept.clone().expect("the displaced edit is kept");
         assert_eq!(kept.unproven, None, "it differs from the basis");
         let kept_name = kept.name.to_string_lossy().to_string();
@@ -2072,6 +2117,13 @@ pub(crate) mod tests {
         use std::os::unix::fs::PermissionsExt;
         let (base, root_p, _outside) = scratch("exchange-unix");
         let root = Root::open(&root_p).unwrap();
+        if !can_exchange(&root_p.join("inner")) {
+            // (F67-3) a file system that rejects the exchange: the write is refused
+            assert_refused_for_want_of_an_exchange(&root, &root_p);
+            drop(root);
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
         let (dir, leaf) = root.open_parent(Path::new("inner/own.txt"), false).unwrap();
         let moved = root_p.join("inner-moved");
         let file = moved.join("own.txt");
@@ -2098,9 +2150,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         drop(hook);
-        if HAS_EXCHANGE {
-            assert_eq!(done.how, Publication::Exchange);
-        }
+        assert_eq!(done.how, Publication::Exchange);
         assert_eq!(std::fs::read(&file).unwrap(), b"NEW\n");
         let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o640);
