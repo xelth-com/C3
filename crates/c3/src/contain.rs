@@ -632,8 +632,8 @@ fn stage_temp(p: &Publish<'_>) -> Result<(), PublishFailure> {
 }
 
 /// (F57-10, F02-2) The test hook that makes [`publish_exchange`] behave as on a system without an
-/// atomic exchange (`CODEX_CONSULT_TEST_CONTAIN_NO_EXCHANGE`, any value): its compare-then-rename
-/// fallback is then proved.
+/// atomic exchange (`CODEX_CONSULT_TEST_CONTAIN_NO_EXCHANGE`, any value): its refusal - nothing
+/// written, the file as it was - is then proved.
 pub(crate) const NO_EXCHANGE_HOOK: &str = "CODEX_CONSULT_TEST_CONTAIN_NO_EXCHANGE";
 
 /// How [`publish_exchange`] put the new bytes in place.
@@ -671,9 +671,9 @@ pub(crate) struct Exchanged {
 
 impl Exchanged {
     /// The line a caller prints - loudly - about a write of `file` whose displaced version is kept
-    /// at `kept_at` (the caller's spelling of the [`Kept::name`] path), or that was published by
-    /// rename; `None` when there is nothing to say (an exchange that displaced the basis itself, a
-    /// first write).
+    /// at `kept_at` (the caller's spelling of the [`Kept::name`] path); `None` when there is
+    /// nothing to say (an exchange that displaced the basis itself, a first write). (A system
+    /// without an exchange has no line here: the write is refused, [`publish_exchange`] fails.)
     pub(crate) fn notice(&self, file: &str, kept_at: impl Fn(&OsStr) -> String) -> Option<String> {
         let mut parts: Vec<String> = Vec::new();
         if let Some(k) = &self.kept {

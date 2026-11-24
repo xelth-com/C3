@@ -1280,3 +1280,27 @@ swap -> xelth.com/C3 page after the tag.
   commit's parser change is verified by CI only.
 - Flake workflow, second run (45454555632): the sequence of binaries 0 failed of 12. In the
   loops 0 of 66 in total; in `ci` 2 of 17 Windows runs. Tech-debt entry updated.
+
+## 2026-11-24 22:10 - the diff reviews' findings worked in; ready for Astra's third pass
+
+- ZAI-claude :: glm-5.4 (handoff 65, n=45): ACCEPT with three minors and three notes, all true:
+  - F65-1: eight places still described the rename fallback -> reworded (README, doc comments).
+  - F65-2 (a regression of the F62-1 fix): after "did the update take" needed the exact target, a
+    readable release the updater left instead was reported "did not take" and served unsmoked
+    until the next pass. Wave B1's follow-up: it is smoked in the SAME pass, credited to itself
+    (`handle_pending_smoke` with the pass's own smoke target), rolled back on a failed smoke.
+  - F65-3: the commands' resolver had no test through `c3 consult` ->
+    `work.rs::consult_takes_a_collab_path_with_dot_dot_after_a_link_by_text` (a dry run, Windows
+    and Unix; it fails on both without the fix).
+  - F65-4: five tests for the identity comparisons outside the recovery (the fake updater can
+    leave another version than asked). F65-5: a doc comment moved back. F65-6: one built-in record
+    without status goes through the binary again.
+- Verified in the foreground on the merged tree (a cold build, no incremental cache): fmt clean,
+  clippy -D warnings clean, c3 lib 967, c3-core 257, c3-cli maintain 54, telemetry_parity 14,
+  work 32. CI for 2d99f72: see the brief.
+- The operator, 22:05: a roadmap wish - field reports from every session that used C3, through
+  telemetry, at a small token cost. Written to `.c3/ROADMAP.md` ("Next") with his words. The
+  peer's report it refers to is `.c3/RATIONALIZATION.md` (moved from a `.eck/` the peer created).
+- ChatGPT week: 90 % (a peer's two passes; its last one ended 20:24 with ACCEPT), the 5-hour
+  window 44 % until 00:16. An acceptance run is what the reserve is kept for (the peer's run at
+  86 % was not held).

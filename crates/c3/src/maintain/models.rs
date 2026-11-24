@@ -1157,8 +1157,8 @@ pub fn apply_swap(
 /// temp file (so a crash never leaves a truncated roster), read the roster once more and publish
 /// the temp file by an ATOMIC EXCHANGE with the roster (F57-10, [`crate::contain::publish_exchange`]):
 /// a hand edit saved after that last comparison is displaced, not lost - it is kept next to the
-/// roster as `<roster>.displaced-<UTC time>` and `Ok(Some(notice))` says so in one line (as it
-/// does when the system has no exchange and the roster was replaced by rename). The roster's
+/// roster as `<roster>.displaced-<UTC time>` and `Ok(Some(notice))` says so in one line. Where
+/// the system has no exchange the roster is NOT written: `Err`, the roster as it was. The roster's
 /// directory is the codex home - reached by its path, opened once as an anchor handle; a roster
 /// that is a link is followed to the file it names, which is the file exchanged. Separated from
 /// [`apply_swap`] so the concurrency abort and the publication are unit-testable.

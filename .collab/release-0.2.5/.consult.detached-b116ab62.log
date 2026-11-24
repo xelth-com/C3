@@ -1,2 +1,338 @@
 codex-consult: detached run b116ab62 (detach id b116ab62-e7d2-4575-94f4-4fd14c771e5f) - pid 14544 on LAPTOP-9SGIHQ03, started 2026-11-24T21:02:58+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-b116ab62.status.json
 Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - entry 3 of 17 for -Provider ZAI-claude (engine applied)
+WARNING: ACCEPT with 10 unchecked prior blocker(s) (F02-1, F02-16, F02-21, F03-1, F11-3, F11-7, F13-1, F19-1, F32-1, F57-4).
+codex-consult: usable reply - ZAI-claude :: glm-5.4 [claude], mode new, thread 4d142e16-4197-454d-a115-1136157fc459 (source: events), wall 2187.1 s
+warning    : the main working tree changed during the run (1 file: crates/c3/src/maintain/version.rs) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+warning    : the live collab directory changed during the run (5 files: .collab/release-0.2.5/handoffs/64-grok-round3-review-grok.events.jsonl, .collab/release-0.2.5/handoffs/64-grok-round3-review-grok.md, .collab/release-0.2.5/handoffs/64-grok-round3-review-grok.original.md, .collab/release-0.2.5/handoffs/64-grok-round3-review-grok.repair.events.jsonl, .collab/release-0.2.5/handoffs/64-grok-round3-review-grok.reply.json) - the reviewer ran in a throwaway worktree, the change is not the reviewer's
+verdict    : ACCEPT - Every fix does what review 62 asked and I found no defect in the changed code; what remains is minor: a smoke deferred to the next pass, one integration test that proves nothing, stale wording and two test gaps.
+findings   : 0 blocker, 0 major, 3 minor, 3 note -> F65-1..F65-6 in findings.json
+prior      : F02-1 not-checked, F02-2 fixed, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 fixed, F02-19 fixed, F02-20 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 not-checked, F10-4 not-checked, F10-5 fixed, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F13-9 not-checked, F14-1 not-checked, F14-2 not-checked, F14-3 not-checked, F14-4 not-checked, F14-5 not-checked, F15-1 not-checked, F15-2 not-checked, F15-3 not-checked, F15-5 fixed, F15-6 fixed, F16-1 not-checked, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-5 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 not-checked, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 not-checked, F18-2 not-checked, F18-3 not-checked, F18-4 not-checked, F18-5 not-checked, F18-6 not-checked, F18-7 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 fixed, F19-4 not-checked, F19-5 not-checked, F19-6 not-checked, F20-1 not-checked, F20-2 not-checked, F20-3 fixed, F20-4 not-checked, F20-5 not-checked, F20-6 not-checked, F24-1 not-checked, F24-2 not-checked, F24-4 not-checked, F27-1 not-checked, F27-2 not-checked, F27-3 not-checked, F28-1 not-checked, F28-2 not-checked, F28-3 not-checked, F29-1 not-checked, F29-2 not-checked, F29-3 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F30-4 not-checked, F30-5 not-checked, F30-6 not-checked, F31-1 not-checked, F31-2 not-checked, F31-3 not-checked, F31-4 not-checked, F31-5 not-checked, F31-6 not-checked, F32-1 not-checked, F32-2 not-checked, F32-3 not-checked, F32-4 not-checked, F32-5 not-checked, F36-1 not-checked, F36-2 not-checked, F36-3 not-checked, F36-4 not-checked, F36-5 not-checked, F36-6 not-checked, F36-7 not-checked, F36-8 not-checked, F38-1 not-checked, F38-2 not-checked, F39-1 not-checked, F39-2 not-checked, F39-4 not-checked, F43-1 not-checked, F43-2 not-checked, F43-3 not-checked, F43-5 not-checked, F43-6 not-checked, F43-7 not-checked, F43-8 not-checked, F44-1 not-checked, F44-2 not-checked, F44-3 not-checked, F45-1 not-checked, F45-2 not-checked, F45-3 not-checked, F45-4 not-checked, F45-5 not-checked, F45-6 not-checked, F45-7 not-checked, F45-8 not-checked, F45-9 not-checked, F46-1 not-checked, F46-2 not-checked, F46-3 not-checked, F46-4 not-checked, F46-5 not-checked, F46-6 not-checked, F46-7 not-checked, F46-8 not-checked, F47-1 not-checked, F47-2 not-checked, F47-3 not-checked, F47-4 not-checked, F48-1 not-checked, F48-2 not-checked, F48-3 not-checked, F48-4 not-checked, F48-5 not-checked, F51-1 not-checked, F51-2 not-checked, F51-3 not-checked, F51-4 not-checked, F51-5 not-checked, F51-6 not-checked, F52-1 not-checked, F52-2 not-checked, F52-4 not-checked, F53-1 not-checked, F53-2 not-checked, F53-3 not-checked, F53-4 not-checked, F53-5 not-checked, F53-6 not-checked, F53-7 not-checked, F57-1 fixed, F57-2 fixed, F57-3 fixed, F57-4 not-checked, F57-5 fixed, F57-6 fixed, F57-7 not-checked, F57-8 not-checked, F57-9 not-checked, F57-10 fixed, F60-1 fixed, F60-2 fixed, F60-3 fixed, F61-1 fixed, F61-3 fixed, F62-1 fixed, F62-2 fixed, F62-3 fixed, F62-4 fixed, F62-5 fixed, F62-6 fixed
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\65-claudecode-round3-review-glm54.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\65-claudecode-round3-review-glm54.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\65-claudecode-round3-review-glm54.events.jsonl
+
+**Verdict: ACCEPT.** The six fixes and the refusal do what review 62 asked; nothing in the diff breaks. Six minor items follow.
+
+### 1. F62-1
+- **Numbers:** none left. `.parts` is read only in `precedence` (`version.rs:70-73`); six sites ask `same_release` (`mod.rs:1048, 1076, 1212, 1232, 1255, 1290`), three ask `is_newer_than` (`mod.rs:906, 1364, 1366`).
+- **Parser:** two releases read as one only through the leading `v` or the trailing `.`. One release can read as two (tag case, no hyphen, leading zeros, build metadata); the first three order equal, so an update says `up to date` and never compares identities.
+- **Real engines:** no break by reading: codex, kimi and grok pin the checked text (`engine.rs:257-293`); agy has no check (`engine.rs:66-70`). Unproven: a CLI that prints its release otherwise than the vendor reads it (RC1).
+- One behaviour change is not in the CHANGELOG: finding #2.
+
+### 2. F62-3
+Nothing found. One path: `provenance` (`web.rs:162-175`), called by `published_from` (`models.rs:1044`), called by `published_ids` (`models.rs:1099`), used at `classes.rs:246, 323`. The built-in exception needs no `url` and the exact built-in name; `url` without a status, or unlike the name, is withheld (`web.rs:172`). No fixture was bent: the converted ones show what the current build writes, and the read-while-private shape keeps its own negatives (`classes.rs:1303-1310`, `telemetry_parity.rs:1169`). Cost: finding #6.
+
+### 3. Other fixes
+- **F62-2:** does her remedy (`providers.rs:2569`), opens nothing. Her RC2 named consult, panel and detach; only `c3 work` gets an integration test, and that is not this commit's code: finding #3.
+- **F62-4:** does it (`contain.rs:848-891`); without hard links it falls to a 32-hex name and a rename. Nothing new.
+- **F62-5:** does it (`quota.rs:1112-1117`). Nothing new.
+- **F62-6:** does it (`reviewed.rs:785-793`); briefs equal in their first 120 bytes share a stem, the digest tells them apart. Nothing new.
+- **Refusal:** both callers turn it into a line, neither retries (`models.rs:1237-1239`, `repo_models.rs:543-545`). Old wording survives: finding #1.
+
+### 4. Tests that pass without their fix
+`work.rs:2431` (finding #3). By my reading of the removed lines, every other new test fails at `ea30cce`. Proved by no test: findings #4 and #6.
+
+### Findings
+- **#1 minor** - eight places still say the file is replaced by rename without an exchange: `README.md:623-624` and seven doc comments (`contain.rs:675`, `models.rs:1161`, `repo_models.rs:19, 65, 459`, `rules.rs:153, 328`).
+- **#2 minor** - `update did not take` (`mod.rs:1048-1057`) no longer smokes the release the updater left; it waits for the next pass (`mod.rs:270-273, 1933`). At `ea30cce` a release with equal or newer numbers was smoked and rolled back at once.
+- **#3 minor** - the new `work.rs` test runs `c3 work`, unchanged here (`work/mod.rs:204`); `providers.rs:2569` has only the unit test `state_dir/tests.rs:986-1003`.
+- **#4 note** - no test drives `mod.rs:1048`, `mod.rs:1076` or `engine.rs:154` with a same-numbers release (`maintain.rs:484, 501` use older numbers).
+- **#5 note** - the F57-2 doc comment now sits over the new test (`quota.rs:4478-4483`).
+- **#6 note** - a built-in record without status goes through real telemetry in no binary test; only `models.rs:2242-2249` covers it.
+
+### Not read
+The other c3-cli test files; `run_dirs`. Nothing was run.
+
+## Requested checks
+- **RC1** (read-only, network, 1 min): with codex, kimi and grok current, compare each `--version` with its vendor reading (`npm view @openai/codex version`, the kimi `latest` marker, `grok update --check --json`). A pair differing beyond a leading `v` or trailing `.` settles question 1.
+- **RC2** (Linux CI, temp repo, workspace-write, 5 min): symlink `l` out of the repo; `c3 consult --collab-dir l/../.collab4` with a fake reviewer. Record inside, outside `.collab4` empty: finding #3.
+- **RC3** (workspace-write, 10 min): fake grok writes `1.0.80-rc.1` for `update --version 1.0.80`; smoke `pass-then-fail`. `did not take`, no rollback, record kept: finding #2.
+- **RC4** (workspace-write, 15 min): on a file system without `RENAME_EXCHANGE`, a grok swap against the fake. Refusal line, roster unchanged, no temp left: covers `contain.rs:774`, which no test drives.
+- **RC5** (one build): revert `mod.rs:1048` and `:1076` to a numeric comparison; `cargo test -p c3-cli --test maintain` still green: finding #4.
+
+### Findings
+
+- **F65-1** [minor] `README.md:623`, `crates/c3/src/contain.rs:675`, `crates/c3/src/maintain/models.rs:1161`, `crates/c3/src/setup/repo_models.rs:19`, `crates/c3/src/setup/repo_models.rs:65`, `crates/c3/src/setup/repo_models.rs:459`, `crates/c3/src/setup/rules.rs:153`, `crates/c3/src/setup/rules.rs:328` - Eight documentation places still say that where there is no atomic exchange the roster or the repaired file is replaced by rename and the line says so. This commit removed that fallback (the write is refused) and updated README.md:818-819, so README.md:623-624 now states the opposite of what c3 maintain does on such a file system. Trigger: An operator on a file system without RENAME_EXCHANGE or ReplaceFileW reads the README's roster paragraph, or a reader compares these doc comments with contain.rs:726-740 and 774. Evidence: read-code: The sentence 'on a system without an atomic exchange the roster is replaced by rename and the report says so' is still there.; read-code: publish_exchange has no rename fallback: the refuse closure returns an Unsupported error and removes the temp file; Exchange::Unsupported returns refuse(why).; read-code: The same stale clause in each: 'published by rename', 'replaced by rename (no atomic exchange here)'. Verify: From the repository root run grep -rn 'replaced by rename' README.md crates/c3/src and grep -rn 'published by rename' crates/c3/src (read-only): eight hits, each naming the removed behaviour. Remedy: Reword the eight places as README.md:818-819 already reads: without an atomic exchange the file is not written and the line says so.
+- **F65-2** [minor] `crates/c3/src/maintain/mod.rs:1048`, `crates/c3/src/maintain/mod.rs:1054`, `crates/c3/src/maintain/mod.rs:270`, `crates/c3/src/maintain/mod.rs:1933` - When the updater leaves a readable release other than the pinned target (the same numbers with another identity, a build-metadata variant, or a newer one), update_and_verify now reports 'update did not take' and returns without smoking what is installed. The pending record is resolved only inside the next pass, which the schedule puts an interval away, so that release serves unsmoked meanwhile and is not rolled back if it is broken. At ea30cce a release whose numbers were equal to or newer than the target was smoked in the same pass and rolled back on failure. Trigger: The vendor's updater or a concurrent manual update leaves a release whose text differs from the checked target. Evidence: read-code: Removed: !matches!(&after, Some(v) if v >= latest_v). Added: !after.as_ref().is_some_and(|v| v.same_release(latest_v)). The branch below returns before the smoke.; read-code: The did-not-take return is at 1054-1056; the post-update smoke starts at 1063.; read-code: A pending record is handled only inside a pass; next_due is +interval days (one day only when an engine was in use); the hook spawns a pass only when is_due holds, and a pending record does not make it due. Verify: RC3. Remedy: When the re-read version is a readable release other than the target, run the recovery smoke on it in the same pass, credited to itself (the third-version path of handle_pending_smoke) with the rollback on failure, instead of returning with the record kept.
+- **F65-3** [minor] `crates/c3-cli/tests/work.rs:2431`, `crates/c3/src/work/mod.rs:204`, `crates/c3/src/providers.rs:2569`, `crates/c3/src/state_dir/tests.rs:986` - a_collab_path_with_dot_dot_after_a_link_is_taken_by_text runs c3 work, whose collab resolution this commit does not change (it has applied state_dir::lexical itself since F61-3), so the test passes at ea30cce as well. The code the commit changed, resolve_collab_root_with, is used by consult, panel, detach and a panel member and is covered only by a unit test that calls resolve_collab_root and begin_run directly; no test goes through those entry points, which is what review 62's RC2 asked for. Trigger: Delete providers.rs:2569 and run the c3-cli work tests: still green. Evidence: read-code: The test calls e.work(...), which runs c3 work with --collab-dir l/../.collab4.; read-code: c3 work joins the path, applies collab_dir and lexical at :204 itself, and never calls resolve_collab_root. work/mod.rs is not among the patch's files.; read-code: The fix (lexical before the link check and canonicalize) and its only test, which asserts the resolved path and calls begin_run on it. Verify: RC2. Remedy: Add a c3 consult case (fake reviewer) with --collab-dir l/../.collab to a c3-cli test, and label the work.rs test as F61-3's or drop it.
+- **F65-4** [note] `crates/c3/src/maintain/mod.rs:1048`, `crates/c3/src/maintain/mod.rs:1076`, `crates/c3/src/maintain/engine.rs:154`, `crates/c3-cli/tests/maintain.rs:484`, `crates/c3-cli/tests/maintain.rs:501` - No test drives the two identity comparisons outside the recovery with a release of the target's numbers: an updater that leaves 1.0.80-rc.1 for the target 1.0.80 (mod.rs:1048), a rollback that restores a same-numbers release (mod.rs:1076), or codex's release date keyed by the exact release (engine.rs:154). The existing did-not-take and rollback tests use older numbers, which the numeric comparison refuses as well. Trigger: Revert mod.rs:1048 and :1076 to a numeric comparison: every test stays green. Evidence: read-code: The new tests exercise handle_pending_smoke, the update decision and the type; none reaches update_and_verify with a same-numbers release.; read-code: The no-op update leaves 1.0.77 for 1.0.80; the no-op rollback leaves 1.0.80 for 1.0.77. Verify: RC5. Remedy: Two fake-grok cases (updater writes 1.0.80-rc.1 for target 1.0.80; rollback writes 1.0.77-rc.1) asserting 'update did not take (still 1.0.80-rc.1)' and 'rollback failed, still 1.0.77-rc.1', and a codex time fixture keyed by a pre-release.
+- **F65-5** [note] `crates/c3-core/src/quota.rs:4478` - The new F62-5 test was inserted between the doc comment of a_tool_inventory_is_complete_breached_or_unproven and that test, so the F57-2 comment (complete / breached / unproven) now documents the wrong test. Trigger: Reading the test module. Evidence: read-code: The '(F57-2) A tool inventory is COMPLETE only when ...' comment is followed by #[test] fn a_namespace_nested_in_the_multi_agent_namespace_keeps_its_ancestry. Verify: Read quota.rs:4478-4483 and the fn a_tool_inventory_is_complete_breached_or_unproven that follows the new test. Remedy: Move the new test below the old one or give it its own doc comment.
+- **F65-6** [note] `crates/c3-cli/tests/telemetry_parity.rs:899`, `crates/c3/src/telemetry/classes.rs:1206`, `crates/c3/src/maintain/models.rs:2242` - The fixture records that used to be a built-in catalog record without a status (an earlier build's) now carry url and public: true. The one exception in provenance, a built-in record with no url trusted by its exact name (web.rs:174), is therefore exercised only by one unit assertion; no binary-level test sends such a record through telemetry any more. Trigger: A maintain state holding a URL-named built-in record without status (written by a build before F62-3) whose first fetch with the new build fails: whether its ids still publish. Evidence: read-code: Both built-in fixtures gained url and public: true.; read-code: builtin_legacy is the only remaining record without status; asserted at unit level. Verify: Add a record {source: web:https://openrouter.ai:443/api/v1/models, ids: [qwen/qwen4-max]} without url to the state of only_a_trusted_vendor_bound_published_id_is_sent_by_name and expect qwen4-max by name. Remedy: Keep one status-less built-in record in a binary-level telemetry test beside the status-carrying one.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside this diff; not read.
+- F02-2 - fixed - The repair is published by publish_exchange (repo_models.rs:517; contain.rs:722-798): new temp file, atomic swap, displaced edit kept. Read, not run.
+- F02-3 - not-checked - Outside this diff; not read.
+- F02-4 - not-checked - Outside this diff; not read.
+- F02-5 - not-checked - Outside this diff; not read.
+- F02-6 - not-checked - Outside this diff; not read.
+- F02-7 - not-checked - Outside this diff; not read.
+- F02-8 - not-checked - Outside this diff; not read.
+- F02-9 - not-checked - Outside this diff; not read.
+- F02-10 - not-checked - Outside this diff; not read.
+- F02-11 - not-checked - Outside this diff; not read.
+- F02-12 - not-checked - Outside this diff; not read.
+- F02-13 - not-checked - Outside this diff; not read.
+- F02-14 - not-checked - Outside this diff; not read.
+- F02-15 - not-checked - Outside this diff; not read.
+- F02-16 - not-checked - Outside this diff; not read.
+- F02-17 - not-checked - Outside this diff; not read.
+- F02-18 - fixed - An explicit --models returns before the lock and the state directory when models are off (mod.rs:645-648, 1499-1509). Read, not run.
+- F02-19 - fixed - Superseded by F62-3: published_from needs provenance (models.rs:1043-1049; web.rs:162-175). Read, not run.
+- F02-20 - not-checked - Outside this diff; not read.
+- F03-1 - not-checked - Outside this diff; not read.
+- F03-2 - not-checked - Outside this diff; not read.
+- F03-3 - not-checked - Outside this diff; not read.
+- F03-4 - not-checked - Outside this diff; not read.
+- F03-5 - not-checked - Outside this diff; not read.
+- F03-6 - not-checked - Outside this diff; not read.
+- F04-1 - not-checked - Outside this diff; not read.
+- F04-2 - not-checked - Outside this diff; not read.
+- F04-3 - not-checked - Outside this diff; not read.
+- F04-4 - not-checked - Outside this diff; not read.
+- F04-5 - not-checked - Outside this diff; not read.
+- F04-6 - not-checked - Outside this diff; not read.
+- F04-7 - not-checked - Outside this diff; not read.
+- F04-8 - not-checked - Outside this diff; not read.
+- F04-9 - not-checked - Outside this diff; not read.
+- F10-1 - not-checked - Outside this diff; not read.
+- F10-2 - not-checked - Outside this diff; not read.
+- F10-3 - not-checked - Outside this diff; not read.
+- F10-4 - not-checked - Outside this diff; not read.
+- F10-5 - fixed - A name in the fixed multi-agent list counts under any namespace, mcp__ included (quota.rs:949-957). The other clauses of the finding were not re-read.
+- F10-7 - not-checked - Outside this diff; not read.
+- F11-1 - not-checked - Outside this diff; not read.
+- F11-2 - not-checked - Outside this diff; not read.
+- F11-3 - not-checked - Outside this diff; not read.
+- F11-4 - not-checked - Outside this diff; not read.
+- F11-5 - not-checked - Outside this diff; not read.
+- F11-6 - not-checked - Outside this diff; not read.
+- F11-7 - not-checked - Outside this diff; not read.
+- F11-8 - not-checked - Outside this diff; not read.
+- F11-9 - not-checked - Outside this diff; not read.
+- F11-10 - not-checked - Outside this diff; not read.
+- F11-11 - not-checked - Outside this diff; not read.
+- F11-12 - not-checked - Outside this diff; not read.
+- F12-1 - not-checked - Outside this diff; not read.
+- F12-2 - not-checked - Outside this diff; not read.
+- F12-3 - not-checked - Outside this diff; not read.
+- F12-4 - not-checked - Outside this diff; not read.
+- F13-1 - not-checked - Outside this diff; not read.
+- F13-2 - not-checked - Outside this diff; not read.
+- F13-3 - not-checked - Outside this diff; not read.
+- F13-4 - not-checked - Outside this diff; not read.
+- F13-5 - not-checked - Outside this diff; not read.
+- F13-6 - not-checked - Outside this diff; not read.
+- F13-7 - not-checked - Outside this diff; not read.
+- F13-8 - not-checked - Outside this diff; not read.
+- F13-9 - not-checked - Outside this diff; not read.
+- F14-1 - not-checked - Outside this diff; not read.
+- F14-2 - not-checked - Outside this diff; not read.
+- F14-3 - not-checked - Outside this diff; not read.
+- F14-4 - not-checked - Outside this diff; not read.
+- F14-5 - not-checked - Outside this diff; not read.
+- F15-1 - not-checked - Outside this diff; not read.
+- F15-2 - not-checked - Outside this diff; not read.
+- F15-3 - not-checked - Outside this diff; not read.
+- F15-5 - fixed - try_newer_release judges newer against the version read at that moment (mod.rs:1358-1364). Read, not run.
+- F15-6 - fixed - Same code as F02-18: the off --models return comes before the lock and the state directory (mod.rs:645-648). Read, not run.
+- F16-1 - not-checked - Outside this diff; not read.
+- F16-2 - not-checked - Outside this diff; not read.
+- F16-3 - not-checked - Outside this diff; not read.
+- F16-4 - not-checked - Outside this diff; not read.
+- F16-5 - not-checked - Outside this diff; not read.
+- F16-6 - not-checked - Outside this diff; not read.
+- F16-7 - not-checked - Outside this diff; not read.
+- F16-8 - not-checked - Outside this diff; not read.
+- F16-9 - not-checked - Outside this diff; not read.
+- F16-10 - not-checked - Outside this diff; not read.
+- F17-1 - not-checked - Outside this diff; not read.
+- F17-2 - not-checked - Outside this diff; not read.
+- F17-3 - not-checked - Outside this diff; not read.
+- F17-4 - not-checked - Outside this diff; not read.
+- F17-5 - not-checked - Outside this diff; not read.
+- F17-6 - not-checked - Outside this diff; not read.
+- F17-7 - not-checked - Outside this diff; not read.
+- F17-8 - not-checked - Outside this diff; not read.
+- F17-9 - not-checked - Outside this diff; not read.
+- F17-10 - not-checked - Outside this diff; not read.
+- F18-1 - not-checked - Outside this diff; not read.
+- F18-2 - not-checked - Outside this diff; not read.
+- F18-3 - not-checked - Outside this diff; not read.
+- F18-4 - not-checked - Outside this diff; not read.
+- F18-5 - not-checked - Outside this diff; not read.
+- F18-6 - not-checked - Outside this diff; not read.
+- F18-7 - not-checked - Outside this diff; not read.
+- F19-1 - not-checked - Outside this diff; not read.
+- F19-2 - not-checked - Outside this diff; not read.
+- F19-3 - fixed - Patch names carry the full sha256 (reviewed.rs:1674-1685), so different bytes get different names. The placement logic was not re-read.
+- F19-4 - not-checked - Outside this diff; not read.
+- F19-5 - not-checked - Outside this diff; not read.
+- F19-6 - not-checked - Outside this diff; not read.
+- F20-1 - not-checked - Outside this diff; not read.
+- F20-2 - not-checked - Outside this diff; not read.
+- F20-3 - fixed - As F19-3: content names carry the full digest (reviewed.rs:1674-1685). The placement logic was not re-read.
+- F20-4 - not-checked - Outside this diff; not read.
+- F20-5 - not-checked - Outside this diff; not read.
+- F20-6 - not-checked - Outside this diff; not read.
+- F24-1 - not-checked - Outside this diff; not read.
+- F24-2 - not-checked - Outside this diff; not read.
+- F24-4 - not-checked - Outside this diff; not read.
+- F27-1 - not-checked - Outside this diff; not read.
+- F27-2 - not-checked - Outside this diff; not read.
+- F27-3 - not-checked - Outside this diff; not read.
+- F28-1 - not-checked - Outside this diff; not read.
+- F28-2 - not-checked - Outside this diff; not read.
+- F28-3 - not-checked - Outside this diff; not read.
+- F29-1 - not-checked - Outside this diff; not read.
+- F29-2 - not-checked - Outside this diff; not read.
+- F29-3 - not-checked - Outside this diff; not read.
+- F30-1 - not-checked - Outside this diff; not read.
+- F30-2 - not-checked - Outside this diff; not read.
+- F30-3 - not-checked - Outside this diff; not read.
+- F30-4 - not-checked - Outside this diff; not read.
+- F30-5 - not-checked - Outside this diff; not read.
+- F30-6 - not-checked - Outside this diff; not read.
+- F31-1 - not-checked - Outside this diff; not read.
+- F31-2 - not-checked - Outside this diff; not read.
+- F31-3 - not-checked - Outside this diff; not read.
+- F31-4 - not-checked - Outside this diff; not read.
+- F31-5 - not-checked - Outside this diff; not read.
+- F31-6 - not-checked - Outside this diff; not read.
+- F32-1 - not-checked - Outside this diff; not read.
+- F32-2 - not-checked - Outside this diff; not read.
+- F32-3 - not-checked - Outside this diff; not read.
+- F32-4 - not-checked - Outside this diff; not read.
+- F32-5 - not-checked - Outside this diff; not read.
+- F36-1 - not-checked - Outside this diff; not read.
+- F36-2 - not-checked - Outside this diff; not read.
+- F36-3 - not-checked - Outside this diff; not read.
+- F36-4 - not-checked - Outside this diff; not read.
+- F36-5 - not-checked - Outside this diff; not read.
+- F36-6 - not-checked - Outside this diff; not read.
+- F36-7 - not-checked - Outside this diff; not read.
+- F36-8 - not-checked - Outside this diff; not read.
+- F38-1 - not-checked - Outside this diff; not read.
+- F38-2 - not-checked - Outside this diff; not read.
+- F39-1 - not-checked - Outside this diff; not read.
+- F39-2 - not-checked - Outside this diff; not read.
+- F39-4 - not-checked - Outside this diff; not read.
+- F43-1 - not-checked - Outside this diff; not read.
+- F43-2 - not-checked - Outside this diff; not read.
+- F43-3 - not-checked - Outside this diff; not read.
+- F43-5 - not-checked - Outside this diff; not read.
+- F43-6 - not-checked - Outside this diff; not read.
+- F43-7 - not-checked - Outside this diff; not read.
+- F43-8 - not-checked - Outside this diff; not read.
+- F44-1 - not-checked - Outside this diff; not read.
+- F44-2 - not-checked - Outside this diff; not read.
+- F44-3 - not-checked - Outside this diff; not read.
+- F45-1 - not-checked - Outside this diff; not read.
+- F45-2 - not-checked - Outside this diff; not read.
+- F45-3 - not-checked - Outside this diff; not read.
+- F45-4 - not-checked - Outside this diff; not read.
+- F45-5 - not-checked - Outside this diff; not read.
+- F45-6 - not-checked - Outside this diff; not read.
+- F45-7 - not-checked - Outside this diff; not read.
+- F45-8 - not-checked - Outside this diff; not read.
+- F45-9 - not-checked - Outside this diff; not read.
+- F46-1 - not-checked - Outside this diff; not read.
+- F46-2 - not-checked - Outside this diff; not read.
+- F46-3 - not-checked - Outside this diff; not read.
+- F46-4 - not-checked - Outside this diff; not read.
+- F46-5 - not-checked - Outside this diff; not read.
+- F46-6 - not-checked - Outside this diff; not read.
+- F46-7 - not-checked - Outside this diff; not read.
+- F46-8 - not-checked - Outside this diff; not read.
+- F47-1 - not-checked - Outside this diff; not read.
+- F47-2 - not-checked - Outside this diff; not read.
+- F47-3 - not-checked - Outside this diff; not read.
+- F47-4 - not-checked - Outside this diff; not read.
+- F48-1 - not-checked - Outside this diff; not read.
+- F48-2 - not-checked - Outside this diff; not read.
+- F48-3 - not-checked - Outside this diff; not read.
+- F48-4 - not-checked - Outside this diff; not read.
+- F48-5 - not-checked - Outside this diff; not read.
+- F51-1 - not-checked - Outside this diff; not read.
+- F51-2 - not-checked - Outside this diff; not read.
+- F51-3 - not-checked - Outside this diff; not read.
+- F51-4 - not-checked - Outside this diff; not read.
+- F51-5 - not-checked - Outside this diff; not read.
+- F51-6 - not-checked - Outside this diff; not read.
+- F52-1 - not-checked - Outside this diff; not read.
+- F52-2 - not-checked - Outside this diff; not read.
+- F52-4 - not-checked - Outside this diff; not read.
+- F53-1 - not-checked - Outside this diff; not read.
+- F53-2 - not-checked - Outside this diff; not read.
+- F53-3 - not-checked - Outside this diff; not read.
+- F53-4 - not-checked - Outside this diff; not read.
+- F53-5 - not-checked - Outside this diff; not read.
+- F53-6 - not-checked - Outside this diff; not read.
+- F53-7 - not-checked - Outside this diff; not read.
+- F57-1 - fixed - A page record is keyed by its URL and needs public-at-read (web.rs:73-107, 162-175). Read, not run.
+- F57-2 - fixed - Any unreadable entry makes the inventory Unproven unless a multi-agent tool is offered (quota.rs:1027-1051). Read, not run.
+- F57-3 - fixed - Superseded by F62-1: the recovery compares exact identities (mod.rs:1206-1324); a test at maintain.rs:841 covers the reviewer's RC1. Read, not run.
+- F57-4 - not-checked - Outside this diff; not read.
+- F57-5 - fixed - Names carry the full sha256 (reviewed.rs:1674-1685). The placement logic was not re-read.
+- F57-6 - fixed - Tests assert the refusal for a linked task directory, handoffs and work (state_dir/tests.rs:920-935). run_dirs itself was not read.
+- F57-7 - not-checked - Outside this diff; not read.
+- F57-8 - not-checked - Outside this diff; not read.
+- F57-9 - not-checked - Outside this diff; not read.
+- F57-10 - fixed - The roster is published by publish_exchange and a displaced edit is kept (contain.rs:722-798). Read, not run.
+- F60-1 - fixed - linked_below_root keeps a linked path as named, so it is not canonicalised (providers.rs:2575-2577; state_dir.rs:1882-1907). Read, not run.
+- F60-2 - fixed - repo_relative_normal falls back to the named spelling when the text is not a prefix (state_dir.rs:1858-1863). Read, not run.
+- F60-3 - fixed - The F57-6 tests clause now says such a link is refused (CHANGELOG hunk at 856-878 of the patch).
+- F61-1 - fixed - As F60-1: the linked path stays as named (providers.rs:2575-2577; state_dir.rs:1882-1907). Read, not run.
+- F61-3 - fixed - c3 work applies lexical before it uses the path (work/mod.rs:202-204). Read, not run.
+- F62-1 - fixed - Identity and ordering are separated as asked; no comparison by numbers remains. Residual: findings #2 and #4.
+- F62-2 - fixed - lexical runs before the link check and canonicalize (providers.rs:2569). Residual: finding #3, no test through consult, panel or detach.
+- F62-3 - fixed - The status is recorded (web.rs:361-367) and required (web.rs:162-175); one publication path. Residual: finding #6.
+- F62-4 - fixed - A hard link takes the name, then -2, -3 ...; a random name where no link can be made (contain.rs:848-891).
+- F62-5 - fixed - The multi-agent ancestry is kept at any depth (quota.rs:1112-1117). Finding #5 is a doc-comment slip only.
+- F62-6 - fixed - The stem is bounded to 120 bytes at a character boundary (reviewed.rs:780-793).
+
+## Verdict: ACCEPT
+
+Every fix does what review 62 asked and I found no defect in the changed code; what remains is minor: a smoke deferred to the next pass, one integration test that proves nothing, stale wording and two test gaps.
+
+**WARNING: ACCEPT with 10 unchecked prior blocker(s) (F02-1, F02-16, F02-21, F03-1, F11-3, F11-7, F13-1, F19-1, F32-1, F57-4).**
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, fixed) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, fixed) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, not-checked) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+- **F32-1** (prior, not-checked) `crates/c3/src/engines/worktree.rs:248` - Stage creation and publication use pathnames after validation, so a replaced directory component can send staged bytes outside the worktree and leave a temporary file there.
+- **F57-1** (prior, fixed) `crates/c3/src/maintain/web.rs:209` - Changing a page's URL and public flag while retaining its name can publish IDs from the previously non-public page in telemetry.
+- **F57-2** (prior, fixed) `crates/c3-core/src/quota.rs:941` - An uninterpretable nested tool inventory counts as positive switch evidence for a Codex smoke turn.
+- **F57-3** (prior, fixed) `crates/c3/src/maintain/mod.rs:740` - Pending recovery can record the pending target version as verified after smoking a different installed version.
+- **F57-4** (prior, not-checked) `crates/c3/src/state_dir.rs:745` - A live lock creator can return success after another process reclaimed its still-empty file and acquired the same move lock.
+- **F57-5** (prior, fixed) `crates/c3/src/consult/reviewed.rs:1451` - Two different patches can publish successfully at one short-hash path, leaving one consultation's full digest bound to the other consultation's bytes.
+- **F57-6** (prior, fixed) `crates/c3/src/state_dir.rs:1544` - A linked task directory below a real project collab directory can redirect handoff directory creation and consultation output.
+- **F62-1** (prior, fixed) `crates/c3/src/maintain/version.rs:79` - Pending recovery can mark a final CLI release verified when both installed-version probes and the smoke used only a prerelease.
+- **F62-2** (prior, fixed) `crates/c3/src/state_dir.rs:1883` - Consult, panel and detach can classify a repository-relative collab argument as an external anchor because the link check and canonicalization interpret `..` differently.
+- **F62-3** (prior, fixed) `crates/c3/src/maintain/web.rs:133` - Declaring a formerly private catalog URL public can publish cached IDs that appeared only in the earlier private response.
+- **F62-4** (prior, fixed) `crates/c3/src/contain.rs:817` - The operation that preserves a displaced edit can overwrite an earlier displaced edit and report the same recovery path for both.
+- **F62-5** (prior, fixed) `crates/c3-core/src/quota.rs:956` - A nested namespace can erase its enclosing collaboration namespace during inventory traversal, causing an offered tool to count as clean switch evidence.
+
+### Unproven scenarios
+
+- The real --version text of codex, kimi and grok beside the vendor's reading, for final and pre-release releases, and whether kimi's installer honours KIMI_VERSION to that exact text (RC1).
+- Exchange::Unsupported leading to the refusal (contain.rs:774) and the missing-file plus no-hard-link refusal (contain.rs:768-772) on a real file system without an exchange: only the test-hook branch is exercised (RC4).
+- settle_displaced on a file system without hard links: the 32-hex name is tested through place_displaced with links false only, not through an exchange.
+- F62-2 through c3 consult, panel and detach on Linux; Windows resolves .. textually itself, and no entry-point test exists (RC2).
+- A tool list that names the multi-agent namespace as one dotted name (collaboration.pool) is not treated as inside it.
+- The c3-cli test files other than maintain, telemetry_parity and work, which CI runs and I did not read.
+- A first write of a file that does not exist is refused on a file system with neither an exchange nor hard links; documented in the CHANGELOG, exercised by no test.
+
+### First-run checklist (observable)
+
+_(none)_

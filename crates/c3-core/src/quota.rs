@@ -4475,10 +4475,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// (F57-2) A tool inventory is COMPLETE only when every entry is of a supported shape; a
-    /// multi-agent tool makes it BREACHED whatever else is unreadable; anything it cannot interpret
-    /// makes it UNPROVEN, and the reason names the entry's position and kind or key, never its
-    /// content.
+    /// (F62-5, RC5) The multi-agent namespace is an ancestry, not only a parent: a tool of a
+    /// namespace nested inside `collaboration`, at any depth, is offered - a breach.
     #[test]
     fn a_namespace_nested_in_the_multi_agent_namespace_keeps_its_ancestry() {
         let inv = |j: &str| tool_inventory(Some(&serde_json::from_str::<Value>(j).unwrap()));
@@ -4527,6 +4525,10 @@ mod tests {
         ));
     }
 
+    /// (F57-2) A tool inventory is COMPLETE only when every entry is of a supported shape; a
+    /// multi-agent tool makes it BREACHED whatever else is unreadable; anything it cannot interpret
+    /// makes it UNPROVEN, and the reason names the entry's position and kind or key, never its
+    /// content.
     #[test]
     fn a_tool_inventory_is_complete_breached_or_unproven() {
         let inv = |j: &str| tool_inventory(Some(&serde_json::from_str::<Value>(j).unwrap()));

@@ -68,6 +68,17 @@ switch ($role) {
           if ($vf) { Set-Content -LiteralPath $vf -Value ([string]$env:FAKE_GROK_ROLLBACK_TO) -NoNewline }
           exit 1
         }
+        # FAKE_GROK_UPDATE_WRITES / FAKE_GROK_ROLLBACK_WRITES: the forward update / the rollback exits
+        # 0 but leaves THIS version on disk instead of the one it was asked for (an updater that
+        # installs another release of the same numbers: a pre-release, a build variant).
+        if ($isForward -and $env:FAKE_GROK_UPDATE_WRITES) {
+          if ($vf) { Set-Content -LiteralPath $vf -Value ([string]$env:FAKE_GROK_UPDATE_WRITES) -NoNewline }
+          exit 0
+        }
+        if (-not $isForward -and $env:FAKE_GROK_ROLLBACK_WRITES) {
+          if ($vf) { Set-Content -LiteralPath $vf -Value ([string]$env:FAKE_GROK_ROLLBACK_WRITES) -NoNewline }
+          exit 0
+        }
         if ($vf) { Set-Content -LiteralPath $vf -Value $to -NoNewline }
         # FAKE_GROK_UPDATE_MUTATE_FAIL: a forward update WRITES the new version (mutates the install)
         # but then exits non-zero, modelling an installer that changed the install yet reported failure.

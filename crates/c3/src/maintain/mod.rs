@@ -1006,7 +1006,10 @@ fn maintain_one_engine(
 /// the checked target. Returns (report clause without the name, state action, RESOLVED) - (R1)
 /// `resolved` is true only when the engine is left in a known-good state (the target smoked clean, or
 /// the previous version is verified restored); every failure path returns false so the caller keeps
-/// the pending-update record for the next pass to recover.
+/// the pending-update record for the next pass to recover. (F65-2) A readable release other than
+/// the target and the previous one, left by the updater, is smoked in the same pass and credited
+/// to itself (the recovery's third-version path); then `resolved` is that path's answer (a pass on
+/// it, or the previous version verified back).
 #[allow(clippy::too_many_arguments)]
 fn update_and_verify(
     env: &dyn Env,
@@ -1040,20 +1043,65 @@ fn update_and_verify(
         }
     }
 
-    // Require the update to have actually taken: re-read `--version` and demand the checked target
-    // (a `grok update` that installed something else, or a silent no-op, is a failed update).
-    // (F62-1) IDENTITY, not ordering: the smoke below is credited to the release installed, so it
-    // must be exactly the target the command pinned - a `1.0.80-rc.1` is not the target `1.0.80`.
+    // Require the update to have actually taken: re-read `--version` and demand the checked target.
+    // (F62-1) IDENTITY, not ordering: the smoke below is credited to the target, so the release
+    // installed must be exactly the target the command pinned - a `1.0.80-rc.1` is not `1.0.80`.
     let after = engine::installed_version(env, launcher);
-    if !after.as_ref().is_some_and(|v| v.same_release(latest_v)) {
-        // (R1) Some other version may now be on disk: keep the pending record for recovery.
-        let now_t = after
-            .as_ref()
-            .map(|v| v.text().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        let msg = format!("update did not take (still {now_t})");
-        println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
-        return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
+    match after.as_ref() {
+        // the target: smoked below
+        Some(v) if v.same_release(latest_v) => {}
+        // (F65-2) A readable release other than the target AND other than the previous one (the
+        // same numbers with another identity, a build variant, a newer release): the updater
+        // changed the install, so what IS installed is smoked now, in this pass - not left to
+        // serve unsmoked until the next one - and credited to ITSELF, never to the target. This
+        // is the recovery's third-version path ([`handle_pending_smoke`], on the smoke target this
+        // pass already chose, with the record just written): a pass names the installed release
+        // and says the target is not verified (the record is cleared with that truth in the state);
+        // a failed or unproven smoke is rolled back to the previous release, and the record is
+        // kept unless the previous release is verified back.
+        Some(v) if !v.same_release(inst) => {
+            let left = v.text().to_string();
+            println!(
+                "c3 maintain: {name} {installed_text} -> {new_text} left {left} installed instead of the target; {left} is smoked for itself"
+            );
+            let p = PendingUpdate {
+                engine: name.to_string(),
+                previous: installed_text.to_string(),
+                target: new_text.to_string(),
+                when: rfc3339(now),
+            };
+            return match handle_pending_smoke(
+                env,
+                name,
+                launcher,
+                &left,
+                Some(v),
+                caps,
+                roster,
+                dir,
+                self_exe,
+                now,
+                &p,
+                Some(target),
+            ) {
+                PendingOutcome::Done(clause, action, resolved) => (clause, action, resolved),
+                // the rollback did not restore (or there is none): the record is kept for the next
+                // pass, whose recovery smokes the installed release again
+                PendingOutcome::StillFailing(clause, action, _) => (clause, action, false),
+            };
+        }
+        // Still the previous release (a silent no-op), or a version that cannot be read (no smoke:
+        // its result could not be attributed to a release, the recovery's rule too): the update did
+        // not take. (R1) Keep the pending record for the next pass to recover.
+        _ => {
+            let now_t = after
+                .as_ref()
+                .map(|v| v.text().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let msg = format!("update did not take (still {now_t})");
+            println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
+            return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
+        }
     }
     let after_text = after
         .as_ref()
@@ -1168,6 +1216,7 @@ fn handle_pending(
         self_exe,
         now,
         p,
+        None,
     );
     match outcome {
         PendingOutcome::Done(clause, action, resolved) => (clause, action, resolved),
@@ -1189,7 +1238,10 @@ enum PendingOutcome {
     StillFailing(String, String, smoke::Target),
 }
 
-/// The recovery smoke of [`handle_pending`] (the behaviour before the newer-release step).
+/// The recovery smoke of [`handle_pending`] (the behaviour before the newer-release step). (F65-2)
+/// Also the smoke of a release an update left installed instead of its target
+/// ([`update_and_verify`]): `p` is then the record written just before the install and
+/// `smoke_target` the smoke target that pass already chose (`None`: pick one now).
 #[allow(clippy::too_many_arguments)]
 fn handle_pending_smoke(
     env: &dyn Env,
@@ -1203,6 +1255,7 @@ fn handle_pending_smoke(
     self_exe: &str,
     now: DateTime<Utc>,
     p: &PendingUpdate,
+    smoke_target: Option<&smoke::Target>,
 ) -> PendingOutcome {
     use PendingOutcome::{Done, StillFailing};
     let prev = version::parse_cli_version(&p.previous);
@@ -1238,11 +1291,18 @@ fn handle_pending_smoke(
             p.target
         )
     };
-    // Otherwise verify the installed version by a smoke.
-    let Some(target) = smoke::pick_target(&smoke_override(name), roster, name, now) else {
-        let msg = format!("pending update unresolved{third}: no quota for a smoke");
-        println!("c3 maintain: {name} {installed_text} - {msg}");
-        return Done(format!("{installed_text} {msg}"), msg, false); // keep the pending record
+    // Otherwise verify the installed version by a smoke: on the target the caller already chose (the
+    // update path, F65-2), else on one picked now.
+    let target = match smoke_target {
+        Some(t) => t.clone(),
+        None => {
+            let Some(t) = smoke::pick_target(&smoke_override(name), roster, name, now) else {
+                let msg = format!("pending update unresolved{third}: no quota for a smoke");
+                println!("c3 maintain: {name} {installed_text} - {msg}");
+                return Done(format!("{installed_text} {msg}"), msg, false); // keep the record
+            };
+            t
+        }
     };
     let roster_text = roster_text_of(roster);
     let outcome = run_one_smoke(env, self_exe, &target, name, now, roster_text.as_deref());

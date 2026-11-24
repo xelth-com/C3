@@ -936,8 +936,11 @@ fn a_published_claude_id_spelled_with_dots_is_sent_by_its_dash_name() {
     let e = setup("tel-published-claude-dots");
     let mdir = e.home.join("c3").join("maintain");
     std::fs::create_dir_all(&mdir).unwrap();
+    // (F62-3; diff review 65) the record as a build BEFORE F62-3 wrote it - no `url`, no `public`:
+    // the one exception of the rule, the built-in catalog under its exact canonical URL, still
+    // publishes (its trust always came from the code), here through the binary
     let state = serde_json::json!({"models": {"sources": [
-        {"source": "web:https://openrouter.ai:443/api/v1/models", "url": "https://openrouter.ai:443/api/v1/models", "public": true, "ids": ["anthropic/claude-opus-9.3"]}
+        {"source": "web:https://openrouter.ai:443/api/v1/models", "ids": ["anthropic/claude-opus-9.3"]}
     ]}});
     std::fs::write(mdir.join("state.json"), state.to_string()).unwrap();
     let models = backfilled_models_of(

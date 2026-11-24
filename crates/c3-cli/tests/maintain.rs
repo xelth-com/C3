@@ -943,6 +943,171 @@ fn an_installed_prerelease_is_updated_to_its_final_release() {
     assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
 }
 
+/// (F65-2, F65-4, the review's RC3) The updater, asked for exactly 1.0.80, leaves 1.0.80-rc.1 - a
+/// release of the target's numbers, not the target. It is smoked in the SAME pass and credited to
+/// itself (the recovery's third-version path): the action names 1.0.80-rc.1 and says the target is
+/// not verified, the record is cleared with that truth in the state, nothing is rolled back.
+#[test]
+fn an_update_that_leaves_a_prerelease_of_the_target_smokes_it_for_itself() {
+    let e = setup("upd-left-rc");
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    env.push(("FAKE_GROK_UPDATE_WRITES", "1.0.80-rc.1"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.77 -> 1.0.80 left 1.0.80-rc.1 installed instead of the target; 1.0.80-rc.1 is smoked for itself"),
+        "{t}"
+    );
+    assert!(
+        t.contains("grok 1.0.80-rc.1 - pending update to 1.0.80 not verified: 1.0.80-rc.1 is installed instead (changed since the update was recorded); the smoke passed on 1.0.80-rc.1"),
+        "{t}"
+    );
+    assert!(!t.contains("did not take"), "{t}");
+    assert!(!t.contains("-> 1.0.80 ok"), "{t}");
+    assert!(!t.contains("-> 1.0.80-rc.1 ok"), "{t}");
+    assert!(!t.contains("update to 1.0.80 verified"), "{t}");
+    let rec = grok_state(&e);
+    // `installed` is the version measured at the start of the engine's turn, as after every update
+    // outcome; the action names the release the updater left
+    assert_eq!(rec["installed"], "1.0.77", "{rec}");
+    let action = rec["action"].as_str().unwrap_or_default();
+    assert!(
+        action
+            .starts_with("pending update to 1.0.80 not verified: 1.0.80-rc.1 is installed instead")
+            && action.ends_with("the smoke passed on 1.0.80-rc.1"),
+        "{rec}"
+    );
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+    assert_eq!(verfile(&e.grok_verfile), "1.0.80-rc.1");
+    let log = e.mnt_log();
+    assert!(log.contains("update --version 1.0.80"), "{log}");
+    assert!(
+        !log.contains("update --version 1.0.77"),
+        "no rollback: {log}"
+    );
+}
+
+/// (F65-2, F65-4, RC3) The same updater, and the release it left FAILS its smoke: rolled back to
+/// the previous release in the same pass, and the line says so, naming the release that failed.
+#[test]
+fn an_update_that_leaves_a_failing_prerelease_rolls_it_back() {
+    let e = setup("upd-left-rc-fail");
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass-then-fail");
+    env.push(("FAKE_GROK_UPDATE_WRITES", "1.0.80-rc.1"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.80-rc.1 - recovered (1.0.80-rc.1 is installed, not the pending target 1.0.80): smoke failed, rolled back to 1.0.77"),
+        "{t}"
+    );
+    assert!(!t.contains("verified"), "{t}");
+    assert!(!t.contains("did not take"), "{t}");
+    let rec = grok_state(&e);
+    assert!(
+        rec["action"].as_str().unwrap_or_default().starts_with(
+            "recovered (1.0.80-rc.1 is installed, not the pending target 1.0.80): smoke failed, rolled back to 1.0.77"
+        ),
+        "{rec}"
+    );
+    assert_eq!(verfile(&e.grok_verfile), "1.0.77");
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+    assert!(
+        e.mnt_log().contains("update --version 1.0.77"),
+        "{}",
+        e.mnt_log()
+    );
+}
+
+/// (F65-4) A rollback that restores a release of the previous version's numbers (1.0.77-rc.1 for
+/// 1.0.77, the command exiting 0) has not restored the previous release: reported failed, the
+/// pending record kept.
+#[test]
+fn a_rollback_to_a_same_numbers_release_is_not_a_restore() {
+    let e = setup("rb-same-numbers");
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass-then-fail");
+    env.push(("FAKE_GROK_ROLLBACK_WRITES", "1.0.77-rc.1"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.77 -> 1.0.80 smoke failed, rollback failed, still 1.0.77-rc.1"),
+        "{t}"
+    );
+    assert!(!t.contains("rolled back"), "{t}");
+    let rec = grok_state(&e);
+    assert_eq!(
+        rec["action"], "smoke failed, rollback failed, still 1.0.77-rc.1",
+        "{rec}"
+    );
+    assert_eq!(verfile(&e.grok_verfile), "1.0.77-rc.1");
+    let pending = e.pending_json();
+    assert!(
+        pending.contains("\"engine\":\"grok\"") && pending.contains("\"previous\":\"1.0.77\""),
+        "the record is kept: {pending}"
+    );
+}
+
+/// (F65-2) An update after which the installed version cannot be read smokes nothing (its result
+/// could not be attributed to a release, the recovery's rule too): "did not take (still unknown)",
+/// no rollback, the record kept for the next pass.
+#[test]
+fn an_update_that_leaves_an_unreadable_version_smokes_nothing_and_keeps_the_record() {
+    let e = setup("upd-left-unknown");
+    // a second smoke would fail (and roll back) - it must not run
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass-then-fail");
+    env.push(("FAKE_GROK_UPDATE_WRITES", "nightly"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.77 -> 1.0.80 update did not take (still unknown)"),
+        "{t}"
+    );
+    assert!(!t.contains("smoked for itself"), "{t}");
+    assert_eq!(verfile(&e.grok_verfile), "nightly");
+    assert!(
+        !e.mnt_log().contains("update --version 1.0.77"),
+        "no rollback: {}",
+        e.mnt_log()
+    );
+    let pending = e.pending_json();
+    assert!(
+        pending.contains("\"engine\":\"grok\"") && pending.contains("\"target\":\"1.0.80\""),
+        "the record is kept: {pending}"
+    );
+}
+
+/// (F65-4) codex's release date - the key of the cool-down - is read under the EXACT release npm
+/// announced: a fresh `0.170.0-alpha.1` is held by its own date (the bare numbers `0.170.0` have no
+/// entry, so a lookup under them found no date and held nothing).
+#[test]
+fn a_prerelease_cool_down_reads_the_prereleases_own_date() {
+    let e = setup("held-rc");
+    let codex_exe = e.codex_exe.to_string_lossy().into_owned();
+    let cverfile = e.codex_verfile.to_string_lossy().into_owned();
+    let env = vec![
+        ("CODEX_CONSULT_EXE", codex_exe.as_str()),
+        ("FAKE_CODEX_VERFILE", cverfile.as_str()),
+        ("FAKE_CODEX_VER", "0.169.0"),
+        ("FAKE_NPM_LATEST", "0.170.0-alpha.1"),
+        ("FAKE_NPM_DATE", "2020-01-01T00:00:00Z"),
+        ("C3_MAINTAIN_MIN_AGE_DAYS", "100000"),
+    ];
+    let o = e.run(&["maintain", "--run", "--engine", "codex"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("codex 0.169.0 -> 0.170.0-alpha.1 held: released"),
+        "the pre-release is held by its own date: {t}"
+    );
+    assert!(
+        !e.codex_verfile.exists(),
+        "nothing was installed (no install call wrote the version file)"
+    );
+}
+
 /// (F57-3) An installed version that cannot be read verifies nothing: no smoke is run, the action
 /// and the state say the pending update to the target is not verified, and the record is kept.
 #[test]

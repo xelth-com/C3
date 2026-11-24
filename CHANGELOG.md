@@ -559,17 +559,34 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   full stop and the punctuation printed right after the token (`version 1.0.77,`); the tag and
   build metadata are part of it (`1.0.80-rc.1`, `1.0.80rc1` and `1.0.80+build.7` are three releases
   other than `1.0.80`), and a version-shaped token that cannot be read exactly (`1.0.80(rc1)`,
-  `1.0.80_rc1`) names no release - the version is unknown, and no later number on the line is taken
-  instead. Its ORDERING is semver precedence: the numbers first, then a pre-release BEFORE the final
+  `1.0.80_rc1`, a dotted number with a part too large to read) names no release - the version is
+  unknown, and no later number on the line is taken instead. Its ORDERING is semver precedence: the numbers first, then a pre-release BEFORE the final
   release of the same numbers, two tags by semver's identifier rule, build metadata ignored; the
   type has no `Ord`, and every caller asks `same_release` or `is_newer_than` by name. Every "is it
   the same release" question compares the identity: in the recovery the previous version, the
   target, the version read again after the smoke and the version after a rollback; outside it, the
   "did the update take" check after an install (it accepted any version not older than the target
   by its numbers, so an installed `1.0.80-rc.1` passed for the target `1.0.80` and was reported as
-  `-> 1.0.80 ok`; any release other than the pinned target - a newer one too - is now "did not
-  take", the record kept for the next pass to recover as a third version) and the "is the previous
-  version back" check after a rollback. Every "is it newer"
+  `-> 1.0.80 ok`) and the "is the previous version back" check after a rollback (a rollback that
+  leaves `1.0.77-rc.1` for the previous `1.0.77` is `rollback failed, still 1.0.77-rc.1`, the record
+  kept). (F65-2, found by the diff review of this entry: its first version answered every readable
+  release other than the pinned target with `update did not take` BEFORE the smoke and kept the
+  record, so that release served unsmoked until the next scheduled pass - a pending record does not
+  make a pass due - and was not rolled back if broken, where the numeric check had smoked a release
+  of equal or newer numbers in the same pass.) After an install the re-read release now decides
+  three ways. The target: smoked as before. A readable release other than the target and the
+  previous one (the same numbers with another identity, a build variant, a newer release): smoked
+  in the SAME pass and credited to ITSELF through the recovery's third-version path
+  (`handle_pending_smoke`, on the smoke target the pass already chose, with the record just
+  written) - the line `<previous> -> <target> left <installed> installed instead of the target;
+  <installed> is smoked for itself`, then a pass records `pending update to <target> not verified:
+  <installed> is installed instead ...; the smoke passed on <installed>` and clears the record, and a
+  failed or unproven smoke is rolled back to the previous release exactly as a failed post-update
+  smoke (`recovered (<installed> is installed, not the pending target <target>): smoke failed,
+  rolled back to <previous>`; the record kept when the rollback does not restore). Still the
+  previous release, or a version that cannot be read: `update did not take (still <version or
+  unknown>)` as before - no smoke (an unreadable version's result could not be attributed to a
+  release, the recovery's rule too) and the record kept for the next pass. Every "is it newer"
   question uses the ordering: the update decision (an installed `1.0.80-rc.1` was "up to date" with
   a vendor `1.0.80`; it is now updated to it) and the newer-release step of an unresolved recovery.
   The action line, the report, the state's `installed`, the pending journal and the version an
@@ -578,20 +595,30 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   nothing), the npm release date that keys the cool-down is the pre-release's own, and a rollback
   pins the exact previous release. Limits: two builds that differ only in build metadata are equal
   in ordering - neither is installed over the other - yet different releases, so a CLI whose
-  `--version` printed build metadata the vendor's latest reading lacks would have its updates
-  reported as "did not take" and recovered as a third version (none of the `--version` shapes C3
-  records carries build metadata); a
-  pending record written by an older build holds the bare numbers, so a pre-release installed then
-  recovers as a third version (smoked for itself, the target not verified); C3's own self-update
-  (`update/`) is outside this fix. Tests: the reviewer's RC1,
+  `--version` printed build metadata the vendor's latest reading lacks would have each update
+  smoked and recorded as a third version, the target never "verified" (none of the `--version`
+  shapes C3 records carries build metadata); after an install the state's `installed` stays the
+  version measured at the start of the engine's turn, as after every update outcome - the action
+  names the release the updater left; a version that cannot be read after an install still waits,
+  unsmoked, for the next scheduled pass; a pending record written by an older build holds the bare
+  numbers, so a pre-release installed then recovers as a third version (smoked for itself, the
+  target not verified); C3's own self-update (`update/`) is outside this fix. Tests: the reviewer's
+  RC1,
   `a_pending_recovery_never_credits_a_prerelease_smoke_to_the_final_release` (previous 1.0.77,
   target 1.0.80, installed 1.0.80-rc.1: the action and the state name 1.0.80-rc.1, the target is not
   verified, the record is cleared as in the third-version case; a failing smoke of the pre-release
   is named and rolled back), its mirror
   `a_pending_recovery_never_credits_a_final_release_smoke_to_a_prerelease_target`,
-  `an_installed_prerelease_is_updated_to_its_final_release`, and the unit tests
-  `equal_numbers_with_different_identities_are_different_releases` and
-  `a_pre_release_sorts_before_its_final_release`.
+  `an_installed_prerelease_is_updated_to_its_final_release`; for F65-2 and the identity checks
+  outside the recovery (F65-4, the review's RC3)
+  `an_update_that_leaves_a_prerelease_of_the_target_smokes_it_for_itself` (the updater leaves
+  1.0.80-rc.1 for the target 1.0.80: smoked and named for itself, the target not verified),
+  `an_update_that_leaves_a_failing_prerelease_rolls_it_back`,
+  `a_rollback_to_a_same_numbers_release_is_not_a_restore`,
+  `an_update_that_leaves_an_unreadable_version_smokes_nothing_and_keeps_the_record` and
+  `a_prerelease_cool_down_reads_the_prereleases_own_date` (npm's date under `0.170.0-alpha.1`
+  holds it); and the unit tests `equal_numbers_with_different_identities_are_different_releases`
+  and `a_pre_release_sorts_before_its_final_release`.
 - **Plain http in test mode goes only to a loopback IP literal (F57-9, found by the acceptance
   review).** Wave D6 accepted `http://` under `CODEX_CONSULT_TEST_MODE=1` for `127.0.0.0/8`, `::1`
   and the NAME `localhost`; a name is resolved by the system resolver at connect time, which need not

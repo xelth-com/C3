@@ -150,8 +150,7 @@ pub struct RuleRepair {
     /// The section was appended to this file (repo-relative).
     pub fixed: Option<String>,
     /// (F57-10, F02-2) Said loudly with the fix: a hand edit saved during the write was displaced
-    /// and is kept next to the file, or the file was replaced by rename (no atomic exchange here) -
-    /// [`replace_file`].
+    /// and is kept next to the file - [`replace_file`].
     pub notice: Option<String>,
     /// The repair that was due and could not be made: `(file, why)`; the file is as it was.
     pub problem: Option<(String, String)>,
@@ -325,7 +324,7 @@ pub struct StateSentenceRepair {
     /// The files whose old sentences were replaced (repo-relative).
     pub fixed: Vec<String>,
     /// (F57-10, F02-2) Said loudly with the fixes: a hand edit displaced by a write and kept next
-    /// to its file, or a file replaced by rename (no atomic exchange here) - [`replace_file`].
+    /// to its file - [`replace_file`].
     pub notices: Vec<String>,
     /// The repairs that were due and could not be made: `(file, why)`; the file is as it was.
     pub problems: Vec<(String, String)>,

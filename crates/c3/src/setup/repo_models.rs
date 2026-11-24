@@ -16,8 +16,8 @@
 //! after the comparison is displaced, not lost - it is kept next to the file as
 //! `<name>.displaced-<UTC time>`, the hook line and `c3 doctor --fix` say so, and `c3 doctor` names
 //! every such file until it is removed ([`displaced_files`]). Where the system has no exchange (a
-//! Unix other than Linux / macOS, a file system that refuses it) the file is replaced by rename and
-//! the notice says that the moment between the comparison and the rename is not protected there.
+//! Unix other than Linux / macOS, a file system that refuses it) the file is NOT written: the
+//! repair fails for that file with the reason, and the file is as it was.
 //! A file with more than one hard link,
 //! a link (symlink, junction) or another reparse point, and a file under a linked `.claude` /
 //! `.claude/agents` are not edited at all; the file is checked again immediately before the rename.
@@ -62,8 +62,8 @@ pub struct ModelFix {
     /// The model id after the edit.
     pub new: String,
     /// (F57-10, F02-2) Said loudly with the fix: a hand edit saved during the write was displaced
-    /// and is kept next to the file (`<name>.displaced-<UTC time>`), or the file was replaced by
-    /// rename because this system has no atomic exchange ([`replace_file`]); `None` otherwise.
+    /// and is kept next to the file (`<name>.displaced-<UTC time>`, [`replace_file`]); `None`
+    /// otherwise.
     pub notice: Option<String>,
 }
 
@@ -456,7 +456,7 @@ pub(crate) fn edit_refusal(edit: &Edit<'_>) -> Option<String> {
 /// EXCHANGED ([`crate::contain::publish_exchange`]) and the displaced version is read back: when it
 /// is not `edit.snapshot` - an editor's save that landed after the comparison - it is kept next to
 /// the file as `<name>.displaced-<UTC time>` and `Ok(Some(notice))` says so in one line (where the
-/// system has no exchange, the notice says the file was replaced by rename instead). On any failure
+/// system has no exchange the file is not written: `Err`). On any failure
 /// the temporary file is removed (a removal that fails is named in the `Err`) and the original is
 /// untouched. (0.2.5 D4, F13-9) All of it relative to the file's directory HANDLE, reached from the
 /// repository root without following any component ([`open_edit_dir`]).

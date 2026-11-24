@@ -620,8 +620,8 @@ its one-line report.
   differs (passes are serialised by the pass lock); the new roster then takes the old one's place by
   an atomic exchange, so an edit saved after that comparison is not lost: it is kept next to the
   roster as `<roster>.displaced-<UTC time>` and named in the pass's report (`ATTENTION: a hand edit
-  of the roster ... is kept at ...`; on a system without an atomic exchange the roster is replaced by
-  rename and the report says so). A protected or on-request roster entry is
+  of the roster ... is kept at ...`; on a system without an atomic exchange the roster is not written
+  at all and the report says so). A protected or on-request roster entry is
   never smoked or edited: its successor is only announced. So is a successor of a higher major that
   the public catalog lists at more than twice the seated id's list price (prompt or completion):
   "list price N times higher - seat it by hand" - a list price is a signal of what the model costs

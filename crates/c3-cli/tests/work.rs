@@ -2423,10 +2423,11 @@ fn a_linked_task_directory_in_the_project_folder_refuses_the_work_run() {
     assert!(std::fs::read_dir(&target).unwrap().next().is_none());
 }
 
-/// (0.2.5, F61-3 / F62-2, RC2) `--collab-dir l/../.collab4` where `l` is a link out of the
+/// (0.2.5, F61-3) `c3 work --collab-dir l/../.collab4` where `l` is a link out of the
 /// repository: `..` is resolved by text, so the run's record lands in the repository's own
 /// `.collab4` - the directory the run start checked - and nothing appears beside the link's
 /// target, where the file system would go when it applies `..` to the target of the link.
+/// (`c3 work` resolves its collab path itself; the commands' resolver is the next test's.)
 #[test]
 fn a_collab_path_with_dot_dot_after_a_link_is_taken_by_text() {
     let e = setup("dotdot-link");
@@ -2440,6 +2441,59 @@ fn a_collab_path_with_dot_dot_after_a_link_is_taken_by_text() {
     assert!(
         !files_under(&e.repo.join(".collab4").join("t").join("work")).is_empty(),
         "the record is in the repository's own directory: {t}"
+    );
+    assert!(
+        std::fs::read_dir(side.join(".collab4"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "nothing beside the link's target: {t}"
+    );
+    drop_link(&e.repo.join("l"));
+}
+
+/// (0.2.5, F62-2 / RC2; diff review 65) The same spelling through `c3 consult` - the commands'
+/// resolver, which consult, a panel and a detached run share. A dry run names the repository's
+/// own `.collab4` as the task's place and treats it as a collab directory INSIDE the repository
+/// (excluded from the tree evidence under its textual name): never the directory beside the
+/// link's target (where the file system goes when it applies `..` to the link's target - that
+/// read as a collab directory outside the repository), and never the spelling with `..` in it.
+#[test]
+fn consult_takes_a_collab_path_with_dot_dot_after_a_link_by_text() {
+    let e = setup("dotdot-consult");
+    let side = e.work.join("side");
+    std::fs::create_dir_all(side.join("sub")).unwrap();
+    std::fs::create_dir_all(side.join(".collab4")).unwrap();
+    assert!(dir_link(&e.repo.join("l"), &side.join("sub")), "link l");
+    let out = e.c3(
+        &[
+            "consult",
+            "--task",
+            "t",
+            "--prompt",
+            "Review nothing.",
+            "--dry-run",
+            "--provider",
+            "ZAI-claude",
+            "--collab-dir",
+            "l/../.collab4",
+        ],
+        &[],
+    );
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("collab dir '.collab4' excluded"),
+        "inside the repository, under its textual name: {t}"
+    );
+    let task_dir = t
+        .lines()
+        .find(|l| l.starts_with("task dir"))
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        task_dir.contains(".collab4") && !task_dir.contains("..") && !task_dir.contains("side"),
+        "{task_dir}"
     );
     assert!(
         std::fs::read_dir(side.join(".collab4"))
