@@ -831,6 +831,118 @@ fn a_pending_recovery_never_credits_a_third_installed_version_to_the_target() {
     assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
 }
 
+/// (F62-1, the reviewer's RC1) The third-version fixture with an installed PRE-RELEASE of the
+/// target's numbers: 1.0.77 -> 1.0.80 was pending, 1.0.80-rc.1 is installed. The pre-release is a
+/// third version, not the target: a passing smoke is recorded for 1.0.80-rc.1 - the action and the
+/// state name it exactly, never the bare 1.0.80 - the target 1.0.80 is NOT verified, and the record
+/// is cleared as the third-version case clears it; a failing smoke names the pre-release and rolls
+/// back to the recorded previous version.
+#[test]
+fn a_pending_recovery_never_credits_a_prerelease_smoke_to_the_final_release() {
+    let e = setup("pend-rc");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let env = e.grok_env("1.0.80-rc.1", "1.0.80", "grok::grok-4.7=pass");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.80-rc.1 - pending update to 1.0.80 not verified: 1.0.80-rc.1 is installed instead (changed since the update was recorded); the smoke passed on 1.0.80-rc.1"),
+        "{t}"
+    );
+    assert!(!t.contains("update to 1.0.80 verified"), "{t}");
+    assert!(!t.contains("recovered"), "{t}");
+    let rec = grok_state(&e);
+    assert_eq!(rec["installed"], "1.0.80-rc.1", "{rec}");
+    let action = rec["action"].as_str().unwrap_or_default();
+    assert!(
+        action
+            .starts_with("pending update to 1.0.80 not verified: 1.0.80-rc.1 is installed instead")
+            && action.ends_with("the smoke passed on 1.0.80-rc.1"),
+        "{rec}"
+    );
+    // the record is cleared as in the third-version case; nothing was installed or rolled back
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+    assert_eq!(verfile(&e.grok_verfile), "1.0.80-rc.1");
+    assert!(!e.mnt_log().contains("update --version"), "{}", e.mnt_log());
+
+    // the pre-release FAILS its smoke: named exactly, rolled back to the previous version
+    let e = setup("pend-rc-fail");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let env = e.grok_env("1.0.80-rc.1", "1.0.80", "grok::grok-4.7=fail");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.80-rc.1 - recovered (1.0.80-rc.1 is installed, not the pending target 1.0.80): smoke failed, rolled back to 1.0.77"),
+        "{t}"
+    );
+    assert!(!t.contains("verified"), "{t}");
+    assert_eq!(verfile(&e.grok_verfile), "1.0.77");
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+}
+
+/// (F62-1) The mirror of RC1: a PRE-RELEASE target (1.0.77 -> 1.0.80-rc.1 was pending) and the final
+/// release 1.0.80 installed. The final release is not the pending target either: the smoke passes
+/// on 1.0.80, which the action and the state name, and the target 1.0.80-rc.1 is NOT verified.
+#[test]
+fn a_pending_recovery_never_credits_a_final_release_smoke_to_a_prerelease_target() {
+    let e = setup("pend-rc-target");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80-rc.1","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    let env = e.grok_env("1.0.80", "1.0.80-rc.1", "grok::grok-4.7=pass");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.80 - pending update to 1.0.80-rc.1 not verified: 1.0.80 is installed instead (changed since the update was recorded); the smoke passed on 1.0.80"),
+        "{t}"
+    );
+    assert!(!t.contains("update to 1.0.80-rc.1 verified"), "{t}");
+    assert!(!t.contains("recovered"), "{t}");
+    let rec = grok_state(&e);
+    assert_eq!(rec["installed"], "1.0.80", "{rec}");
+    let action = rec["action"].as_str().unwrap_or_default();
+    assert!(
+        action
+            .starts_with("pending update to 1.0.80-rc.1 not verified: 1.0.80 is installed instead")
+            && action.ends_with("the smoke passed on 1.0.80"),
+        "{rec}"
+    );
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+    assert_eq!(verfile(&e.grok_verfile), "1.0.80");
+    assert!(!e.mnt_log().contains("update --version"), "{}", e.mnt_log());
+}
+
+/// (F62-1, outside the recovery) The update decision orders a pre-release BEFORE its final release
+/// and pins the exact release: an installed 1.0.80-rc.1 is not "up to date" with the vendor's
+/// 1.0.80 (the numbers alone called it so), the update pins exactly 1.0.80, and the report and the
+/// state name 1.0.80-rc.1 as the release it came from.
+#[test]
+fn an_installed_prerelease_is_updated_to_its_final_release() {
+    let e = setup("rc-update");
+    let env = e.grok_env("1.0.80-rc.1", "1.0.80", "grok::grok-4.7=pass");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(!t.contains("up to date"), "{t}");
+    assert!(t.contains("grok 1.0.80-rc.1 -> 1.0.80 ok"), "{t}");
+    assert!(
+        e.mnt_log().contains("update --version 1.0.80"),
+        "{}",
+        e.mnt_log()
+    );
+    assert_eq!(verfile(&e.grok_verfile), "1.0.80");
+    let rec = grok_state(&e);
+    assert_eq!(rec["installed"], "1.0.80-rc.1", "{rec}");
+    assert_eq!(rec["action"], "1.0.80-rc.1 -> 1.0.80 ok", "{rec}");
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+}
+
 /// (F57-3) An installed version that cannot be read verifies nothing: no smoke is run, the action
 /// and the state say the pending update to the target is not verified, and the record is kept.
 #[test]

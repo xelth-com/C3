@@ -645,16 +645,13 @@ pub(crate) enum Publication {
     /// The file was not there: published without replacing anything (a hard link to the new
     /// name, which fails when a file appeared meanwhile - then the exchange is tried again).
     Created,
-    /// No atomic exchange on this system or file system: published by [`publish`]'s
-    /// compare-then-rename, so an edit saved between the last comparison and the rename is lost -
-    /// the limit that remains there. Why.
-    Rename(String),
 }
 
 /// A displaced version [`publish_exchange`] kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Kept {
-    /// Its name in the directory (`<file>.displaced-<UTC time>`, [`displaced_name`]).
+    /// Its name in the directory (`<file>.displaced-<UTC time>`, with `-<n>` when that name was
+    /// taken: [`displaced_name`], [`place_displaced`]).
     pub(crate) name: OsString,
     /// `None`: it differs from the version the edit was computed from - an edit saved during the
     /// write. `Some`: it could not be proved to be that version, or could not be removed - why.
@@ -690,11 +687,6 @@ impl Exchanged {
                 ),
             });
         }
-        if let Publication::Rename(why) = &self.how {
-            parts.push(format!(
-                "{file} was replaced by rename, not by an atomic exchange ({why}): an edit saved during the write would not be kept"
-            ));
-        }
         if let Some(why) = &self.cleanup {
             parts.push(format!("{file}: {why}"));
         }
@@ -713,8 +705,12 @@ impl Exchanged {
 /// `<file>.displaced-<UTC time>` ([`displaced_name`]) and returned ([`Exchanged::kept`]) for the
 /// caller to report. Not there at all: published without replacing anything
 /// ([`Publication::Created`]). No exchange on this system or file system (other Unix targets,
-/// `EINVAL` / `ENOSYS` / `ENOTSUP`, `ReplaceFileW` unsupported): [`publish`]'s compare-then-rename,
-/// said in the result ([`Publication::Rename`]).
+/// `EINVAL` / `ENOSYS` / `ENOTSUP`, `ReplaceFileW` unsupported): (acceptance review 62, answer 3)
+/// the write is REFUSED - the temporary file is removed and the file stays as it was. Until then
+/// it fell back to [`publish`]'s compare-then-rename and said so afterwards; but a rename cannot
+/// keep an edit saved between the last comparison and the rename, and these files are the ones a
+/// person edits by hand - "the displaced version is never lost" must not depend on the file
+/// system. The caller reports the refusal; the operator makes the edit by hand there.
 ///
 /// On Windows the exchange is `ReplaceFileW` on the paths of the directory the handle holds
 /// (`GetFinalPathNameByHandleW`; while the handle is open the directory cannot be renamed, the same
@@ -726,18 +722,21 @@ impl Exchanged {
 pub(crate) fn publish_exchange(p: &Publish<'_>, basis: &[u8]) -> Result<Exchanged, PublishFailure> {
     stage_temp(p)?;
     race_point(&format!("{}-publish", p.race));
-    let fallback = |why: String| -> Result<Exchanged, PublishFailure> {
-        p.dir
-            .rename(p.tmp, p.dir, p.leaf)
-            .map_err(|e| failure(p, PublishError::Rename(e), remove_temp(p)))?;
-        Ok(Exchanged {
-            how: Publication::Rename(why),
-            kept: None,
-            cleanup: None,
-        })
+    // no atomic exchange: never a rename - it could lose an edit saved during the write
+    let refuse = |why: String| -> Result<Exchanged, PublishFailure> {
+        Err(failure(
+            p,
+            PublishError::Rename(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "there is no atomic exchange here ({why}), and a plain rename could lose an edit saved during the write: the file was not written - make this change by hand"
+                ),
+            )),
+            remove_temp(p),
+        ))
     };
     if c3_core::test_hooks::hook(NO_EXCHANGE_HOOK).is_some() {
-        return fallback("the exchange is switched off by a test hook".to_string());
+        return refuse("the exchange is switched off by a test hook".to_string());
     }
     let mut backup = p.tmp.to_os_string();
     backup.push(".displaced");
@@ -767,12 +766,12 @@ pub(crate) fn publish_exchange(p: &Publish<'_>, basis: &[u8]) -> Result<Exchange
                 }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(e) => {
-                    return fallback(format!(
+                    return refuse(format!(
                         "the file was not there and no hard link could be made ({e})"
                     ))
                 }
             },
-            Exchange::Unsupported(why) => return fallback(why),
+            Exchange::Unsupported(why) => return refuse(why),
             Exchange::Failed(e, left) => {
                 let kept = left.and_then(|at| settle_displaced(p.dir, &at, p.leaf, None));
                 let e = match kept.map(|k| k.name) {
@@ -813,10 +812,9 @@ fn settle_displaced(dir: &Dir, at: &OsStr, leaf: &OsStr, basis: Option<&[u8]>) -
         Ok(_) => None,
         Err(why) => Some(format!("it could not be read back: it {why}")),
     };
-    let name = displaced_name(dir, leaf);
-    match dir.rename(at, dir, &name) {
-        Ok(()) => Some(Kept { name, unproven }),
-        Err(e) => Some(Kept {
+    match place_displaced(dir, at, &displaced_name(leaf), true) {
+        Ok(name) => Some(Kept { name, unproven }),
+        Err((name, e)) => Some(Kept {
             name: at.to_os_string(),
             unproven: Some(format!(
                 "{}it could not be renamed to {} ({e})",
@@ -827,19 +825,69 @@ fn settle_displaced(dir: &Dir, at: &OsStr, leaf: &OsStr, basis: Option<&[u8]>) -
     }
 }
 
-/// A free name for a displaced version of `leaf` in `dir`: `<leaf>.displaced-<yyyymmddTHHMMSS.mmm>Z`
-/// (UTC), with `-2`, `-3` ... appended while such an entry exists. (Only C3 makes such names; two
-/// C3 writes of one file in the same millisecond are what the suffix is for.)
-pub(crate) fn displaced_name(dir: &Dir, leaf: &OsStr) -> OsString {
+/// The name stem of a displaced version of `leaf`: `<leaf>.displaced-<yyyymmddTHHMMSS.mmm>Z`
+/// (UTC). [`place_displaced`] gives the version this name or the next free one.
+pub(crate) fn displaced_name(leaf: &OsStr) -> String {
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
-    let base = format!("{}.displaced-{stamp}", leaf.to_string_lossy());
-    let mut name = OsString::from(&base);
-    let mut n = 1;
-    while !matches!(entry(dir, &name), Ok(None)) && n < 1000 {
-        n += 1;
-        name = OsString::from(format!("{base}-{n}"));
+    format!("{}.displaced-{stamp}", leaf.to_string_lossy())
+}
+
+/// (F62-4) The displaced version at `at` given its lasting name WITHOUT replacing anything, and
+/// the name it got. The name is taken by a HARD LINK - which fails when the name exists, whoever
+/// made it and whenever - first `stem`, then `stem-2`, `stem-3` ...; the temporary name is removed
+/// only after the link exists. So two writes of one file in the same millisecond can never get
+/// one name, and a file that already has a name (an earlier displaced edit) is never overwritten:
+/// before this the name was looked for and then taken by a REPLACING rename, and the search gave
+/// its last candidate back without looking at it.
+///
+/// Where no hard link can be made (`links` false in a test; a file system without them), and
+/// after a thousand taken names, the name gets 32 random hex digits - a name no other write can
+/// have - is checked to be free and is taken by rename; that one step is a look followed by a
+/// rename, the limit that remains there. `Err`: the name that was tried and why; the version is
+/// still at `at`.
+fn place_displaced(
+    dir: &Dir,
+    at: &OsStr,
+    stem: &str,
+    links: bool,
+) -> Result<OsString, (OsString, io::Error)> {
+    if links {
+        for n in 1..=1000 {
+            let name = if n == 1 {
+                OsString::from(stem)
+            } else {
+                OsString::from(format!("{stem}-{n}"))
+            };
+            match dir.hard_link(at, dir, &name) {
+                Ok(()) => {
+                    // a second name of the same file: removing the temporary one loses nothing
+                    // (when that fails the version has both names until the stale-temp sweep)
+                    let _ = dir.remove_file(at);
+                    return Ok(name);
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(_) => break,
+            }
+        }
     }
-    name
+    let name = OsString::from(format!("{stem}-{}", uuid::Uuid::new_v4().simple()));
+    match entry(dir, &name) {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return Err((
+                name,
+                io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "a name with 32 random digits is taken",
+                ),
+            ))
+        }
+        Err(e) => return Err((name, e)),
+    }
+    match dir.rename(at, dir, &name) {
+        Ok(()) => Ok(name),
+        Err(e) => Err((name, e)),
+    }
 }
 
 /// What one exchange attempt did.
@@ -1816,6 +1864,50 @@ pub(crate) mod tests {
     // publication (the race hook writes it at `x-publish`) is displaced, not lost: the file holds the
     // new bytes, the edit is kept byte for byte as `own.txt.displaced-<UTC time>` and returned; on
     // this platform the publication was the atomic exchange. Without an edit nothing is left behind.
+    // (F62-4, RC4) Two displaced versions of one file with the SAME name stem (two writes in one
+    // millisecond) get two different names, each holding its own bytes, and a file that already
+    // has the name is never replaced; without hard links the name is one no other write can have.
+    #[test]
+    fn two_displaced_versions_never_share_a_name_and_nothing_is_replaced() {
+        let (base, root_p, _outside) = scratch("displaced");
+        let dir_p = root_p.join("inner");
+        let dir = Dir::open_ambient_dir(&dir_p, ambient_authority()).unwrap();
+        let stem = "own.txt.displaced-20261124T190000.000Z";
+        let read = |n: &OsStr| std::fs::read(dir_p.join(n)).unwrap();
+        // an earlier displaced edit already has the plain name
+        std::fs::write(dir_p.join(stem), b"EARLIER").unwrap();
+        std::fs::write(dir_p.join(".a.tmp"), b"FIRST").unwrap();
+        std::fs::write(dir_p.join(".b.tmp"), b"SECOND").unwrap();
+        let one = place_displaced(&dir, OsStr::new(".a.tmp"), stem, true).unwrap();
+        let two = place_displaced(&dir, OsStr::new(".b.tmp"), stem, true).unwrap();
+        assert_eq!(one, OsString::from(format!("{stem}-2")));
+        assert_eq!(two, OsString::from(format!("{stem}-3")));
+        assert_eq!(read(OsStr::new(stem)), b"EARLIER");
+        assert_eq!(read(&one), b"FIRST");
+        assert_eq!(read(&two), b"SECOND");
+        assert!(!dir_p.join(".a.tmp").exists() && !dir_p.join(".b.tmp").exists());
+        // without hard links: a name of its own, and nothing that was there is touched
+        std::fs::write(dir_p.join(".c.tmp"), b"THIRD").unwrap();
+        let three = place_displaced(&dir, OsStr::new(".c.tmp"), stem, false).unwrap();
+        let three_s = three.to_string_lossy().to_string();
+        assert!(
+            three_s.starts_with(&format!("{stem}-")) && three_s.len() == stem.len() + 1 + 32,
+            "{three_s}"
+        );
+        assert_eq!(read(&three), b"THIRD");
+        assert_eq!(read(OsStr::new(stem)), b"EARLIER");
+        assert_eq!(read(&one), b"FIRST");
+        assert_eq!(read(&two), b"SECOND");
+        assert!(!dir_p.join(".c.tmp").exists());
+        // the stem is the file's name and a UTC time
+        let now = displaced_name(OsStr::new("own.txt"));
+        assert!(
+            now.starts_with("own.txt.displaced-2") && now.ends_with('Z'),
+            "{now}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn publish_exchange_keeps_an_edit_saved_before_the_exchange_and_nothing_without_one() {
         let (base, root_p, _outside) = scratch("exchange");
@@ -1867,44 +1959,61 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    // (F57-10, F02-2) Without an atomic exchange (forced by its test hook) the publication is the
-    // compare-then-rename it was before and SAYS so: the new bytes are in place, nothing is left
-    // behind, and an edit landing after the last comparison is not kept - the limit that remains on
-    // such a system, named in the notice. A file that is not there is published without replacing
-    // anything.
+    // (F57-10, F02-2; acceptance review 62, answer 3) Without an atomic exchange (forced by its
+    // test hook) the write is REFUSED: the file keeps its bytes, the temporary file is gone and the
+    // error says why and that nothing was written - never the compare-then-rename, which could
+    // lose an edit saved during the write. An edit landing at that moment is therefore still the
+    // file. A file that is not there is published without replacing anything.
     #[test]
-    fn without_an_exchange_publication_falls_back_to_the_rename_and_says_so() {
+    fn without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was() {
         let (base, root_p, _outside) = scratch("no-exchange");
         let root = Root::open(&root_p).unwrap();
         let file = root_p.join("inner").join("own.txt");
+        let dir = root.open_dir(Path::new("inner"), false).unwrap();
+        let any = |_: Stage| -> Result<(), String> { Ok(()) };
+        let write = |tmp: &str, bytes: &[u8], basis: &[u8]| {
+            publish_exchange(
+                &Publish {
+                    dir: &dir,
+                    leaf: OsStr::new("own.txt"),
+                    tmp: OsStr::new(tmp),
+                    bytes,
+                    permissions: None,
+                    check: &any,
+                    race: "x",
+                },
+                basis,
+            )
+        };
         let _off = c3_core::test_hooks::set_thread_hook(NO_EXCHANGE_HOOK, "1");
-        let done = exchange_own(&root, ".own.t1.tmp", b"NEW\n", b"INSIDE\n");
+        let refused = write(".own.t1.tmp", b"NEW\n", b"INSIDE\n").unwrap_err();
+        let why = match &refused.error {
+            PublishError::Rename(e) => {
+                assert_eq!(e.kind(), io::ErrorKind::Unsupported);
+                e.to_string()
+            }
+            other => panic!("{other:?}"),
+        };
         assert!(
-            matches!(&done.how, Publication::Rename(why) if why.contains("test hook")),
-            "{done:?}"
+            why.contains("no atomic exchange")
+                && why.contains("test hook")
+                && why.contains("the file was not written"),
+            "{why}"
         );
-        assert_eq!(done.kept, None);
-        assert_eq!(std::fs::read(&file).unwrap(), b"NEW\n");
+        assert!(refused.cleanup.is_none(), "the temporary file is removed");
+        assert_eq!(std::fs::read(&file).unwrap(), b"INSIDE\n");
         assert_eq!(names(&root_p.join("inner")), vec!["own.txt".to_string()]);
-        let notice = done.notice("own.txt", |_| String::new()).unwrap();
-        assert!(
-            notice.contains("replaced by rename, not by an atomic exchange"),
-            "{notice}"
-        );
-        // an edit at the same moment is lost here (what the exchange closes elsewhere)
+        // an edit saved at that very moment is simply the file: nothing replaced it
         let edit = c3_core::test_hooks::set_thread_hook(
             RACE_HOOK,
             &format!("x-publish|write:{}|EDITED", file.display()),
         );
-        let done = exchange_own(&root, ".own.t2.tmp", b"NEWER\n", b"NEW\n");
+        assert!(write(".own.t2.tmp", b"NEWER\n", b"INSIDE\n").is_err());
         drop(edit);
-        assert_eq!(done.kept, None);
-        assert_eq!(std::fs::read(&file).unwrap(), b"NEWER\n");
+        assert_eq!(std::fs::read(&file).unwrap(), b"EDITED");
         assert_eq!(names(&root_p.join("inner")), vec!["own.txt".to_string()]);
         drop(_off);
         // a first write: nothing to displace, nothing replaced
-        let dir = root.open_dir(Path::new("inner"), false).unwrap();
-        let any = |_: Stage| -> Result<(), String> { Ok(()) };
         let done = publish_exchange(
             &Publish {
                 dir: &dir,

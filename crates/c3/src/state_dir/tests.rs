@@ -976,6 +976,39 @@ fn a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing
         empty(&err);
     }
     drop_link(&c2);
+    // (F62-2, RC2) `..` after a link is resolved by TEXT, in the resolver as in the check:
+    // `l/../.collab4` is the repository's `.collab4`, never `<the target of l>/../.collab4`
+    // (where the file system would take it when it applies `..` to the link's target)
+    let side = r.with_extension("side");
+    std::fs::create_dir_all(side.join("sub")).unwrap();
+    std::fs::create_dir_all(side.join(".collab4")).unwrap();
+    assert!(dir_link(&r.join("l"), &side.join("sub")));
+    let resolved = crate::providers::resolve_collab_root(&r, "l/../.collab4");
+    assert_eq!(resolved, r.join(".collab4"), "one spelling, by text");
+    begin_run(&r, &resolved, "t", &["handoffs"]).unwrap();
+    assert!(real_dir(&r.join(".collab4").join("t").join("handoffs")));
+    assert!(
+        std::fs::read_dir(side.join(".collab4"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "nothing beside the link's target"
+    );
+    // the unresolved spelling handed straight to the run start names the same directory
+    begin_run(
+        &r,
+        &r.join("l").join("..").join(".collab4"),
+        "u",
+        &["handoffs"],
+    )
+    .unwrap();
+    assert!(real_dir(&r.join(".collab4").join("u").join("handoffs")));
+    assert!(std::fs::read_dir(side.join(".collab4"))
+        .unwrap()
+        .next()
+        .is_none());
+    drop_link(&r.join("l"));
+    let _ = std::fs::remove_dir_all(&side);
     // a real collab root is resolved as before: canonical
     let real = crate::providers::resolve_collab_root(&r, ".collab");
     assert_eq!(

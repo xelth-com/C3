@@ -1052,6 +1052,9 @@ pub fn tool_inventory(tools: Option<&Value>) -> ToolInventory {
 
 /// (F57-2) Walk one list of [`tool_inventory`]: `namespace` is the enclosing namespace's name
 /// (`""` at the top), `at` the enclosing entry's position (`"2."` inside the second entry).
+/// (F62-5) Once a list lies inside the [`MULTI_AGENT_NAMESPACE`] namespace, at ANY depth, it stays
+/// inside it: a namespace nested there passes that namespace down instead of its own name, so a
+/// tool of `collaboration.<child>.<...>` is a multi-agent tool whatever its own name is.
 fn walk_tool_list(
     list: &[Value],
     namespace: &str,
@@ -1106,9 +1109,15 @@ fn walk_tool_list(
                     problems.push(format!("entry {pos} (a namespace) has no name"));
                     continue;
                 };
+                // (F62-5) the multi-agent namespace is an ancestry, not only a parent
+                let inner_ns = if namespace == MULTI_AGENT_NAMESPACE {
+                    MULTI_AGENT_NAMESPACE
+                } else {
+                    ns
+                };
                 match obj.get("tools") {
                     Some(Value::Array(inner)) => {
-                        walk_tool_list(inner, ns, &format!("{pos}."), offered, problems)
+                        walk_tool_list(inner, inner_ns, &format!("{pos}."), offered, problems)
                     }
                     Some(other) => problems.push(format!(
                         "entry {pos} (a namespace) holds `tools` as {}, not an array",
@@ -4470,6 +4479,54 @@ mod tests {
     /// multi-agent tool makes it BREACHED whatever else is unreadable; anything it cannot interpret
     /// makes it UNPROVEN, and the reason names the entry's position and kind or key, never its
     /// content.
+    #[test]
+    fn a_namespace_nested_in_the_multi_agent_namespace_keeps_its_ancestry() {
+        let inv = |j: &str| tool_inventory(Some(&serde_json::from_str::<Value>(j).unwrap()));
+        // (F62-5, RC5) a child namespace inside `collaboration` with a function whose name is in
+        // no list: offered - the enclosing namespace decides, at two levels ...
+        assert_eq!(
+            inv(
+                r#"[{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"pool","tools":[{"type":"function","name":"enlist_helper"}]}]}]"#
+            ),
+            ToolInventory::Breached(vec!["enlist_helper".to_string()])
+        );
+        // ... at three, beside readable ordinary tools ...
+        assert_eq!(
+            inv(
+                r#"[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"wait"}]},{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"a","tools":[{"type":"namespace","name":"b","tools":[{"type":"custom","name":"quiet_one"}]}]}]}]"#
+            ),
+            ToolInventory::Breached(vec!["quiet_one".to_string()])
+        );
+        // ... and for a hosted tool known by its kind alone
+        assert_eq!(
+            inv(
+                r#"[{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"pool","tools":[{"type":"web_search"}]}]}]"#
+            ),
+            ToolInventory::Breached(vec!["web_search".to_string()])
+        );
+        // the same nesting OUTSIDE the multi-agent namespace is an ordinary complete list, and a
+        // namespace that merely holds one named `collaboration` further down is judged from there
+        assert_eq!(
+            inv(
+                r#"[{"type":"namespace","name":"functions","tools":[{"type":"namespace","name":"pool","tools":[{"type":"function","name":"enlist_helper"}]}]}]"#
+            ),
+            ToolInventory::Complete
+        );
+        assert_eq!(
+            inv(
+                r#"[{"type":"namespace","name":"functions","tools":[{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"pool","tools":[{"type":"function","name":"enlist_helper"}]}]}]}]"#
+            ),
+            ToolInventory::Breached(vec!["enlist_helper".to_string()])
+        );
+        // an unreadable entry below the nested namespace is still unproven when nothing is offered
+        assert!(matches!(
+            inv(
+                r#"[{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"pool","tools":{"type":"function","name":"x"}}]}]"#
+            ),
+            ToolInventory::Unproven(_)
+        ));
+    }
+
     #[test]
     fn a_tool_inventory_is_complete_breached_or_unproven() {
         let inv = |j: &str| tool_inventory(Some(&serde_json::from_str::<Value>(j).unwrap()));

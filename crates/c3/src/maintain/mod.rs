@@ -901,8 +901,9 @@ fn maintain_one_engine(
         println!("c3 maintain: {name} {installed_text} {msg}");
         return (format!("{installed_text} {msg}"), msg);
     };
-    // up to date
-    if &latest_v <= inst {
+    // up to date: ORDERING (F62-1) - a pre-release is older than its final release, so an installed
+    // `1.0.80-rc.1` is not "up to date" with a vendor `1.0.80`; a tie (build metadata only) is.
+    if !latest_v.is_newer_than(inst) {
         println!("c3 maintain: {name} up to date ({installed_text})");
         return ("up to date".to_string(), "up to date".to_string());
     }
@@ -1041,8 +1042,10 @@ fn update_and_verify(
 
     // Require the update to have actually taken: re-read `--version` and demand the checked target
     // (a `grok update` that installed something else, or a silent no-op, is a failed update).
+    // (F62-1) IDENTITY, not ordering: the smoke below is credited to the release installed, so it
+    // must be exactly the target the command pinned - a `1.0.80-rc.1` is not the target `1.0.80`.
     let after = engine::installed_version(env, launcher);
-    if !matches!(&after, Some(v) if v >= latest_v) {
+    if !after.as_ref().is_some_and(|v| v.same_release(latest_v)) {
         // (R1) Some other version may now be on disk: keep the pending record for recovery.
         let now_t = after
             .as_ref()
@@ -1067,12 +1070,10 @@ fn update_and_verify(
         if caps.has_rollback {
             if let Some(res) = engine::do_rollback(env, name, launcher, installed_text, dir) {
                 let cmd_ok = matches!(res, Ok(ref r) if r.ok());
-                // Believe a rollback only when `--version` actually shows the previous version.
+                // Believe a rollback only when `--version` actually shows the previous version -
+                // (F62-1) exactly that release, not one of the same numbers.
                 let back = engine::installed_version(env, launcher);
-                let restored = back
-                    .as_ref()
-                    .map(|v| v.parts == inst.parts)
-                    .unwrap_or(false);
+                let restored = back.as_ref().map(|v| v.same_release(inst)).unwrap_or(false);
                 // (R1) Resolved only when the previous version is verified back; a failed rollback
                 // leaves the broken new version on disk, so keep the pending record.
                 let (msg, resolved) = if cmd_ok && restored {
@@ -1124,6 +1125,12 @@ fn update_and_verify(
 ///   (the state's `installed` is that version); a failure takes the failure path below;
 /// - a version that cannot be read: nothing is credited and no smoke is run (its result could not
 ///   be attributed to a version); the record is kept for a pass that can read it.
+///
+/// (F62-1) Each "is it the same release" question - the previous version, the target, the version
+/// after the smoke, the version after a rollback - compares the exact release identity
+/// ([`version::CliVersion::same_release`]), never the numeric parts: an installed `1.0.80-rc.1`
+/// against a pending target `1.0.80` (or the reverse) is a THIRD version, smoked for itself and
+/// named in the action and the state.
 ///
 /// A passing smoke during which the installed version changed is credited to no version (kept). A
 /// failing smoke is rolled back to the recorded previous version and the record is
@@ -1200,8 +1207,9 @@ fn handle_pending_smoke(
     use PendingOutcome::{Done, StillFailing};
     let prev = version::parse_cli_version(&p.previous);
     // The installed version is still the previous one: the interrupted update never took. Clear.
+    // (F62-1) exactly the previous release, not one of the same numbers
     if let (Some(inst), Some(prev)) = (installed, prev.as_ref()) {
-        if inst.parts == prev.parts {
+        if inst.same_release(prev) {
             let msg = "pending update cleared (installed version unchanged)".to_string();
             println!("c3 maintain: {name} {installed_text} - {msg}");
             return Done(format!("{installed_text} {msg}"), msg, true);
@@ -1218,8 +1226,10 @@ fn handle_pending_smoke(
         return Done(format!("{installed_text} {msg}"), msg, false);
     };
     // (F57-3) Only the measured target can be credited with the update; a THIRD version (changed
-    // since the record was written) is smoked for itself and every clause names it.
-    let is_target = version::parse_cli_version(&p.target).is_some_and(|t| t.parts == inst.parts);
+    // since the record was written) is smoked for itself and every clause names it. (F62-1) The
+    // exact release: a pre-release of the target's numbers (or the final release of a pre-release
+    // target) is a third version.
+    let is_target = version::parse_cli_version(&p.target).is_some_and(|t| t.same_release(inst));
     let third = if is_target {
         String::new()
     } else {
@@ -1240,9 +1250,9 @@ fn handle_pending_smoke(
     match outcome {
         smoke::Smoke::Pass => {
             // (F57-3) the pass belongs to the version that ran: `--version` again after the smoke
-            // must still show the version measured before it
+            // must still show the version measured before it - (F62-1) the same exact release
             let after = engine::installed_version(env, launcher);
-            if !after.as_ref().is_some_and(|a| a.parts == inst.parts) {
+            if !after.as_ref().is_some_and(|a| a.same_release(inst)) {
                 let after_t = after
                     .as_ref()
                     .map(|v| v.text().to_string())
@@ -1277,7 +1287,7 @@ fn handle_pending_smoke(
                     let restored = back
                         .as_ref()
                         .zip(prev.as_ref())
-                        .map(|(b, pv)| b.parts == pv.parts)
+                        .map(|(b, pv)| b.same_release(pv))
                         .unwrap_or(false);
                     // Rollback succeeded and the previous version is back: the failed update is
                     // undone, so the pending record may be cleared.
@@ -1349,9 +1359,11 @@ fn try_newer_release(
     let failing = engine::installed_version(env, launcher)?;
     let new_text = latest_v.text().to_string();
     let failing_text = failing.text().to_string();
-    if latest_v <= failing {
+    // ORDERING (F62-1): a final release is newer than its failing pre-release; a pre-release is
+    // never newer than (nor tied with) its final release, so it is never tried over it.
+    if !latest_v.is_newer_than(&failing) {
         // say so when only the fresh read stopped it (the pass-start version would have let it in)
-        if installed_at_start.is_some_and(|start| latest_v > *start) {
+        if installed_at_start.is_some_and(|start| latest_v.is_newer_than(start)) {
             println!(
                 "c3 maintain: {name} {new_text} is not tried: {failing_text} is installed now (not older than it)"
             );
@@ -1742,7 +1754,9 @@ fn run_models(
 
     // Record the collected ids as the new baseline. A public source that was not collected this
     // time (switched off, or the fetch failed) keeps its previous record, so a later pass does not
-    // take it for a first collection and its names stay published. (F16-1, F17-5) A legacy
+    // take it for a first collection and its names stay published - (F62-3) with the public status
+    // it was read under: a record read while its URL was not public stays unpublished until a
+    // fetch rewrites it, whatever the configuration declares meanwhile. (F16-1, F17-5) A legacy
     // host-keyed catalog record (`web:<host>`, never trusted) is kept only until a catalog of that
     // host is recorded under its URL: then the fetch has rewritten it.
     let mut sources = current;

@@ -891,13 +891,14 @@ fn backfilled_models_of(e: &Env, reviewers: &[(&str, &str, &str)]) -> Vec<String
 fn only_a_trusted_vendor_bound_published_id_is_sent_by_name() {
     let e = setup("tel-published");
     // the maintain state `c3 maintain` left: the built-in catalog, a configured catalog NOT declared
-    // public, one declared public, an endpoint's own list and a configured page (not public)
+    // public, one declared public, an endpoint's own list and a configured page (not public) -
+    // (F62-3) each catalog with the URL it was read from and whether it was public then
     let mdir = e.home.join("c3").join("maintain");
     std::fs::create_dir_all(&mdir).unwrap();
     let state = serde_json::json!({"models": {"sources": [
-        {"source": "web:https://openrouter.ai:443/api/v1/models", "ids": ["z-ai/glm-9-pub", "anthropic/claude-opus-9-2"]},
-        {"source": "web:https://models.example.com:443/v1/models", "ids": ["z-ai/glm-9-cfg"]},
-        {"source": "web:https://pub.example.com:443/v1/models", "ids": ["z-ai/glm-9-trusted"]},
+        {"source": "web:https://openrouter.ai:443/api/v1/models", "url": "https://openrouter.ai:443/api/v1/models", "public": true, "ids": ["z-ai/glm-9-pub", "anthropic/claude-opus-9-2"]},
+        {"source": "web:https://models.example.com:443/v1/models", "url": "https://models.example.com:443/v1/models", "ids": ["z-ai/glm-9-cfg"]},
+        {"source": "web:https://pub.example.com:443/v1/models", "url": "https://pub.example.com:443/v1/models", "public": true, "ids": ["z-ai/glm-9-trusted"]},
         {"source": "endpoint:https://api.z.ai:443/api/v1|RT_ZAI_KEY|", "ids": ["glm-9-ep"]},
         {"source": "page:zai-docs", "ids": ["glm-9-page"]}
     ]}});
@@ -936,7 +937,7 @@ fn a_published_claude_id_spelled_with_dots_is_sent_by_its_dash_name() {
     let mdir = e.home.join("c3").join("maintain");
     std::fs::create_dir_all(&mdir).unwrap();
     let state = serde_json::json!({"models": {"sources": [
-        {"source": "web:https://openrouter.ai:443/api/v1/models", "ids": ["anthropic/claude-opus-9.3"]}
+        {"source": "web:https://openrouter.ai:443/api/v1/models", "url": "https://openrouter.ai:443/api/v1/models", "public": true, "ids": ["anthropic/claude-opus-9.3"]}
     ]}});
     std::fs::write(mdir.join("state.json"), state.to_string()).unwrap();
     let models = backfilled_models_of(
@@ -1056,6 +1057,10 @@ fn two_catalogs_on_one_host_the_private_first_never_publish_the_private_id() {
         ],
         "each URL under its own key; the host-keyed record is replaced"
     );
+    // (F62-3) each record says whether its URL was public when it was read
+    let records = st["models"]["sources"].as_array().unwrap();
+    assert!(records[0].get("public").is_none(), "{}", records[0]);
+    assert_eq!(records[1]["public"], true, "{}", records[1]);
     let mut want = CLOSED_LISTS_ONLY;
     want[4] = "glm-9-trusted"; // the declared catalog's id, for its own vendor
     assert_eq!(
@@ -1149,6 +1154,131 @@ fn a_page_label_reused_for_a_public_url_never_publishes_the_earlier_pages_id() {
     assert_eq!(rec["public"], true, "{rec}");
     clear_spool();
     assert_eq!(backfilled_models(&e), sent_by_name);
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
+/// (F62-3, the reviewer's RC3) A catalog URL declared public only after it was read, end to end and
+/// offline: `c3 maintain --models` reads a configured catalog while it is NOT declared public, its
+/// response holding a synthetic private id (`glm-9-cfg`) beside a public one (`glm-9-trusted`); the
+/// configuration then declares the SAME URL public and the old cache is kept - the backfilled
+/// events' models stay `other`, exactly as before the declaration (before the fix, today's trust of
+/// the URL published the old cache). A custom catalog's record of an older build (no
+/// collection-time status) is withheld the same way. After a refresh of the cleaned catalog (the
+/// private id removed) the public id is sent by name and the private one stays `other`.
+#[test]
+fn a_catalog_declared_public_later_never_publishes_an_id_cached_while_it_was_private() {
+    let e = setup("tel-published-catalog-reclassified");
+    let mdir = e.home.join("c3").join("maintain");
+    std::fs::create_dir_all(&mdir).unwrap();
+    let url = "https://models.example.com/v1/models";
+    let body = e.work.join("catalog.json");
+    let configure = |public: bool| {
+        let cfg = serde_json::json!({"config_version": 1,
+            "model_catalogs": [{"url": url, "public": public}]});
+        std::fs::write(e.home.join("c3").join("config.json"), cfg.to_string()).unwrap();
+    };
+    let maintain = || {
+        let map = format!("{url}|{}", body.display());
+        let o = e.c3(
+            &["maintain", "--models"],
+            &[
+                ("CODEX_CONSULT_TEST_MODE", "1"),
+                ("C3_MAINTAIN_MODELS", "announce"),
+                ("C3_MAINTAIN_TEST_HTTP", map.as_str()),
+            ],
+        );
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    };
+    let catalog_record = || -> Value {
+        let st: Value =
+            serde_json::from_str(&std::fs::read_to_string(mdir.join("state.json")).unwrap())
+                .unwrap();
+        st["models"]["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["source"] == "web:https://models.example.com:443/v1/models")
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    // each backfill after the first starts from an empty spool
+    let clear_spool = || {
+        let dir = e.home.join("c3").join("telemetry");
+        for f in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let n = f.file_name().to_string_lossy().into_owned();
+            if n.starts_with("spool") && n.ends_with(".ndjson") {
+                std::fs::remove_file(f.path()).unwrap();
+            }
+        }
+    };
+
+    // 1. read while NOT declared public: the private id is cached, with that status
+    std::fs::write(
+        &body,
+        r#"{"data":[{"id":"z-ai/glm-9-cfg","created":1794000000},{"id":"z-ai/glm-9-trusted","created":1794000000}]}"#,
+    )
+    .unwrap();
+    configure(false);
+    maintain();
+    let rec = catalog_record();
+    assert_eq!(
+        rec["ids"],
+        serde_json::json!(["z-ai/glm-9-cfg", "z-ai/glm-9-trusted"]),
+        "{rec}"
+    );
+    assert_eq!(
+        rec["url"], "https://models.example.com:443/v1/models",
+        "{rec}"
+    );
+    assert!(rec.get("public").is_none(), "{rec}");
+    assert_eq!(
+        backfilled_models(&e),
+        CLOSED_LISTS_ONLY,
+        "before the declaration"
+    );
+    // 2. the same URL declared public, the old cache kept (no refresh): still anonymised
+    configure(true);
+    clear_spool();
+    assert_eq!(
+        backfilled_models(&e),
+        CLOSED_LISTS_ONLY,
+        "declared public, not refreshed"
+    );
+    let spool = e.spool_lines().join("\n");
+    assert!(
+        !spool.contains("glm-9-cfg") && !spool.contains("glm-9-trusted"),
+        "{spool}"
+    );
+    // 3. an older build's record of the same custom catalog (no collection-time status): withheld
+    let legacy = serde_json::json!({"models": {"sources": [
+        {"source": "web:https://models.example.com:443/v1/models", "ids": ["z-ai/glm-9-cfg", "z-ai/glm-9-trusted"]}
+    ]}});
+    std::fs::write(mdir.join("state.json"), legacy.to_string()).unwrap();
+    clear_spool();
+    assert_eq!(backfilled_models(&e), CLOSED_LISTS_ONLY, "a legacy record");
+    // 4. a refresh of the cleaned catalog: the public id by name; the private one - no longer
+    // listed - stays `other`
+    std::fs::write(
+        &body,
+        r#"{"data":[{"id":"z-ai/glm-9-trusted","created":1794000000}]}"#,
+    )
+    .unwrap();
+    maintain();
+    let rec = catalog_record();
+    assert_eq!(
+        rec["ids"],
+        serde_json::json!(["z-ai/glm-9-trusted"]),
+        "{rec}"
+    );
+    assert_eq!(rec["public"], true, "{rec}");
+    clear_spool();
+    let mut want = CLOSED_LISTS_ONLY;
+    want[4] = "glm-9-trusted"; // row 5: a zai reviewer on glm-9-trusted
+    assert_eq!(
+        backfilled_models(&e),
+        want,
+        "glm-9-cfg (row 2) is never sent by name"
+    );
     let _ = std::fs::remove_dir_all(&e.work);
 }
 

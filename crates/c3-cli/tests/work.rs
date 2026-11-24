@@ -2422,3 +2422,31 @@ fn a_linked_task_directory_in_the_project_folder_refuses_the_work_run() {
     );
     assert!(std::fs::read_dir(&target).unwrap().next().is_none());
 }
+
+/// (0.2.5, F61-3 / F62-2, RC2) `--collab-dir l/../.collab4` where `l` is a link out of the
+/// repository: `..` is resolved by text, so the run's record lands in the repository's own
+/// `.collab4` - the directory the run start checked - and nothing appears beside the link's
+/// target, where the file system would go when it applies `..` to the target of the link.
+#[test]
+fn a_collab_path_with_dot_dot_after_a_link_is_taken_by_text() {
+    let e = setup("dotdot-link");
+    let side = e.work.join("side");
+    std::fs::create_dir_all(side.join("sub")).unwrap();
+    std::fs::create_dir_all(side.join(".collab4")).unwrap();
+    assert!(dir_link(&e.repo.join("l"), &side.join("sub")), "link l");
+    let out = e.work("ZAI-claude", &["--collab-dir", "l/../.collab4"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+    assert!(
+        !files_under(&e.repo.join(".collab4").join("t").join("work")).is_empty(),
+        "the record is in the repository's own directory: {t}"
+    );
+    assert!(
+        std::fs::read_dir(side.join(".collab4"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "nothing beside the link's target: {t}"
+    );
+    drop_link(&e.repo.join("l"));
+}

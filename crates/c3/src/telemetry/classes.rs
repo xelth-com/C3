@@ -1199,19 +1199,21 @@ mod tests {
         use crate::maintain::models::{published_from, ModelsState};
         use crate::maintain::web::trusted_sources;
         // the maintain state: the built-in catalog lists qwen4-max, gemini-4-hydrogen and a Claude
-        // id; a configured catalog (not declared public) lists glm-9-cfg; an endpoint's OWN list
-        // (possibly private) holds glm-9-secret; a configured page lists glm-6
+        // id; a configured catalog lists glm-9-cfg; an endpoint's OWN list (possibly private)
+        // holds glm-9-secret; a configured page lists glm-6
         let state: ModelsState = serde_json::from_str(
             r#"{"sources":[
-                {"source":"web:https://openrouter.ai:443/api/v1/models","ids":["qwen/qwen4-max","google/gemini-4-hydrogen","anthropic/claude-opus-6-1","mistralai/mistral-9"]},
-                {"source":"web:https://models.example.com:443/v1/models","ids":["z-ai/glm-9-cfg","glm-9-plain"]},
+                {"source":"web:https://openrouter.ai:443/api/v1/models","url":"https://openrouter.ai:443/api/v1/models","public":true,"ids":["qwen/qwen4-max","google/gemini-4-hydrogen","anthropic/claude-opus-6-1","mistralai/mistral-9"]},
+                {"source":"web:https://models.example.com:443/v1/models","url":"https://models.example.com:443/v1/models","public":true,"ids":["z-ai/glm-9-cfg","glm-9-plain"]},
                 {"source":"endpoint:https://api.z.ai:443/api/v1|ZAI_API_KEY|zai","ids":["glm-9-secret"]},
                 {"source":"page:zai-docs","url":"https://docs.z.ai:443/models","public":true,"ids":["glm-6"]}
             ]}"#,
         )
         .unwrap();
-        // (F57-1: the page record carries the URL its ids were read from and that it was public
-        // then - a label-only record of an older build is published by nothing)
+        // (F57-1, F62-3: a catalog or page record carries the URL its ids were read from and that
+        // it was public then - here both configured sources were read while declared public; a
+        // record of an older build without that status is published by nothing, the built-in
+        // catalog's own excepted)
         // no config: only the built-in catalog is trusted (F02-19)
         let published = published_from(&state, &trusted_sources(None));
         let alibaba = vendor_of_class("alibaba");
@@ -1253,7 +1255,7 @@ mod tests {
             "other"
         );
         assert_eq!(model_token_with(None, "mistral-9", &published), "other");
-        // a configured source not declared public, an endpoint's own list -> withheld
+        // a configured source not declared public now, an endpoint's own list -> withheld
         assert_eq!(model_token_with(zai, "glm-9-cfg", &published), "other");
         assert_eq!(model_token_with(zai, "glm-6", &published), "other");
         assert_eq!(model_token_with(zai, "glm-9-secret", &published), "other");
@@ -1296,6 +1298,16 @@ mod tests {
         let p = published_from(&other_url, &trusted_sources(Some(&cfg)));
         assert_eq!(model_token_with(zai, "glm-9-private", &p), "other");
         assert_eq!(model_token_with(alibaba, "qwen4-max", &p), "other");
+        // (F62-3) the declared catalog's record read while it was NOT public: withheld, although
+        // the URL is declared public now
+        let read_private: ModelsState = serde_json::from_str(
+            r#"{"sources":[
+                {"source":"web:https://models.example.com:443/v1/models","url":"https://models.example.com:443/v1/models","ids":["z-ai/glm-9-cfg"]}
+            ]}"#,
+        )
+        .unwrap();
+        let p = published_from(&read_private, &trusted_sources(Some(&cfg)));
+        assert_eq!(model_token_with(zai, "glm-9-cfg", &p), "other");
     }
 
     /// (0.2.5 D3) A new Claude id is known to telemetry without a release: the built-in catalog
@@ -1309,8 +1321,8 @@ mod tests {
         use crate::maintain::web::trusted_sources;
         let state: ModelsState = serde_json::from_str(
             r#"{"sources":[
-                {"source":"web:https://openrouter.ai:443/api/v1/models","ids":["anthropic/claude-opus-6.1","anthropic/claude-sonnet-6"]},
-                {"source":"web:https://models.example.com:443/v1/models","ids":["anthropic/claude-haiku-6.1"]}
+                {"source":"web:https://openrouter.ai:443/api/v1/models","url":"https://openrouter.ai:443/api/v1/models","public":true,"ids":["anthropic/claude-opus-6.1","anthropic/claude-sonnet-6"]},
+                {"source":"web:https://models.example.com:443/v1/models","url":"https://models.example.com:443/v1/models","ids":["anthropic/claude-haiku-6.1"]}
             ]}"#,
         )
         .unwrap();

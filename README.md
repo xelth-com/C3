@@ -403,9 +403,11 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
   of `alibaba` only), or a configured catalog / page declared `"public": true` (a page's plain ids
   count for the class of its own host, e.g. `docs.z.ai` -> `zai`) - judged per catalog URL, never
   per host (another URL on the same host is trusted only by its own entry), and a page by the exact
-  URL its ids were read from, never by its label: an id read while the page was not declared public,
-  or from another URL now under the same label, is not sent until a refresh reads it from the public
-  URL itself (a page record of an older build, label only, waits for that refresh too). An endpoint's own model list, an
+  URL its ids were read from, never by its label: an id read while the catalog or page was not
+  declared public, or from another URL now under the same page label, is not sent until a refresh
+  reads it from the public URL itself (a page record or a configured catalog's record of an older
+  build, without that status, waits for that refresh too; the built-in catalog's own record, known
+  by its exact URL, does not). An endpoint's own model list, an
   engine's list, an undeclared configured source, another class's name and a reviewer without a
   class never count; without a maintain state the closed lists alone decide.
 * **Never:** task names, prompts, briefs, paths, thread ids, `consult_id`, finding texts, notes,
@@ -665,7 +667,8 @@ its one-line report.
   A catalog is identified by its full URL (scheme, host, port, path, query): every configured URL
   is fetched and recorded on its own, and trust is per URL, never per host. A page is shown by its
   label, but its ids are recorded with the URL they were read from and whether that URL was declared
-  public then - its trust follows that URL, not the label.
+  public then - its trust follows that URL, not the label. A catalog's ids are recorded the same way:
+  a catalog declared public only after it was read is published from the next refresh on.
 - **By hand.** `c3 maintain` prints the report; `c3 maintain --run [--engine <name>] [--dry-run]
   [--force]` runs a pass now; `c3 maintain --models [--dry-run]` runs only the model step (no CLI is
   checked or updated, the weekly schedule does not move; with `--dry-run` nothing is smoked or
@@ -813,7 +816,7 @@ both reports this (`c3 doctor`) and repairs it in place.
   edit saved after that re-read is not lost - it is kept next to the file as
   `<file>.displaced-<UTC time>`, the hook line ends with `ATTENTION: a hand edit of <file> ...`, and
   `c3 doctor` names every such file until it is removed (on a system without an atomic exchange the
-  file is replaced by rename and the line says so). The hook does not do this inside a session C3 itself started:
+  file is not written at all and the line says so). The hook does not do this inside a session C3 itself started:
   every reviewer, worker and launcher probe, and every child of `c3 update`, gets `C3_CHILD=1`, so a
   read-only reviewer on the `claude` engine cannot change the tree it reviews and a worker's patch
   holds only its own change.

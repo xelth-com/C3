@@ -2560,6 +2560,13 @@ fn resolve_collab_root_with(repo_root: &Path, collab_dir: &str, may_move: bool) 
     } else {
         crate::state_dir::collab_dir(repo_root, joined)
     };
+    // (0.2.5, F62-2) `.` and `..` by TEXT before anything else looks at the path - the way a
+    // collab path is classified and the way `c3 work` takes it (F61-3). The file system applies
+    // `..` to the TARGET of a link before it (not on Windows, whose path API resolves it by
+    // text): `link/../.collab` passed the link check below as the repository's own `.collab` and
+    // was then canonicalised, in the spelling it was given, to a directory beside the link's
+    // target - an external anchor, followed. One spelling from here to the run start.
+    let joined = crate::state_dir::lexical(&joined);
     // (0.2.5, F60-1) a link on the collab path BELOW the repository root is never resolved here.
     // Its canonical form would read as a directory outside the repository - the operator's own
     // anchor, which a run follows - and the run's records would go where a link that arrived with

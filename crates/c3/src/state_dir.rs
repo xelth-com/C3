@@ -1936,6 +1936,8 @@ fn named_below(croot: &Path, abs: &Path) -> Option<String> {
 /// target of a link before it (on Windows the path API resolves it by text already) - so
 /// `link/../.collab` was checked as the repository's `.collab` and written beside the link's
 /// target. By text in both, the directory a run start checks is the directory the run writes.
+/// (F62-2) The commands' resolver ([`crate::providers::resolve_collab_root`]) does the same before
+/// its link check and its canonical form - consult, panel, detach and work name one directory.
 pub(crate) fn lexical(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in p.components() {

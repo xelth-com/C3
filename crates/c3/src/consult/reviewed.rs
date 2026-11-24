@@ -747,7 +747,7 @@ impl DiffPlan {
 /// those handoffs, the brief's own stem (`<NN>-<prefix>-<slug>`); otherwise `<nn>-<prefix>-diff`
 /// with the run's handoff number (a panel member: the panel's first, so members share it) and the
 /// coordinator's brief prefix. A brief named like a reply (`04-codex-reply.md`) is not taken as a
-/// stem.
+/// stem. (F62-6) The stem is at most [`PATCH_STEM_MAX`] bytes ([`bounded_stem`]).
 pub fn patch_stem(
     brief_file: Option<&str>,
     brief_in_handoffs: bool,
@@ -763,13 +763,34 @@ pub fn patch_stem(
                 let first = &c[2];
                 if !super::args::reply_prefixes().contains(&first) {
                     if let Some(stem) = f.strip_suffix(".md") {
-                        return stem.to_string();
+                        return bounded_stem(stem.to_string());
                     }
                 }
             }
         }
     }
-    format!("{nn:02}-{prefix}-diff")
+    bounded_stem(format!("{nn:02}-{prefix}-diff"))
+}
+
+/// (F62-6) The longest patch stem, in bytes. The longest name built from a stem is the run's own
+/// one, `<stem>.<64 hex>.<32 hex>.patch` - 104 bytes more ([`patch_run_name`]; the write-temp name
+/// `<stem>.<64 hex>.<32 hex>.tmp` is 102 more) - and a file name may have 255 bytes on the usual
+/// file systems. With the full digest in the name (F57-5) a brief with a 160-byte stem, which the
+/// short-hash name still fitted, could no longer get its patch written.
+pub const PATCH_STEM_MAX: usize = 120;
+
+/// (F62-6) `stem` cut to [`PATCH_STEM_MAX`] bytes at a character boundary. Only the readable part
+/// of the name is shortened: the digest that follows it stays whole, and it is what tells two
+/// patches apart.
+fn bounded_stem(stem: String) -> String {
+    if stem.len() <= PATCH_STEM_MAX {
+        return stem;
+    }
+    let mut end = PATCH_STEM_MAX;
+    while !stem.is_char_boundary(end) {
+        end -= 1;
+    }
+    stem[..end].to_string()
 }
 
 /// The repo-relative (`/`) form of `path`, else its absolute form.
@@ -2021,6 +2042,54 @@ mod tests {
             "12-lead-diff"
         );
         assert_eq!(patch_stem(None, false, 1, "claude"), "01-claude-diff");
+    }
+
+    // (F62-6) A long brief name: the readable stem is cut to PATCH_STEM_MAX bytes at a character
+    // boundary, so every name built from it - the content name, the run's own name, the write-temp
+    // name - fits a 255-byte file name; a short stem is untouched and the digest is never cut.
+    #[test]
+    fn a_long_brief_stem_is_bounded_so_every_patch_name_fits() {
+        let digest = "a".repeat(64);
+        let id = "b".repeat(32);
+        let fits = |stem: &str| {
+            let name = format!("{stem}.{digest}.patch");
+            for n in [
+                name.clone(),
+                patch_run_name(&name, &id),
+                patch_temp_name(&name, &id),
+            ] {
+                assert!(n.len() <= 255, "{} bytes: {n}", n.len());
+                assert!(n.contains(&digest), "the digest is whole: {n}");
+            }
+        };
+        // the reviewer's case: a recognised 160-byte ASCII stem
+        let long = format!("03-claude-{}", "x".repeat(150));
+        assert_eq!(long.len(), 160);
+        let stem = patch_stem(Some(&format!("{long}.md")), true, 7, "claude");
+        assert_eq!(stem, &long[..PATCH_STEM_MAX]);
+        fits(&stem);
+        // two-byte characters across the cut: a character boundary, never half a character
+        let cyr = format!("03-claude-a{}", "\u{436}".repeat(100));
+        let stem = patch_stem(Some(&format!("{cyr}.md")), true, 7, "claude");
+        assert!(
+            stem.len() <= PATCH_STEM_MAX && cyr.starts_with(&stem),
+            "{stem}"
+        );
+        assert_eq!(
+            stem.len(),
+            PATCH_STEM_MAX - 1,
+            "11 ASCII bytes, then whole pairs"
+        );
+        fits(&stem);
+        // the run's own stem with a very long prefix
+        let stem = patch_stem(None, false, 7, &"p".repeat(300));
+        assert_eq!(stem.len(), PATCH_STEM_MAX);
+        fits(&stem);
+        // a short stem is as it was
+        assert_eq!(
+            patch_stem(Some("03-claude-acceptance.md"), true, 7, "claude"),
+            "03-claude-acceptance"
+        );
     }
 
     #[test]

@@ -1,83 +1,207 @@
-//! Pure version helpers for `c3 maintain`: the installed-version parse of a CLI's `--version`
-//! line, a numeric semver compare, and the model-id successor rule (`C3_MAINTAIN_MODELS=swap`).
+//! Pure version helpers for `c3 maintain`: the release read from a CLI's `--version` line (an exact
+//! identity plus a semver ordering), and the model-id successor rule (`C3_MAINTAIN_MODELS=swap`).
 //!
 //! Everything here is a pure function over strings, so the whole of the maintenance logic that
 //! decides *what* to do (is there a newer CLI, which seated model has a successor) is proven by
 //! unit tests without touching the machine, the network or a model.
 
-/// A dotted numeric version (`0.169.0`, `1.0.77`), with an optional pre-release-ish tail kept for
-/// display but ignored by the ordering (`1.0.70-fake` sorts as `1.0.70`). `parts` is the comparison
-/// order, so a longer prefix-equal version is the greater one (`1.0.1 > 1.0`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+use std::cmp::Ordering;
+
+/// A CLI release as a `--version` line or a vendor's latest-release reading names it. (F62-1) It
+/// answers two different questions with two different parts, never the one by the other:
+///
+/// * IDENTITY - "is this the same release" ([`CliVersion::text`], [`CliVersion::same_release`] and
+///   `==`): the exact release text as the CLI printed it, normalised only by what cannot tell two
+///   releases apart - the surrounding whitespace, a leading `v`, a trailing full stop and the
+///   punctuation the CLI prints right after the token (`version 1.0.77,` -> `1.0.77`). The tag after
+///   the numbers is part of it: `1.0.80-rc.1` and `1.0.80` are DIFFERENT releases. So is build
+///   metadata: `1.0.80+build.7` is not `1.0.80` (two builds are two artifacts; the parser before
+///   F62-1 dropped it together with every other suffix, which was the defect, not a rule to keep).
+///   Every attribution uses the identity: which release a smoke ran on, whether the installed
+///   release is the pending target, the previous one or still the one measured before a smoke,
+///   whether a rollback restored the previous release, the version an install command pins, and what
+///   the pending journal, the state and the report name.
+/// * ORDERING - "is A newer than B" ([`CliVersion::precedence`], [`CliVersion::is_newer_than`]):
+///   semver precedence. The numeric parts first, zero-padded (`1.0.1` is newer than `1.0`, `1.0`
+///   ties `1.0.0`); on equal numbers a PRE-RELEASE - any tag after the numbers, `1.0.80-rc.1` or
+///   `1.0.80rc1` - sorts BEFORE the final release `1.0.80`, two tags compare by semver's identifier
+///   rule, and build metadata is ignored. Ordering only decides whether a release is worth
+///   installing; a tie never makes two releases the same and never seats or verifies anything.
+///
+/// The type deliberately has no `Ord`: an ordering that ignores build metadata cannot agree with an
+/// identity `==` that keeps it.
+#[derive(Debug, Clone)]
 pub struct CliVersion {
-    pub parts: Vec<u64>,
-    pub raw: String,
+    /// The exact release identity (`1.0.80-rc.1`, `0.169.0`).
+    raw: String,
+    /// The numeric parts (`1.0.80-rc.1` -> `[1, 0, 80]`): ordering only, never identity.
+    parts: Vec<u64>,
+    /// The tag between the numbers and any build metadata, without its leading `-` (`rc.1`);
+    /// `None` for a final release. Ordering only.
+    pre: Option<String>,
 }
 
+impl PartialEq for CliVersion {
+    /// Identity: the same exact release ([`CliVersion::same_release`]), never the same numbers.
+    fn eq(&self, other: &Self) -> bool {
+        self.same_release(other)
+    }
+}
+
+impl Eq for CliVersion {}
+
 impl CliVersion {
-    /// The version string as installed (the exact token parsed, e.g. `0.169.0`).
+    /// The exact release identity as installed or announced (`0.169.0`, `1.0.80-rc.1`).
     pub fn text(&self) -> &str {
         &self.raw
     }
-}
 
-impl PartialOrd for CliVersion {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+    /// Whether `self` and `other` are the same release: the exact identity, so `1.0.80-rc.1` is not
+    /// `1.0.80`, and `1.0.80+build.7` is not `1.0.80`.
+    pub fn same_release(&self, other: &Self) -> bool {
+        self.raw == other.raw
     }
-}
 
-impl Ord for CliVersion {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    /// Semver precedence of `self` against `other`: the numeric parts (zero-padded), then a
+    /// pre-release BEFORE the final release of the same numbers, then the tags by semver's identifier
+    /// rule; build metadata is ignored. `Equal` is a tie in ordering only - it never means the same
+    /// release (that is [`CliVersion::same_release`]).
+    pub fn precedence(&self, other: &Self) -> Ordering {
         let n = self.parts.len().max(other.parts.len());
         for i in 0..n {
             let a = self.parts.get(i).copied().unwrap_or(0);
             let b = other.parts.get(i).copied().unwrap_or(0);
             match a.cmp(&b) {
-                std::cmp::Ordering::Equal => {}
+                Ordering::Equal => {}
                 ord => return ord,
             }
         }
-        std::cmp::Ordering::Equal
+        match (&self.pre, &other.pre) {
+            (None, None) => Ordering::Equal,
+            // a pre-release of the same numbers comes BEFORE its final release
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(a), Some(b)) => cmp_pre_release(a, b),
+        }
+    }
+
+    /// Whether `self` is a strictly newer release than `other` by [`CliVersion::precedence`]: a final
+    /// release is newer than its own pre-release, a pre-release is never newer than (nor ties) its
+    /// final release, and a build-metadata-only difference is newer in neither direction.
+    pub fn is_newer_than(&self, other: &Self) -> bool {
+        self.precedence(other) == Ordering::Greater
     }
 }
 
-/// The first semver-like token of a CLI's `--version` output: the first whitespace-separated token
-/// that starts (after an optional leading `v`) with `<digits>.<digits>`. `codex-cli 0.169.0` →
-/// `0.169.0`; `grok 1.0.77 (abc) [stable]` → `1.0.77`; `2.5.3` → `2.5.3`; `grok 1.0.70-fake` →
-/// `1.0.70`. `None` when no token looks like a version.
+/// Semver's pre-release precedence: dot-separated identifiers left to right, numeric ones
+/// numerically, others in ASCII order, a numeric identifier below a non-numeric one, and of two runs
+/// equal so far the shorter one first (`alpha` < `alpha.1` < `beta` < `rc.2` < `rc.10`).
+fn cmp_pre_release(a: &str, b: &str) -> Ordering {
+    fn numeric(s: &str) -> Option<u64> {
+        if !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()) {
+            s.parse().ok()
+        } else {
+            None
+        }
+    }
+    let mut left = a.split('.');
+    let mut right = b.split('.');
+    loop {
+        let ord = match (left.next(), right.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) => match (numeric(x), numeric(y)) {
+                (Some(m), Some(n)) => m.cmp(&n),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => x.cmp(y),
+            },
+        };
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+}
+
+/// The release named by a CLI's `--version` output (or a vendor's latest-release reading): the first
+/// whitespace-separated token that starts (after an optional leading `v`) with `<digits>.<digits>`,
+/// read exactly ([`CliVersion`]). `codex-cli 0.169.0` -> `0.169.0`; `grok 1.0.77 (abc) [stable]` ->
+/// `1.0.77`; `2.5.3` -> `2.5.3`; `grok 1.0.80-rc.1` -> `1.0.80-rc.1`; `version v12.0.9,` ->
+/// `12.0.9`. `None` when no token looks like a version, and (F62-1) when the first version-shaped
+/// token cannot be read exactly (`1.0.80(rc1)`, `1.0.80_rc1`): the line then names no readable
+/// release, and a later number on it is not taken instead.
 pub fn parse_cli_version(text: &str) -> Option<CliVersion> {
     for token in text.split_whitespace() {
         let token = token.trim_start_matches('v').trim_start_matches('V');
-        if let Some(v) = version_from_token(token) {
-            return Some(v);
+        match read_token(token) {
+            Token::Release(v) => return Some(v),
+            Token::Unclear => return None,
+            Token::Other => {}
         }
     }
     None
 }
 
-/// Parse a single token as a dotted numeric version: a leading `<digits>(.<digits>)*`, keeping the
-/// raw numeric prefix for display and the numeric parts for comparison. A trailing non-numeric tail
-/// (`-fake`, `-alpha.2`) ends the numeric run and is ignored. Requires at least a `major.minor`.
-fn version_from_token(token: &str) -> Option<CliVersion> {
+/// What one whitespace-separated token of a `--version` line is.
+enum Token {
+    /// Not version-shaped (`grok`, `(50ca579fa996)`, a bare `7`): the scan goes on.
+    Other,
+    /// A release, read exactly.
+    Release(CliVersion),
+    /// Version-shaped, but the release it names cannot be told exactly: the scan stops.
+    Unclear,
+}
+
+/// Read one token. It must start with a dotted number of at least `major.minor` (a bare `7` is not
+/// a version we trust). The release identity runs on over semver's characters (ASCII letters and
+/// digits, `.`, `-`, `+`), less a trailing `.`; what follows it in the token must be punctuation
+/// only (the CLI's decoration: `1.0.77,` `1.0.77)`), else the token is [`Token::Unclear`] - a letter
+/// or digit beyond an unexpected character could make two different releases read as one.
+fn read_token(token: &str) -> Token {
     let bytes = token.as_bytes();
-    // the numeric-and-dots prefix
+    // the numeric-and-dots prefix: the parts the ordering uses
     let mut end = 0;
     while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
         end += 1;
     }
     let head = &token[..end];
-    let parts: Vec<u64> = head
+    let Some(parts) = head
         .split('.')
         .filter(|s| !s.is_empty())
         .map(|s| s.parse::<u64>().ok())
-        .collect::<Option<Vec<u64>>>()?;
+        .collect::<Option<Vec<u64>>>()
+    else {
+        return Token::Other;
+    };
     if parts.len() < 2 {
-        return None; // a bare "7" is not a version token we trust
+        return Token::Other;
     }
-    // the raw: the numeric prefix with no trailing dot
-    let raw = head.trim_end_matches('.').to_string();
-    Some(CliVersion { parts, raw })
+    let numbers = head.trim_end_matches('.');
+    // the release identity: the numbers and any tag / build metadata in semver's characters
+    let mut run = end;
+    while run < bytes.len()
+        && (bytes[run].is_ascii_alphanumeric() || matches!(bytes[run], b'.' | b'-' | b'+'))
+    {
+        run += 1;
+    }
+    if !token[run..].chars().all(|c| c.is_ascii_punctuation()) {
+        return Token::Unclear;
+    }
+    // trimming trailing dots never cuts into `numbers` (it ends in a digit)
+    let raw = token[..run].trim_end_matches('.');
+    // the tag: what follows the numbers up to the first `+` (build metadata, ordering-free)
+    let tag = raw[numbers.len()..].split('+').next().unwrap_or("");
+    let pre = if tag.is_empty() {
+        None
+    } else {
+        Some(tag.strip_prefix('-').unwrap_or(tag).to_string())
+    };
+    Token::Release(CliVersion {
+        raw: raw.to_string(),
+        parts,
+        pre,
+    })
 }
 
 // --------------------------------------------------------------------------- model-id shape guard
@@ -283,7 +407,8 @@ mod tests {
         assert_eq!(v("grok 1.0.77 (50ca579fa996) [stable]").text(), "1.0.77");
         assert_eq!(v("2.5.3").text(), "2.5.3");
         assert_eq!(v("1.5.9").text(), "1.5.9");
-        assert_eq!(v("grok 1.0.70-fake").text(), "1.0.70");
+        // (F62-1) the tag is part of the release, never dropped
+        assert_eq!(v("grok 1.0.70-fake").text(), "1.0.70-fake");
         assert_eq!(v("version v12.0.9 here").text(), "12.0.9");
         // no version-like token
         assert!(parse_cli_version("no version here").is_none());
@@ -292,13 +417,87 @@ mod tests {
 
     #[test]
     fn version_ordering_is_numeric_not_lexical() {
-        assert!(v("0.2.10") > v("0.2.9"));
-        assert!(v("1.0.0") > v("0.99.99"));
-        assert!(v("0.169.0") > v("0.155.1"));
-        assert!(v("2.6.0") > v("2.5.3"));
-        assert_eq!(v("1.0.77").cmp(&v("1.0.77")), std::cmp::Ordering::Equal);
+        assert!(v("0.2.10").is_newer_than(&v("0.2.9")));
+        assert!(v("1.0.0").is_newer_than(&v("0.99.99")));
+        assert!(v("0.169.0").is_newer_than(&v("0.155.1")));
+        assert!(v("2.6.0").is_newer_than(&v("2.5.3")));
+        assert!(!v("2.5.3").is_newer_than(&v("2.6.0")));
+        assert_eq!(v("1.0.77").precedence(&v("1.0.77")), Ordering::Equal);
         // a longer prefix-equal version is greater
-        assert!(v("1.0.1") > v("1.0"));
+        assert!(v("1.0.1").is_newer_than(&v("1.0")));
+    }
+
+    /// (F62-1) The release identity is exact - equal numbers with different tags or build metadata
+    /// are different releases - and only the decoration that cannot tell two releases apart is
+    /// dropped. The CLI-specific shapes: codex `codex-cli 0.169.0`, grok `grok 1.0.77 (hash)
+    /// [stable]`, a bare marker body, a trailing comma or full stop.
+    #[test]
+    fn equal_numbers_with_different_identities_are_different_releases() {
+        let rc = v("grok 1.0.80-rc.1");
+        let fin = v("grok 1.0.80");
+        assert_eq!(rc.text(), "1.0.80-rc.1");
+        assert_eq!(fin.text(), "1.0.80");
+        assert!(!rc.same_release(&fin) && !fin.same_release(&rc));
+        assert_ne!(rc, fin);
+        // a tag without a hyphen and build metadata are part of the identity too
+        assert_eq!(v("1.0.80rc1").text(), "1.0.80rc1");
+        assert_ne!(v("1.0.80rc1"), fin);
+        assert_eq!(v("1.0.80+build.7").text(), "1.0.80+build.7");
+        assert_ne!(v("1.0.80+build.7"), fin);
+        assert_eq!(v("1.0.80-rc.1+b.2").text(), "1.0.80-rc.1+b.2");
+        assert_ne!(v("1.0.80-rc.1+b.2"), rc);
+        // the tag is case-sensitive: no folding that could merge two releases
+        assert_ne!(v("1.0.80-RC.1"), rc);
+        // what cannot tell two releases apart is dropped: whitespace, a leading v, the CLI's
+        // decoration after the token, a trailing full stop
+        assert_eq!(v("  v1.0.80-rc.1\n"), rc);
+        assert_eq!(v("grok 1.0.80 (50ca579fa996) [stable]"), fin);
+        assert_eq!(v("kimi, version 1.0.80,"), fin);
+        assert_eq!(v("installed 1.0.80."), fin);
+        assert_eq!(v("installed 1.0.80-rc.1."), rc);
+        assert_eq!(v("(1.0.80-rc.1) 2.0.0").text(), "2.0.0"); // a parenthesised token is not read
+                                                              // the identity text reads back as itself (the pending journal stores it)
+        let full = v("grok 1.0.80-rc.1+b.2");
+        assert_eq!(parse_cli_version(full.text()), Some(full.clone()));
+        assert_eq!(parse_cli_version(rc.text()), Some(rc.clone()));
+        // a version-shaped token whose release cannot be read exactly names no release - and no
+        // later number on the line is taken instead
+        assert!(parse_cli_version("grok 1.0.80(rc1)").is_none());
+        assert!(parse_cli_version("grok 1.0.80_rc1 built with 2.0.0").is_none());
+        assert!(parse_cli_version("grok 1.0.80/linux").is_none());
+    }
+
+    /// (F62-1) The ordering: numbers first; on equal numbers a pre-release sorts BEFORE its final
+    /// release (never newer than it, never tied with it); tags by semver's identifier rule; build
+    /// metadata ignored - a tie in ordering that is still not the same release.
+    #[test]
+    fn a_pre_release_sorts_before_its_final_release() {
+        let rc = v("1.0.80-rc.1");
+        let fin = v("1.0.80");
+        assert_eq!(rc.precedence(&fin), Ordering::Less);
+        assert_eq!(fin.precedence(&rc), Ordering::Greater);
+        assert!(fin.is_newer_than(&rc));
+        assert!(!rc.is_newer_than(&fin));
+        assert!(!v("1.0.80rc1").is_newer_than(&fin));
+        assert!(fin.is_newer_than(&v("1.0.80rc1")));
+        // the numbers decide first
+        assert!(rc.is_newer_than(&v("1.0.79")));
+        assert!(v("1.0.81-alpha").is_newer_than(&fin));
+        // tags: numeric identifiers numerically, a numeric one below a word, shorter first
+        assert!(v("1.0.80-rc.2").is_newer_than(&rc));
+        assert!(v("1.0.80-rc.10").is_newer_than(&v("1.0.80-rc.9")));
+        assert!(v("1.0.80-rc.1").is_newer_than(&v("1.0.80-beta.9")));
+        assert!(v("1.0.80-alpha.1").is_newer_than(&v("1.0.80-alpha")));
+        assert!(v("1.0.80-alpha.beta").is_newer_than(&v("1.0.80-alpha.1")));
+        // build metadata: equal precedence, newer in neither direction, still not the same release
+        let b1 = v("1.0.80+b1");
+        let b2 = v("1.0.80+b2");
+        assert_eq!(b1.precedence(&b2), Ordering::Equal);
+        assert_eq!(b1.precedence(&fin), Ordering::Equal);
+        assert!(!b1.is_newer_than(&b2) && !b2.is_newer_than(&b1));
+        assert!(!b1.same_release(&b2) && !b1.same_release(&fin));
+        // a pre-release with build metadata is still a pre-release
+        assert!(fin.is_newer_than(&v("1.0.80-rc.1+b.2")));
     }
 
     #[test]

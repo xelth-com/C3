@@ -525,7 +525,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   that the next pass recovers. The record was matched by engine; the recovery treated "installed ==
   previous" specially and otherwise smoked the launcher and recorded a pass as `update to <target>
   verified` - also when a THIRD version was installed (by hand or by another updater meanwhile) or
-  when the installed version could not be read. The installed version, measured first, now decides.
+  when the installed version could not be read. The installed version, measured first, now decides,
+  compared as the exact release (the first version of this fix compared the numbers only, so a
+  pre-release of the target's numbers counted as the target - corrected by F62-1, the next entry).
   The previous version: cleared as before. The target: smoked, and only a pass with `--version`
   read again after the smoke still showing the target records `recovered: update to <target>
   verified after an interrupted pass`. A third version: smoked for itself; a pass is recorded as
@@ -546,6 +548,50 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `a_pending_recovery_with_an_unreadable_installed_version_verifies_nothing`; the existing
   `a_pending_update_whose_install_never_took_is_cleared` and
   `a_pending_update_whose_new_binary_smokes_clean_is_recorded_verified` keep their meaning.
+- **A recovery credits exactly the release it smoked: a pre-release is never its final release
+  (F62-1, found by the acceptance review; supersedes the comparison of F57-3).** The parser of a
+  CLI's `--version` line kept only the numbers - the tag was dropped from the numeric parts AND from
+  the text that was kept - so an installed `1.0.80-rc.1` read as `1.0.80`. The recovery of a pending
+  update compared those numbers, so with the pending target `1.0.80` the smoke of the pre-release
+  was recorded as `update to 1.0.80 verified`, and the state named `1.0.80`. A read release now
+  keeps two things apart (`maintain::version::CliVersion`). Its IDENTITY is the exact release text
+  as the CLI printed it, normalised only by the surrounding whitespace, a leading `v`, a trailing
+  full stop and the punctuation printed right after the token (`version 1.0.77,`); the tag and
+  build metadata are part of it (`1.0.80-rc.1`, `1.0.80rc1` and `1.0.80+build.7` are three releases
+  other than `1.0.80`), and a version-shaped token that cannot be read exactly (`1.0.80(rc1)`,
+  `1.0.80_rc1`) names no release - the version is unknown, and no later number on the line is taken
+  instead. Its ORDERING is semver precedence: the numbers first, then a pre-release BEFORE the final
+  release of the same numbers, two tags by semver's identifier rule, build metadata ignored; the
+  type has no `Ord`, and every caller asks `same_release` or `is_newer_than` by name. Every "is it
+  the same release" question compares the identity: in the recovery the previous version, the
+  target, the version read again after the smoke and the version after a rollback; outside it, the
+  "did the update take" check after an install (it accepted any version not older than the target
+  by its numbers, so an installed `1.0.80-rc.1` passed for the target `1.0.80` and was reported as
+  `-> 1.0.80 ok`; any release other than the pinned target - a newer one too - is now "did not
+  take", the record kept for the next pass to recover as a third version) and the "is the previous
+  version back" check after a rollback. Every "is it newer"
+  question uses the ordering: the update decision (an installed `1.0.80-rc.1` was "up to date" with
+  a vendor `1.0.80`; it is now updated to it) and the newer-release step of an unresolved recovery.
+  The action line, the report, the state's `installed`, the pending journal and the version an
+  install or a rollback pins name the exact release - so a vendor whose latest release is a
+  pre-release is installed as exactly that release (the bare numbers pinned the final release, or
+  nothing), the npm release date that keys the cool-down is the pre-release's own, and a rollback
+  pins the exact previous release. Limits: two builds that differ only in build metadata are equal
+  in ordering - neither is installed over the other - yet different releases, so a CLI whose
+  `--version` printed build metadata the vendor's latest reading lacks would have its updates
+  reported as "did not take" and recovered as a third version (none of the `--version` shapes C3
+  records carries build metadata); a
+  pending record written by an older build holds the bare numbers, so a pre-release installed then
+  recovers as a third version (smoked for itself, the target not verified); C3's own self-update
+  (`update/`) is outside this fix. Tests: the reviewer's RC1,
+  `a_pending_recovery_never_credits_a_prerelease_smoke_to_the_final_release` (previous 1.0.77,
+  target 1.0.80, installed 1.0.80-rc.1: the action and the state name 1.0.80-rc.1, the target is not
+  verified, the record is cleared as in the third-version case; a failing smoke of the pre-release
+  is named and rolled back), its mirror
+  `a_pending_recovery_never_credits_a_final_release_smoke_to_a_prerelease_target`,
+  `an_installed_prerelease_is_updated_to_its_final_release`, and the unit tests
+  `equal_numbers_with_different_identities_are_different_releases` and
+  `a_pre_release_sorts_before_its_final_release`.
 - **Plain http in test mode goes only to a loopback IP literal (F57-9, found by the acceptance
   review).** Wave D6 accepted `http://` under `CODEX_CONSULT_TEST_MODE=1` for `127.0.0.0/8`, `::1`
   and the NAME `localhost`; a name is resolved by the system resolver at connect time, which need not
@@ -616,7 +662,13 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   when empty. What remains: between the exclusive create and the open there is no handle yet, so an
   EMPTY directory swapped in at that instant cannot be told from the one made (it holds nothing to
   lose; one with content, or a link, is refused); from the claim on, Windows refuses any rename of
-  the held directory, while on Linux and macOS a swap is caught by the identity check. Tests:
+  the held directory, while on Linux and macOS a swap is caught by the identity check.
+  (Acceptance review 62 - said plainly.) Caught, not prevented: git takes a pathname, so on
+  Linux and macOS a directory swapped in before the identity check can receive checkout files
+  before the seat is refused; nothing is staged and no reviewer starts. The temp directory is the
+  operator's own (in a shared `/tmp` the sticky bit keeps other users from renaming or removing
+  the claimed directory), so a swap needs the operator's own rights: the check is against a
+  leftover or mistaken path, not against a concurrent actor with those rights. Tests:
   `a_claimed_worktree_directory_replaced_before_the_check_refuses_and_is_kept` (a replacement
   directory with content swapped in at the race points `worktree-claim`, `worktree-add` and
   `worktree-checkout`: refused, the replacement and its content preserved, nothing staged, no
@@ -733,6 +785,46 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   (c3-cli: a mover held before its rename while a switch-off `c3 manifest` writer waits for the lock,
   and while it finds the lock held - one folder, both records, the second says it used `.eck/`),
   `a_fresh_folder_beside_the_old_one_is_created_only_under_the_move_lock`.
+- **A namespace nested inside `collaboration` keeps that ancestry (F62-5).** The tool inventory
+  of a Codex smoke turn (F57-2: complete / breached / unproven) passed only the IMMEDIATE namespace
+  name down when it read a nested namespace: a function of `collaboration.<child>` whose own name
+  is in no list was then an ordinary tool, and a fully readable list with an offered sub-agent
+  tool counted as clean switch evidence. A list inside the `collaboration` namespace now stays
+  inside it at any depth (`quota::walk_tool_list`), so such a tool is offered - a breach, and the
+  update is held. Test: `quota::tests::a_namespace_nested_in_the_multi_agent_namespace_keeps_its_ancestry`
+  (two and three levels, a hosted tool known by its kind, the same nesting outside the namespace
+  still complete, an unreadable entry below it still unproven).
+- **A displaced edit is never overwritten by the next one (F62-4).** The version a write displaces
+  (F57-10: kept as `<file>.displaced-<UTC time>`) got its name by a look for a free name followed
+  by a REPLACING rename, and the search returned its thousandth candidate without looking at it:
+  two writes of one file that chose the same millisecond's name could leave one displaced edit
+  where there were two, both reported at that one path. The name is now taken by a hard link,
+  which fails when the name exists - then `-2`, `-3` ... are tried - and the temporary name is
+  removed only after the link exists (`contain::place_displaced`): no displaced version replaces
+  a file. Where no hard link can be made, and after a thousand taken names, the name gets 32
+  random hex digits, is checked to be free and is taken by rename - that one step is still a look
+  followed by a rename. Test:
+  `contain::tests::two_displaced_versions_never_share_a_name_and_nothing_is_replaced`.
+- **A long brief name no longer makes the patch name too long (F62-6).** With the full sha256 in
+  the patch name (F57-5) the longest name built from a brief's stem grew to `<stem>` + 104 bytes
+  (`<stem>.<64 hex>.<32 hex>.patch`; the write-temp name is 102 more than the stem): a brief with a
+  160-byte stem, which the short-hash name still fitted, could not get its `--diff` patch written
+  on a file system with 255-byte names. The readable stem is now cut to 120 bytes at a character
+  boundary (`consult::reviewed::PATCH_STEM_MAX`, `bounded_stem`); the digest is never shortened.
+  Test: `consult::reviewed::tests::a_long_brief_stem_is_bounded_so_every_patch_name_fits`.
+- **Without an atomic exchange a hand-edited file is not written at all (acceptance review 62,
+  answer 3; the limit F57-10 left).** The roster and a repository's agent and rule files are
+  published by an atomic exchange that keeps the version it displaces. Where the system or the
+  file system has none (another Unix; `EINVAL` / `ENOSYS` / `ENOTSUP`; `ReplaceFileW`
+  unsupported; a missing file on a file system without hard links) C3 fell back to the old
+  compare-then-rename and said so afterwards - and an edit saved in that instant was lost, on
+  exactly the files a person edits by hand. The fallback is gone: the write is refused, the
+  temporary file removed, the file as it was, and the command says it (`could not replace the
+  roster (there is no atomic exchange here (...), and a plain rename could lose an edit saved
+  during the write: the file was not written - make this change by hand)`). `c3 maintain` then
+  seats no model on such a file system and the repair of agent files changes nothing there; both
+  say why. Test: `contain::tests::without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was`
+  (it replaces `without_an_exchange_publication_falls_back_to_the_rename_and_says_so`).
 - **A linked task directory refuses the run (F57-6).** A run start checked
   and prepared the collab ROOT through handles; the callers then appended `<task>/handoffs` and
   created it with `create_dir_all`, so a task directory that already was a link (no race needed)
@@ -764,11 +856,23 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   reached through a link above its root. (F61-3) `c3 work` resolves `.` and `..` in its collab
   path by text before it uses it, the way the path is classified: `--collab-dir link/../.collab`
   was checked as the repository's `.collab` while, where the file system applies `..` to a link's
-  target (not on Windows), the run wrote beside that target. A run whose collab directory names `.eck/` while neither folder exists is refused instead of
+  target (not on Windows), the run wrote beside that target. (F62-2) The commands' resolver does
+  the same now, BEFORE its link check and its canonical form: it had kept the spelling it was
+  given, so for `c3 consult`, a panel and a detached run `link/../.collab` passed the link check
+  as the repository's `.collab` and was then canonicalised to a directory beside the link's
+  target - read as a directory outside the repository and followed. Consult, panel, detach and
+  work now name one directory, the textual one. Tests: the unit test above (`l/../.collab4`
+  through `resolve_collab_root` and handed straight to the run start), `work.rs`
+  `a_collab_path_with_dot_dot_after_a_link_is_taken_by_text`. A run whose collab directory names `.eck/` while neither folder exists is refused instead of
   creating a new `.eck/` (C3 never creates it again). What remains: the run's later writes (the
   handoff, the reply, the events, the lock, the ledger) still go by path into the directories
   checked at the start - a component swapped for a link AFTER the check, while the run writes, is
-  not caught; binding every write of a run to those handles is not in this release. Tests:
+  not caught; binding every write of a run to those handles is not in this release.
+  (Acceptance review 62, answer 3 - what is promised, said plainly.) The promise is about a link
+  that EXISTS when the run starts: one that arrived with a clone, was left in the tree, or sits
+  under a name the operator typed. It is not containment by directory identity for the whole run:
+  whoever can swap a directory of the working tree WHILE a run writes already has the operator's
+  own rights over the repository and its records and gains nothing by redirecting them. Tests:
   `a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing` (the task
   directory, `handoffs/` and `work/` as links under `.c3/collab` and, under the move lock,
   `.eck/collab`; a panel member's check; a normal start; under `.collab/` a linked task directory,
@@ -2021,9 +2125,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   public when they were read (`public`). A page is trusted by `page:<canonical URL>`, never by its
   label, and its ids count only when the CURRENT configuration declares exactly that URL public AND
   the record says it was public when read. A page record of an older build (label only, no URL) is
-  withheld until the next `c3 maintain` refresh rewrites it. Catalogs keep their per-URL rule
-  (F16-1); both kinds now go through one rule (`maintain::web::canonical_url` for the URL,
-  `maintain::web::provenance` for a record's trust key), so they cannot drift apart. What remains: a
+  withheld until the next `c3 maintain` refresh rewrites it. Catalogs kept their per-URL rule
+  (F16-1) but recorded no collection-time status - the defect F62-3 closes (below); since then both
+  kinds go through one rule (`maintain::web::canonical_url` for the URL, `maintain::web::provenance`
+  for a record's trust key, the same two recorded fields), so they cannot drift apart. What remains: a
   page whose URL stays the same and is declared public only later is published after the next
   refresh, not at once. Tests: `maintain::models::tests::a_page_id_is_published_only_by_the_exact_public_url_it_was_read_from`,
   `maintain::web::tests::a_reused_page_label_never_lends_its_trust_to_ids_of_the_earlier_url`,
@@ -2032,6 +2137,41 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   offline through the real binary: `c3 maintain --models` records an id from a non-public page, the
   label then names a public `docs.z.ai` page - the backfilled event's model is `other`; an older
   build's label-only record - `other`; after a refresh from the public URL - the id by name).
+- **A catalog URL declared public later never publishes the ids cached while it was private (F62-3,
+  found by the acceptance review; it supersedes F02-19 for catalogs and completes F57-1's one
+  rule).** A catalog record carried only its URL (its name, `web:<url>`), and telemetry published
+  its ids as soon as the CURRENT configuration declared that URL `"public": true`: a catalog read
+  while it was private - its response holding a private model id - then cleaned and declared public
+  at the same URL lent today's trust to the old cached ids until the next successful refresh. A
+  catalog record now carries what a page record carries since F57-1: the canonical URL its ids were
+  read from (`url`) and whether that exact URL was trusted as public when they were read (`public`:
+  a catalog shipped in the code, or a config entry declaring it public). Catalogs and pages are
+  stamped at collection by the same trust function that later publishes (`maintain::web::sources_of`
+  over `trusted_sources` - for a page the same answer as its own `"public"`, unless another entry
+  declares the same URL public), recorded by one function and read back by one rule
+  (`maintain::web::provenance`): an id counts only when the record says its URL was public when read
+  AND the current configuration trusts exactly that URL; a record whose URL disagrees with its
+  catalog name is withheld. A custom catalog's record written by an earlier build (no status) is
+  withheld until `c3 maintain` refreshes it. The built-in catalog's record of an earlier build is
+  kept: the code identifies it by its exact canonical URL (`maintain::web::is_builtin_catalog_source`;
+  another URL on openrouter.ai, an added query or a host-keyed record is not it), and that URL's
+  trust never came from the configuration - every build trusted it by code and read it keyless - so
+  it was public when its ids were read. The swap decision (`c3 maintain --models`: candidates, the
+  date gate) is not affected: it reads the lists of the running pass, not the cache, publishes
+  nothing, and a private catalog feeds candidates by design (the smoke decides). What remains: a URL
+  declared public later is published only after the next successful refresh; the recorded status is
+  what the configuration declared at collection - a URL declared public while it still served
+  private ids stays the operator's declaration. Tests:
+  `maintain::web::tests::a_catalog_declared_public_later_never_publishes_ids_cached_while_it_was_private`,
+  `maintain::models::tests::a_catalog_id_is_published_only_when_its_record_was_public_when_read`,
+  `telemetry::classes::tests::a_published_id_of_the_maintain_state_is_sent_as_itself` (extended),
+  and `telemetry_parity.rs`'s `a_catalog_declared_public_later_never_publishes_an_id_cached_while_it_was_private`
+  (the reviewer's RC3, offline through the real binary: `c3 maintain --models` reads a catalog not
+  declared public whose response holds a synthetic private id; the backfilled models are `other`
+  before the declaration, `other` right after it with the old cache kept, `other` for an older
+  build's record without status, and after a refresh of the cleaned catalog its public id goes by
+  name while the private one stays `other`). The catalog fixtures of the earlier tests carry the
+  status they were read under.
 - **A roster edit saved while `c3 maintain` writes the roster is kept (F57-10, found by the
   acceptance review).** The swap re-read the roster, compared it with the snapshot the smoke was
   judged on, and then replaced it by a separate temp-file-and-rename: an edit saved between that
@@ -2046,14 +2186,15 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   path and opened once as a handle; a roster that is a link is followed to the file it names, which
   is the file exchanged; the new roster keeps the old one's permission bits on Unix. On Windows a
   sharing violation (an editor holding the file) is retried up to 8 times, 250 ms apart, as the
-  earlier write did. What remains: where the system has no exchange (a Unix other than Linux and
+  earlier write did. Where the system has no exchange (a Unix other than Linux and
   macOS, a file system that refuses it - `EINVAL`, `ENOSYS`, `ENOTSUP` - or `ReplaceFileW`
-  unsupported) the roster is replaced by the earlier compare-then-rename and the report says so
-  (`... was replaced by rename, not by an atomic exchange (<why>)`); a kept file is the operator's to
+  unsupported) the roster is NOT written and the command says so (as first shipped in this entry
+  it was replaced by the earlier compare-then-rename; the entry "Without an atomic exchange a
+  hand-edited file is not written at all" above changed that); a kept file is the operator's to
   compare and remove. Tests: `maintain::models::tests::a_roster_edit_saved_at_the_publication_boundary_is_kept_byte_for_byte`
   (the reviewer's Verify: an unrelated roster change saved at the pre-publication boundary stays
   recoverable byte for byte), `contain::tests::publish_exchange_keeps_an_edit_saved_before_the_exchange_and_nothing_without_one`,
-  `contain::tests::without_an_exchange_publication_falls_back_to_the_rename_and_says_so` (the new
+  `contain::tests::without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was` (the new
   hook `CODEX_CONSULT_TEST_CONTAIN_NO_EXCHANGE`; a first write too) and, on Unix,
   `contain::tests::publish_exchange_on_unix_swaps_relative_to_the_directory_descriptor`. The race
   hook `CODEX_CONSULT_TEST_CONTAIN_RACE` takes `<point>|write:<file>|<text>` for an editor's save at
@@ -2071,8 +2212,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `.displaced-` file in the repository root, `.claude/agents` and `.claude/rules` until it is
   removed (`[!] <file>: a version a C3 write displaced (a hand edit saved during it) is kept here -
   compare it with the file and remove it`, JSON `displaced_files`; not a finding). On Windows a file
-  held open by an editor is retried as for the roster. What remains: as for the roster, a system
-  without an exchange falls back to compare-then-rename and the line says so; a kept file lies in the
+  held open by an editor is retried as for the roster. As for the roster, on a system
+  without an exchange the file is not written and the line says so; a kept file lies in the
   working tree, so `c3 finish` commits it unless the operator removes it first. Tests:
   `setup::repo_models::tests::an_edit_saved_during_the_repair_is_kept_beside_the_file_and_reported`,
   the `contain` tests of F57-10, and the earlier repair tests (an edit before the comparison, a held

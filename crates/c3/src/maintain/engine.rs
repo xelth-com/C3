@@ -85,7 +85,8 @@ pub fn resolve_launcher(name: &str) -> Option<String> {
     }
 }
 
-/// The installed version from `<launcher> --version` (first semver-like token), or `None`.
+/// The installed release from `<launcher> --version` (the first semver-like token, read as an exact
+/// release identity - (F62-1) `grok 1.0.80-rc.1` is `1.0.80-rc.1`, never `1.0.80`), or `None`.
 pub fn installed_version(env: &dyn Env, launcher: &str) -> Option<CliVersion> {
     // A version probe runs with the operator's provider secrets stripped (run_clean).
     let r = env.run_clean(launcher, &["--version"], &[], None);
@@ -95,7 +96,8 @@ pub fn installed_version(env: &dyn Env, launcher: &str) -> Option<CliVersion> {
 /// What a check learned about the latest available version.
 #[derive(Debug, Clone, Default)]
 pub struct Latest {
-    /// The latest version string (e.g. `0.170.0`), or `None` when it could not be learned.
+    /// The latest release (e.g. `0.170.0`, or exactly `0.170.0-alpha.1` - the version an update
+    /// pins), or `None` when it could not be learned.
     pub version: Option<CliVersion>,
     /// The release date of `version` when it can be known (npm `time`); else `None`.
     pub released: Option<DateTime<Utc>>,
@@ -148,6 +150,7 @@ fn check_codex(env: &dyn Env, launcher: &str) -> Latest {
             return None;
         }
         let data: serde_json::Value = serde_json::from_str(out.stdout.trim()).ok()?;
+        // (F62-1) keyed by the exact release: a pre-release's own date, never its final release's
         let stamp = data.get(v.text()).and_then(|x| x.as_str())?;
         DateTime::parse_from_rfc3339(stamp)
             .ok()

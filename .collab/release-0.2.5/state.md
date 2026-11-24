@@ -1164,7 +1164,7 @@ swap -> xelth.com/C3 page after the tag.
   --brief .collab/release-0.2.5/handoffs/58-claude-acceptance-delta.md --reply-name
   acceptance-delta --rev HEAD --detach` - never `--spend-reserve`.
 
-## 2026-11-24 19:01 - the head is green; the flake measured: not reproducible in isolation
+## 2026-11-24 18:59 - the head is green; the flake measured: not reproducible in isolation
 
 - CI for 431b610 (the head with brief 58): GREEN on all three jobs, first attempt. The rerun of
   8087bad's failed Windows job: green (attempt 2).
@@ -1173,3 +1173,89 @@ swap -> xelth.com/C3 page after the tag.
   17-19 s into the binary (a green run: 4 s). So what precedes the binary in the job matters;
   the workflow got a third loop (the binaries before it in ci's order, then it, in one cargo
   call). Tech-debt entry updated.
+
+## 2026-11-24 19:12 - Astra's delta acceptance pass launched
+
+- Quota at 19:11 (dry run): the 5-hour window reset; week 83 % until Nov 29; preflight available.
+- Launched 19:12:54 with the build of fe877b2 (`scratchpad/bin/c3-review9.exe`), head ea30cce
+  (records and the measuring workflow only above fe877b2), `--purpose acceptance --mode new
+  --brief 58 --reply-name acceptance-delta --rev HEAD --detach`; no `--spend-reserve`.
+  Detach id 2ab4b336-fefe-4629-bec0-9682c952aef7; come back:
+  `c3 consult --task release-0.2.5 --status --id 2ab4b336`.
+- Running beside it: CI for ea30cce; `flake-probe` run 45454555632 (the sequence loop, 12 runs).
+- After the reply: rate it (`c3 findings --task release-0.2.5 --rate <n>`), tell eckwms-movfast-09
+  the week's figure. ACCEPT -> records commit, green CI, tag v0.2.5, release build, install,
+  `c3 doctor --fix`, skills, the real `c3 maintain --run`, the xelth.com page. REJECT -> report;
+  no third pass this week (the week resets Nov 29).
+
+## 2026-11-24 19:27 - Astra's delta pass: REJECT (handoff 62, n=43) - five blockers, one minor
+
+- Reply after 690 s; week 83 % -> 86 % (3 points). Rated useful: yes. eckwms-movfast-09 was told
+  the figure; it started its own Astra delta at 19:33 (about 3 points more -> about 89 %).
+- Closed in her reading: F57-1 (pages), F57-2 (unreadable inventories), F57-4, the switch-off
+  writer, F57-5 (competing C3 placements), F57-8, F57-9. Not closed / new:
+  - **F62-1** (blocker, supersedes F57-3): the recovery compares versions by numeric parts with
+    the suffix dropped - an installed `1.0.80-rc.1` is the pending `1.0.80` for it. -> wave B1.
+  - **F62-2** (blocker): `link/../.collab` - the link check collapses `..` by text, the resolver
+    then canonicalises the original spelling (physical on Unix) -> an external anchor. The
+    coordinator fixed this for `c3 work` only (F61-3). -> coordinator.
+  - **F62-3** (blocker, supersedes F02-19): a catalog's cached ids have no collection-time public
+    status (pages have since A1). -> wave B2.
+  - **F62-4** (blocker): the displaced copy's name is chosen, then published by a replacing
+    rename - two in one millisecond share a path; suffix 1000 is returned without a check.
+    -> coordinator.
+  - **F62-5** (blocker): a namespace nested inside `collaboration` loses the ancestry in the tool
+    inventory - an offered tool counts as clean switch evidence. -> coordinator.
+  - **F62-6** (minor): the full digest makes the patch's temp name longer than 255 bytes for a
+    160-byte brief stem. -> coordinator.
+  - Her answer 3: the external collab root is a reasonable operator choice; the hosted-tool list,
+    delayed page publication, per-run patch copies and no distributed locking do not stop the
+    tag. She names as blocking IF they are part of the promise: later path-based writes of a run
+    (F57-6's limit), the rename fallback where no exchange exists (F57-10's limit); and F57-7's
+    Unix window (git gets a pathname before the identity recheck). These need a decision: do
+    them, or say in the CHANGELOG exactly what is promised.
+- Quota: Astra's reserve is 15 % of the week; 14 % was left at 19:29. A third pass needs the
+  operator's word (`--spend-reserve`) or waits for the reset on Nov 29.
+- Waves started 19:34: B1 (F62-1) and B2 (F62-3), two opus-workers in isolated worktrees,
+  type-check only (the disk has 16 GB free; the coordinator runs their tests on main).
+
+## 2026-11-24 20:20-21:00 - round 3 of fixes: all six findings and the two conditional limits, merged on main (uncommitted, tests running)
+
+- Coordinator, on main:
+  - **F62-5**: `quota::walk_tool_list` keeps the `collaboration` ancestry at any depth (test
+    `a_namespace_nested_in_the_multi_agent_namespace_keeps_its_ancestry`).
+  - **F62-4**: the displaced copy's name is taken by a hard link (fails on an existing name, then
+    `-2`, `-3` ...), the temp name removed after; no hard link -> a name with 32 random hex digits
+    (`contain::place_displaced`; test `two_displaced_versions_never_share_a_name_and_nothing_is_replaced`).
+  - **F62-6**: the patch stem is cut to 120 bytes at a character boundary (`PATCH_STEM_MAX`; test
+    `a_long_brief_stem_is_bounded_so_every_patch_name_fits`).
+  - **F62-2**: the resolver resolves `.`/`..` by text BEFORE its link check and canonical form
+    (`resolve_collab_root_with`); unit test `l/../.collab4` through the resolver and straight to
+    `begin_run`; `work.rs::a_collab_path_with_dot_dot_after_a_link_is_taken_by_text`.
+  - **Her answer 3, the rename fallback**: decided - where no atomic exchange exists the write is
+    REFUSED (file as it was, the command says why); `Publication::Rename` is gone; test
+    `without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was`. `c3 maintain` then seats
+    no model on such a file system and the repair changes nothing there.
+  - **Her answer 3, later path-based writes; F57-7's Unix window**: decided as limits, and the
+    CHANGELOG now says what is promised (a link that exists at the run start; not containment
+    against someone who has the operator's own rights during the run).
+- Wave B1 (opus-worker, type-check only), **F62-1**: a version carries its exact release identity
+  (only whitespace, a leading `v`, trailing punctuation dropped) and a separate semver ordering
+  (a prerelease sorts before its final release); recovery, "did the update take", "is the previous
+  back", "up to date" and the cool-down lookup compare the identity. Decisions taken by the
+  worker, accepted: build metadata is part of the identity; a version token followed by other
+  characters is unreadable; "did the update take" needs the exact pinned target. Three c3-cli
+  tests, two unit tests.
+- Wave B2 (opus-worker, type-check only), **F62-3**: a catalog record stores `url` and `public`
+  like a page record; one rule (`web::sources_of`, `web::recorded`, `web::provenance`); a legacy
+  custom catalog record publishes nothing until refreshed; the built-in catalog's legacy record
+  is kept only under its exact canonical URL. One c3-cli test, two unit tests, fixtures updated.
+- Both patches applied cleanly (`scratchpad/patches/b1.patch`, `b2.patch`). On the merged tree,
+  foreground: fmt clean, clippy -D warnings clean, c3 lib 967, c3-core 257. c3-cli targets
+  running.
+- Disk: C: fell to 8 GB free (a peer asked for room); the incremental build cache was removed
+  (15 GB free after). Astra's week: 88 % after the peer's delta (it wants one more, as C3 does).
+- 21:00: c3-cli on the merged tree: `maintain` 49, `telemetry_parity` 14, `work` 31 - all passed
+  (the queue waited 35 minutes for memory: another session compiled SurrealDB). No further local
+  cargo runs for now: C: was at 8 GB free again and a peer asked for room - `target/debug` removed
+  (13 GB free). The remaining c3-cli targets run in CI on three platforms.

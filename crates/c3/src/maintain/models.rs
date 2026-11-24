@@ -22,16 +22,18 @@ use c3_core::roster::{Roster, RosterEntry};
 pub struct SourceList {
     pub source: String,
     pub ids: Vec<String>,
-    /// (F57-1) A page's provenance: the canonical URL its ids were read from
-    /// ([`super::web::canonical_url`]) - a page's name is only its label, which a later
-    /// configuration may give to another URL. Persisted; `None` on every other kind (a catalog's
-    /// name is its URL) and on a page record of an older build, whose ids are then never published
-    /// ([`super::web::provenance`]) until the next refresh rewrites the record.
+    /// (F57-1, F62-3) A public source's provenance, for a catalog and a page alike: the canonical
+    /// URL its ids were read from ([`super::web::canonical_url`]) - a page's name is only its label,
+    /// which a later configuration may give to another URL; a catalog's name is that URL again
+    /// (`web:<url>`). Persisted; `None` on an engine's or an endpoint's list and on a record of an
+    /// earlier build, whose ids are then never published ([`super::web::provenance`] - the built-in
+    /// catalog's own record excepted) until the next refresh rewrites the record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// (F57-1) Whether that URL was declared `"public": true` when the ids were collected - a page
-    /// read while it was not public stays unpublished whatever a later configuration declares.
-    /// Persisted; absent means false.
+    /// (F57-1, F62-3) Whether that URL was trusted as public ([`super::web::trusted_sources`]: a
+    /// catalog shipped in the code, or a config entry declaring it `"public": true`) when the ids
+    /// were collected - a catalog or page read while it was not public stays unpublished whatever a
+    /// later configuration declares. Persisted; absent means false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub public: bool,
     /// The catalog's `created` stamp (unix seconds) per id, when it gives one: the first-collection
@@ -1029,11 +1031,13 @@ pub type Published = std::collections::HashSet<(String, String)>;
 /// source, which may be private), bound to a vendor class: a `<vendor>/<model>` id to the class of
 /// its OpenRouter vendor slug (`qwen/qwen4-max` -> `(alibaba, qwen4-max)`; an unknown slug binds
 /// nowhere), a plain id to the class of the source's own host ([`super::web::TrustedSource`]), or
-/// nowhere. Lower-cased. Empty when there is no state. (F16-1, F17-5, F57-1) A record matches by
-/// its provenance ([`super::web::provenance`]) - the exact URL its ids were read from, for a
-/// catalog and a page alike - so an id counts only when the URL it was read from is trusted itself
-/// (and, for a page, was declared public when it was read); a legacy host-keyed catalog record or
-/// a label-only page record of an older build matches nothing until a fetch rewrites it.
+/// nowhere. Lower-cased. Empty when there is no state. (F16-1, F17-5, F57-1, F62-3) A record matches
+/// by its provenance ([`super::web::provenance`]) - the exact URL its ids were read from, for a
+/// catalog and a page alike - so an id counts only when BOTH hold: the record says that URL was
+/// trusted as public when the ids were read, and the URL is trusted itself now. A record of an
+/// earlier build (a legacy host-keyed catalog, a custom catalog or a page without the
+/// collection-time status) matches nothing until a fetch rewrites it - except the built-in
+/// catalog's own record, identified by its exact URL.
 pub fn published_from(state: &ModelsState, trusted: &[super::web::TrustedSource]) -> Published {
     let mut out = Published::new();
     for s in state.sources.iter().filter(|s| is_public_source(&s.source)) {
@@ -2094,8 +2098,9 @@ mod tests {
     fn published_names_come_from_public_sources_only() {
         let st = ModelsState {
             sources: vec![
-                sl(
-                    "web:https://openrouter.ai:443/api/v1/models",
+                cat_rec(
+                    "https://openrouter.ai:443/api/v1/models",
+                    true,
                     &["qwen/Qwen4-Max"],
                 ),
                 page_rec("zai-docs", "https://docs.z.ai:443/models", true, &["glm-6"]),
@@ -2156,6 +2161,115 @@ mod tests {
             public,
             ..sl(&format!("page:{name}"), ids)
         }
+    }
+
+    /// A catalog record as `c3 maintain` writes it since F62-3: named by its canonical URL
+    /// (`web:<url>`), with that URL and whether it was trusted as public when its ids were read.
+    fn cat_rec(url: &str, public: bool, ids: &[&str]) -> SourceList {
+        SourceList {
+            url: Some(url.into()),
+            public,
+            ..sl(&format!("web:{url}"), ids)
+        }
+    }
+
+    /// (F62-3, the reviewer's RC3 at unit level) A catalog's ids are published only when BOTH hold:
+    /// the record says its URL was trusted as public when they were read, and the configuration
+    /// trusts exactly that URL now. A record read while private stays withheld after the URL is
+    /// declared public; one read while public is withheld once the declaration is gone; a record
+    /// whose URL disagrees with its name is withheld; a custom catalog's record of an earlier build
+    /// (no status) is withheld; the built-in catalog's record of an earlier build is kept - its
+    /// exact URL proves it is the built-in one, trusted by the code in every build and read
+    /// keyless - while a record of another URL on its host is a custom catalog's.
+    #[test]
+    fn a_catalog_id_is_published_only_when_its_record_was_public_when_read() {
+        use crate::maintain::web::{provenance, trusted_sources};
+        let url = "https://models.example:443/v1/models";
+        let declared = crate::c3config::C3Config {
+            model_catalogs: Some(vec![crate::c3config::ModelCatalogConfig {
+                url: "https://Models.Example/v1/models".into(),
+                public: true,
+            }]),
+            ..Default::default()
+        };
+        let one = |rec: SourceList, cfg: Option<&crate::c3config::C3Config>| {
+            published_from(
+                &ModelsState {
+                    sources: vec![rec],
+                    ..Default::default()
+                },
+                &trusted_sources(cfg),
+            )
+        };
+        let has = |p: &Published, id: &str| p.contains(&("zai".to_string(), id.to_string()));
+        // read while private, declared public now: withheld
+        let private = cat_rec(url, false, &["z-ai/glm-9-private"]);
+        assert_eq!(provenance(&private), None);
+        assert!(one(private, Some(&declared)).is_empty());
+        // read while public and declared now: published
+        let public = cat_rec(url, true, &["z-ai/glm-9-public"]);
+        assert_eq!(
+            provenance(&public).as_deref(),
+            Some("web:https://models.example:443/v1/models")
+        );
+        assert!(has(&one(public.clone(), Some(&declared)), "glm-9-public"));
+        // ...and no longer declared: withheld - today's trust is required as well
+        assert!(one(public, None).is_empty());
+        // a record whose URL disagrees with its name: withheld
+        let odd = SourceList {
+            url: Some("https://other.example:443/v1/models".into()),
+            ..cat_rec(url, true, &["z-ai/glm-9-odd"])
+        };
+        assert_eq!(provenance(&odd), None);
+        assert!(one(odd, Some(&declared)).is_empty());
+        // a custom catalog's record of an earlier build: withheld until a refresh rewrites it
+        let legacy: ModelsState = serde_json::from_str(
+            r#"{"sources":[{"source":"web:https://models.example:443/v1/models","ids":["z-ai/glm-9-legacy"]}]}"#,
+        )
+        .unwrap();
+        assert!(legacy.sources[0].url.is_none() && !legacy.sources[0].public);
+        assert_eq!(provenance(&legacy.sources[0]), None);
+        assert!(published_from(&legacy, &trusted_sources(Some(&declared))).is_empty());
+        // the built-in catalog's record of an earlier build: kept, by its exact URL; a record of
+        // another URL on its host - declared public now - is a custom catalog's: withheld
+        let on_host = crate::c3config::C3Config {
+            model_catalogs: Some(vec![crate::c3config::ModelCatalogConfig {
+                url: "https://openrouter.ai/api/v1/models?tier=x".into(),
+                public: true,
+            }]),
+            ..Default::default()
+        };
+        let builtin_legacy: ModelsState = serde_json::from_str(
+            r#"{"sources":[{"source":"web:https://openrouter.ai:443/api/v1/models","ids":["qwen/qwen4-max"]},
+                {"source":"web:https://openrouter.ai:443/api/v1/models?tier=x","ids":["qwen/qwen4-plus"]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            provenance(&builtin_legacy.sources[0]).as_deref(),
+            Some("web:https://openrouter.ai:443/api/v1/models")
+        );
+        assert_eq!(provenance(&builtin_legacy.sources[1]), None);
+        let p = published_from(&builtin_legacy, &trusted_sources(Some(&on_host)));
+        assert!(
+            p.contains(&("alibaba".to_string(), "qwen4-max".to_string())),
+            "{p:?}"
+        );
+        assert!(!p.iter().any(|(_, m)| m == "qwen4-plus"), "{p:?}");
+        // the record round-trips through the state file with its status
+        let text = serde_json::to_string(&ModelsState {
+            sources: vec![cat_rec(url, true, &["z-ai/glm-9-public"])],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            text.contains(r#""url":"https://models.example:443/v1/models","public":true"#),
+            "{text}"
+        );
+        let back: ModelsState = serde_json::from_str(&text).unwrap();
+        assert!(has(
+            &published_from(&back, &trusted_sources(Some(&declared))),
+            "glm-9-public"
+        ));
     }
 
     /// (F57-1, the reviewer's RC1 at unit level) A page's ids are published only by the exact URL
@@ -2265,14 +2379,28 @@ mod tests {
         );
         let back: ModelsState = serde_json::from_str(&text).unwrap();
         assert!(has(&published_from(&back, &trusted), "glm-9-public"));
-        // a catalog: the same rule - its name is its canonical URL
+        // (F62-3) a catalog: the same rule - the URL it was read from (its name is that URL) and
+        // that it was public then; a custom catalog's record without the status has none
         assert_eq!(
-            crate::maintain::web::provenance(&sl(
-                "web:https://openrouter.ai:443/api/v1/models",
+            crate::maintain::web::provenance(&cat_rec(
+                "https://models.example:443/v1/models",
+                true,
                 &[]
             ))
             .as_deref(),
-            Some("web:https://openrouter.ai:443/api/v1/models")
+            Some("web:https://models.example:443/v1/models")
+        );
+        assert_eq!(
+            crate::maintain::web::provenance(&cat_rec(
+                "https://models.example:443/v1/models",
+                false,
+                &[]
+            )),
+            None
+        );
+        assert_eq!(
+            crate::maintain::web::provenance(&sl("web:https://models.example:443/v1/models", &[])),
+            None
         );
         assert_eq!(
             crate::maintain::web::provenance(&sl("web:openrouter.ai", &[])),
@@ -2306,15 +2434,17 @@ mod tests {
         ] {
             assert!(published_from(&old, &trusted).is_empty());
         }
-        // the same ids under their URL are published
+        // the same ids under their URL, read while public (F62-3), are published
         let rewritten = ModelsState {
             sources: vec![
-                sl(
-                    "web:https://openrouter.ai:443/api/v1/models",
+                cat_rec(
+                    "https://openrouter.ai:443/api/v1/models",
+                    true,
                     &["qwen/qwen4-max"],
                 ),
-                sl(
-                    "web:https://pub.example.com:443/v1/models",
+                cat_rec(
+                    "https://pub.example.com:443/v1/models",
+                    true,
                     &["z-ai/glm-9-trusted"],
                 ),
             ],
@@ -2906,8 +3036,9 @@ mod tests {
         assert_eq!(claude_dash_form("gpt-6.2"), None);
         let st = ModelsState {
             sources: vec![
-                sl(
-                    "web:https://openrouter.ai:443/api/v1/models",
+                cat_rec(
+                    "https://openrouter.ai:443/api/v1/models",
+                    true,
                     &[
                         "anthropic/claude-opus-6.1",
                         "anthropic/claude-3.5-sonnet",
