@@ -95,6 +95,52 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1795526687
+                    },
+                    {
+                        "n":  6,
+                        "consult_id":  "bb2dd605-a056-4919-8c9d-4d73a000dfd5",
+                        "lineage":  "kimi :: kimi-code/kimi-for-coding [kimi]",
+                        "provider":  "kimi",
+                        "model":  "kimi-code/kimi-for-coding",
+                        "engine":  "kimi",
+                        "purpose":  "",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-24T16:30:32+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-24T16:33:36+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795534416
+                    },
+                    {
+                        "n":  7,
+                        "consult_id":  "61616540-dac0-4fbd-969b-d36f5074b004",
+                        "lineage":  "kimi :: kimi-code/kimi-for-coding [kimi]",
+                        "provider":  "kimi",
+                        "model":  "kimi-code/kimi-for-coding",
+                        "engine":  "kimi",
+                        "purpose":  "",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-24T16:32:44+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-24T16:33:37+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795534417
                     }
                 ]
 }

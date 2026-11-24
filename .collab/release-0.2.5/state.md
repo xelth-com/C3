@@ -1034,3 +1034,25 @@ swap -> xelth.com/C3 page after the tag.
   in the same instant as the index (copy_index now keeps the index's modification time).
 - Brief 58 (handoffs/58-claude-acceptance-delta.md): the delta for the standing partner - a table
   finding / fix / closing test / remaining limit, four questions, ACCEPT or REJECT.
+
+## 2026-11-24 16:34 - the delta pass waits for the 19:10 window; live checks of the fixes on the real kimi
+
+- The ChatGPT 5-hour window stood at 86 % at 16:18 (56 % after my run at 14:31), the week at 83 %:
+  the peers' own acceptance runs (9eck-com-62: 14:13, 15:52; eckwms-movfast-09: 14:10, 15:58;
+  9eck-com-1c: Sol panels in the morning). I asked all three to keep off the `openai` entries
+  until 19:45; all three agreed. eckwms-movfast-09 still needs one Astra delta (about 3 points)
+  after my pass and one full acceptance (4-5 points) if the week has room - I report the week's
+  figure to it when my pass ends. No third pass for this release this week.
+- be46b1d on origin/main: brief 58 and the records. CI for ea74a4d green (three jobs).
+- More foreground runs on the head: c3-cli ci_check 14, hook_scripts 5, snapshot_partb 7,
+  mcp_integration 3, compat_wave5 5, grok_engine 18, kill_record_durable 12, notspooled_parity 21.
+- **Live with the head's build and the real kimi CLI (task smoke-kimi):** handoff 08 - a new
+  thread with --rev HEAD --diff HEAD~2..HEAD, usable; the patch
+  02-claude-live-kimi-0.2.5.f2468f37...b9107.patch has exactly that sha256 and the ledger names
+  it (F57-5 seen). Handoff 09 - --mode resume, usable, the same worktree path
+  c3-kimi-wt-2dc92cb9..., the same session (F57-7 seen). A resume with a directory placed at that
+  path: refused before launch, the directory and its file untouched, no handoff, no worktree.
+- Brief 58 carries these observations and the extra test numbers.
+- Launch at 19:11: `scratchpad/bin/c3-review7.exe consult --task release-0.2.5 --purpose
+  acceptance --mode new --brief .collab/release-0.2.5/handoffs/58-claude-acceptance-delta.md
+  --reply-name acceptance-delta --rev HEAD --detach` (rebuild the binary if the head moved).

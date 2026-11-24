@@ -47,17 +47,22 @@ you run short, give the verdict on what you read and say what you did not read.
   crates: fmt clean; clippy `-D warnings` clean; `c3` library tests 961 passed, `c3-core` 256;
   `c3-cli`: `finish` 28, `kimi_engine` 25, `panel_light_required` 6, `work` 30, `maintain` 46,
   `telemetry_parity` 13, `init_doctor` 22, `delegation_rule` 7, `wave6_live_diffs` 6,
-  `claude_engine` 19, `compat_wave2b` 21, `branches` 18 - all passed.
+  `claude_engine` 19, `compat_wave2b` 21, `branches` 18, `ci_check` 14, `hook_scripts` 5,
+  `snapshot_partb` 7, `mcp_integration` 3, `compat_wave5` 5, `grok_engine` 18,
+  `kill_record_durable` 12, `notspooled_parity` 21 - all passed.
 - CI for `ea74a4d` (run 45418818364): GREEN on all three jobs - Windows, Linux, Linux with
   `index-surreal` - so the Unix exchange code and the `cfg(unix)` tests compiled and passed. The
   head adds only this brief and the records; its run was started when this brief was handed over.
   (You have no network: `gh` is not available to you.)
 - The four workers shared one build directory and their own test runs could mix builds; the
   numbers above are the coordinator's, on the merged tree.
-- Seen live with the real kimi CLI (wave D7, before your review's F57-7 fix): a new thread, then
-  `--mode resume` at the same worktree path, the same session, a usable reply
-  (`.collab/smoke-kimi/handoffs/06-kimi-live-3.md`, `07-kimi-live-4.md`). The F57-7 change was not
-  run live.
+- Seen live AFTER the fixes, with the head's build and the real kimi CLI (task `smoke-kimi`,
+  `.collab/smoke-kimi/handoffs/08-kimi-live-5.md`, `09-kimi-live-6.md`): a new thread with
+  `--rev HEAD --diff HEAD~2..HEAD` - usable; the patch file's sha256 equals the 64 hex digits in
+  its name and the ledger names that path. `--mode resume` - usable, the SAME worktree path, the
+  same session. A resume while a directory with a file sits at that path - refused before launch
+  ("the worktree path ... of the thread it resumes is taken"), the directory and its file
+  untouched, no handoff written, no worktree registered. (Part of your first-run checklist.)
 - The "Decided, not fixed" and "NOT covered" lists of brief 56 stand, minus what is fixed here;
   your answer 7 objected to nothing else in them (agy live, a real file system without hard
   links and macOS are gaps you named as gaps).
