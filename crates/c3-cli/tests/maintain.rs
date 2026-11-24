@@ -1079,6 +1079,95 @@ fn an_update_that_leaves_an_unreadable_version_smokes_nothing_and_keeps_the_reco
     );
 }
 
+/// (F67-1, the reviewer's RC1) The post-install probe sees the target 1.0.80, then the installed
+/// version switches to 1.0.81 BEFORE the (passing) smoke runs. The pass is credited to no release:
+/// the action is unresolved and names what is installed after the smoke exactly, there is no
+/// target success line in the output or the state, nothing is rolled back and the pending record is
+/// kept. The next pass's recovery then measures 1.0.81 first and smokes it for itself (a third
+/// version): the target is still not verified.
+#[test]
+fn a_target_replaced_before_its_smoke_is_credited_nothing_and_keeps_the_record() {
+    let e = setup("upd-switch");
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    env.push(("FAKE_GROK_SWITCH_ON", "1.0.80"));
+    env.push(("FAKE_GROK_SWITCH_TO", "1.0.81"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.77 -> 1.0.80 unresolved: the installed version changed during the smoke (1.0.80 -> 1.0.81), so its pass is credited to no version"),
+        "{t}"
+    );
+    assert!(!t.contains("-> 1.0.80 ok"), "{t}");
+    assert!(!t.contains("-> 1.0.81 ok"), "{t}");
+    assert!(!t.contains("verified"), "{t}");
+    let rec = grok_state(&e);
+    let action = rec["action"].as_str().unwrap_or_default();
+    assert_eq!(
+        action,
+        "unresolved: the installed version changed during the smoke (1.0.80 -> 1.0.81), so its pass is credited to no version",
+        "{rec}"
+    );
+    assert!(!action.contains(" ok"), "{rec}");
+    let pending = e.pending_json();
+    assert!(
+        pending.contains("\"engine\":\"grok\"")
+            && pending.contains("\"previous\":\"1.0.77\"")
+            && pending.contains("\"target\":\"1.0.80\""),
+        "the record is kept: {pending}"
+    );
+    assert_eq!(verfile(&e.grok_verfile), "1.0.81");
+    assert!(
+        !e.mnt_log().contains("update --version 1.0.77"),
+        "no rollback: {}",
+        e.mnt_log()
+    );
+
+    // the next pass: the recovery measures 1.0.81 first and smokes it for itself
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.81 - pending update to 1.0.80 not verified: 1.0.81 is installed instead (changed since the update was recorded); the smoke passed on 1.0.81"),
+        "{t}"
+    );
+    assert!(!t.contains("update to 1.0.80 verified"), "{t}");
+    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+}
+
+/// (F67-1) The unreadable variant: after the post-install probe saw the target, the version can no
+/// longer be read when the smoke has passed - credited to nothing, the action names `unknown`, the
+/// record is kept.
+#[test]
+fn a_target_that_becomes_unreadable_during_its_smoke_is_credited_nothing() {
+    let e = setup("upd-switch-unknown");
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    env.push(("FAKE_GROK_SWITCH_ON", "1.0.80"));
+    env.push(("FAKE_GROK_SWITCH_TO", "nightly"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("grok 1.0.77 -> 1.0.80 unresolved: the installed version changed during the smoke (1.0.80 -> unknown), so its pass is credited to no version"),
+        "{t}"
+    );
+    assert!(!t.contains("-> 1.0.80 ok"), "{t}");
+    assert!(!t.contains("verified"), "{t}");
+    let rec = grok_state(&e);
+    assert!(
+        rec["action"].as_str().unwrap_or_default().starts_with(
+            "unresolved: the installed version changed during the smoke (1.0.80 -> unknown)"
+        ),
+        "{rec}"
+    );
+    let pending = e.pending_json();
+    assert!(
+        pending.contains("\"engine\":\"grok\"") && pending.contains("\"target\":\"1.0.80\""),
+        "the record is kept: {pending}"
+    );
+    assert_eq!(verfile(&e.grok_verfile), "nightly");
+}
+
 /// (F65-4) codex's release date - the key of the cool-down - is read under the EXACT release npm
 /// announced: a fresh `0.170.0-alpha.1` is held by its own date (the bare numbers `0.170.0` have no
 /// entry, so a lookup under them found no date and held nothing).

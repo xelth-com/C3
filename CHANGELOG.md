@@ -539,9 +539,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   cannot be read: no smoke is run (its result could not be attributed to a version), the action says
   `pending update to <target> unresolved: the installed version cannot be read, so the update is not
   verified (no smoke run)`, and the record is kept. A passing smoke during which the installed
-  version changed is credited to no version and the record is kept. Limit: the version is read
-  before and after the smoke, not during it, so a change and a change back inside one smoke is not
-  seen. Tests: the reviewer's RC2 second half,
+  version changed is credited to no version and the record is kept (since F67-1 the ordinary
+  update makes the same check, see F62-1). Limit: the version is read before and after the smoke,
+  not during it, so a change and a change back inside one smoke is not seen. Tests: the reviewer's
+  RC2 second half,
   `a_pending_recovery_never_credits_a_third_installed_version_to_the_target` (previous 1.0.77,
   target 1.0.80, installed 1.0.79: the action and the state name 1.0.79, the target is not verified;
   a failing smoke of 1.0.79 is named and rolled back), and
@@ -560,9 +561,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   build metadata are part of it (`1.0.80-rc.1`, `1.0.80rc1` and `1.0.80+build.7` are three releases
   other than `1.0.80`), and a version-shaped token that cannot be read exactly (`1.0.80(rc1)`,
   `1.0.80_rc1`, a dotted number with a part too large to read) names no release - the version is
-  unknown, and no later number on the line is taken instead. Its ORDERING is semver precedence: the numbers first, then a pre-release BEFORE the final
-  release of the same numbers, two tags by semver's identifier rule, build metadata ignored; the
-  type has no `Ord`, and every caller asks `same_release` or `is_newer_than` by name. Every "is it
+  unknown, and no later number on the line is taken instead. Its ORDERING is semver precedence:
+  the numbers first, then a pre-release BEFORE the final release of the same numbers, two tags by
+  semver's identifier rule, build metadata ignored; the type has no `Ord`, and every caller asks
+  `same_release` or `is_newer_than` by name. Every "is it
   the same release" question compares the identity: in the recovery the previous version, the
   target, the version read again after the smoke and the version after a rollback; outside it, the
   "did the update take" check after an install (it accepted any version not older than the target
@@ -574,7 +576,18 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   record, so that release served unsmoked until the next scheduled pass - a pending record does not
   make a pass due - and was not rolled back if broken, where the numeric check had smoked a release
   of equal or newer numbers in the same pass.) After an install the re-read release now decides
-  three ways. The target: smoked as before. A readable release other than the target and the
+  three ways. The target: smoked, and (F67-1, found by the third acceptance pass) its pass counts
+  only when `--version` read again AFTER the smoke still shows exactly the target - the recovery's
+  final identity check, now one function for both paths (`changed_during_smoke`). Before, a pass
+  went straight to `-> <target> ok` and cleared the record, so a manual or automatic update that
+  replaced the target between the post-install probe and the smoke let another release pass in the
+  target's name. A release that changed or became unreadable during the smoke is credited with
+  nothing: the action is `unresolved: the installed version changed during the smoke (<target> ->
+  <installed, or unknown>), so its pass is credited to no version`, no `-> <target> ok` appears in
+  the output, the report or the state, nothing is rolled back (the smoke passed), and the record is
+  kept - the next pass's recovery measures the installed release first and smokes it for itself
+  as a third version (the target is not verified), as the recovery does when its own smoke sees
+  the version change. A readable release other than the target and the
   previous one (the same numbers with another identity, a build variant, a newer release): smoked
   in the SAME pass and credited to ITSELF through the recovery's third-version path
   (`handle_pending_smoke`, on the smoke target the pass already chose, with the record just
@@ -599,8 +612,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   smoked and recorded as a third version, the target never "verified" (none of the `--version`
   shapes C3 records carries build metadata); after an install the state's `installed` stays the
   version measured at the start of the engine's turn, as after every update outcome - the action
-  names the release the updater left; a version that cannot be read after an install still waits,
-  unsmoked, for the next scheduled pass; a pending record written by an older build holds the bare
+  names the release the updater left; a version that cannot be read after an install, and a
+  release that replaced the target during its smoke, still wait unsmoked for the next scheduled
+  pass (the record is kept); a pending record written by an older build holds the bare
   numbers, so a pre-release installed then recovers as a third version (smoked for itself, the
   target not verified); C3's own self-update (`update/`) is outside this fix. Tests: the reviewer's
   RC1,
@@ -617,8 +631,24 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `a_rollback_to_a_same_numbers_release_is_not_a_restore`,
   `an_update_that_leaves_an_unreadable_version_smokes_nothing_and_keeps_the_record` and
   `a_prerelease_cool_down_reads_the_prereleases_own_date` (npm's date under `0.170.0-alpha.1`
-  holds it); and the unit tests `equal_numbers_with_different_identities_are_different_releases`
-  and `a_pre_release_sorts_before_its_final_release`.
+  holds it); for F67-1 the reviewer's RC1,
+  `a_target_replaced_before_its_smoke_is_credited_nothing_and_keeps_the_record` (the post-install
+  probe sees 1.0.80, the fake then switches to 1.0.81 before the passing smoke: unresolved, no
+  target success line, the record kept; the next pass smokes 1.0.81 for itself) and
+  `a_target_that_becomes_unreadable_during_its_smoke_is_credited_nothing`; and the unit tests
+  `equal_numbers_with_different_identities_are_different_releases` and
+  `a_pre_release_sorts_before_its_final_release`.
+- **Numeric pre-release identifiers compare numerically at any length (F67-2, found by the third
+  acceptance pass).** The pre-release ordering of F62-1 read a numeric identifier by converting it
+  to a 64-bit integer, so one too large for it fell to the lexical comparison and two such numbers
+  could sort in reverse: `1.0.0-18446744073709551616` sorted after `1.0.0-100000000000000000000`,
+  and the newer pre-release could be skipped as not newer. A numeric identifier is now recognised
+  by its digits alone and compared by its count of significant digits (leading zeros stripped),
+  then digit by digit; numeric still sorts below alphanumeric, and ordinary numbers compare as
+  before (`rc.2` < `rc.10`). Test: the reviewer's RC2,
+  `numeric_pre_release_identifiers_compare_numerically_at_any_length` (both directions of
+  precedence and `is_newer_than`, past 64 bits with equal digit counts too, leading zeros a tie that
+  is still two releases).
 - **Plain http in test mode goes only to a loopback IP literal (F57-9, found by the acceptance
   review).** Wave D6 accepted `http://` under `CODEX_CONSULT_TEST_MODE=1` for `127.0.0.0/8`, `::1`
   and the NAME `localhost`; a name is resolved by the system resolver at connect time, which need not
@@ -694,8 +724,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   Linux and macOS a directory swapped in before the identity check can receive checkout files
   before the seat is refused; nothing is staged and no reviewer starts. The temp directory is the
   operator's own (in a shared `/tmp` the sticky bit keeps other users from renaming or removing
-  the claimed directory), so a swap needs the operator's own rights: the check is against a
-  leftover or mistaken path, not against a concurrent actor with those rights. Tests:
+  the claimed directory), so a swap needs a writer of the operator's own temp directory: the
+  check is against a leftover or mistaken path, and a temp directory other accounts can write to
+  without a sticky bit is outside what this release promises. Tests:
   `a_claimed_worktree_directory_replaced_before_the_check_refuses_and_is_kept` (a replacement
   directory with content swapped in at the race points `worktree-claim`, `worktree-add` and
   `worktree-checkout`: refused, the replacement and its content preserved, nothing staged, no
@@ -852,6 +883,14 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   seats no model on such a file system and the repair of agent files changes nothing there; both
   say why. Test: `contain::tests::without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was`
   (it replaces `without_an_exchange_publication_falls_back_to_the_rename_and_says_so`).
+- **A file that is not there is created without an exchange, wherever (F67-3).** A system
+  without an atomic exchange answered "unsupported" before it looked at the file, so since the
+  refusal above even a FIRST write - which displaces nothing - was refused there. A write whose
+  file does not exist is now created by a hard link from its temporary name (it fails when a file
+  appeared meanwhile, and the write is then refused like any other), with or without an exchange
+  (`contain::publish_exchange`). The tests that need a real exchange say so and return on a target
+  that has none; `without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was` makes its
+  first write under the no-exchange hook.
 - **A linked task directory refuses the run (F57-6).** A run start checked
   and prepared the collab ROOT through handles; the callers then appended `<task>/handoffs` and
   created it with `create_dir_all`, so a task directory that already was a link (no race needed)
@@ -898,8 +937,13 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   (Acceptance review 62, answer 3 - what is promised, said plainly.) The promise is about a link
   that EXISTS when the run starts: one that arrived with a clone, was left in the tree, or sits
   under a name the operator typed. It is not containment by directory identity for the whole run:
-  whoever can swap a directory of the working tree WHILE a run writes already has the operator's
-  own rights over the repository and its records and gains nothing by redirecting them. Tests:
+  the run's later writes go by path, so they need TRUSTED WRITERS on the directories they pass
+  through - the working tree and the collab directory's parents. (Acceptance review 67, F67-4:
+  as first written this said that whoever can swap such a directory already has the operator's
+  rights. That holds for a checkout only its operator can write; in a shared checkout a writer of
+  one parent directory has no right to the operator's other directories, and a swapped directory
+  could send a run's records where that writer could not write himself. Such a checkout is outside
+  what this release promises.) Tests:
   `a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing` (the task
   directory, `handoffs/` and `work/` as links under `.c3/collab` and, under the move lock,
   `.eck/collab`; a panel member's check; a normal start; under `.collab/` a linked task directory,

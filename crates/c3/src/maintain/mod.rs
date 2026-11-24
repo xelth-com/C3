@@ -1006,7 +1006,10 @@ fn maintain_one_engine(
 /// the checked target. Returns (report clause without the name, state action, RESOLVED) - (R1)
 /// `resolved` is true only when the engine is left in a known-good state (the target smoked clean, or
 /// the previous version is verified restored); every failure path returns false so the caller keeps
-/// the pending-update record for the next pass to recover. (F65-2) A readable release other than
+/// the pending-update record for the next pass to recover. (F67-1) A passing smoke of the target
+/// counts only when `--version` read again after it still shows exactly the target (the recovery's
+/// final identity check, [`changed_during_smoke`]); otherwise the action is unresolved and names
+/// what is installed, and the record is kept. (F65-2) A readable release other than
 /// the target and the previous one, left by the updater, is smoked in the same pass and credited
 /// to itself (the recovery's third-version path); then `resolved` is that path's answer (a pass on
 /// it, or the previous version verified back).
@@ -1151,6 +1154,18 @@ fn update_and_verify(
         return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
     }
 
+    // (F67-1) The recovery's final identity check: the pass belongs to the release that ran, so
+    // `--version` read again after the smoke must still show exactly the target measured before it.
+    // A release that changed (or became unreadable) during the smoke gets no success wording and is
+    // credited with nothing; the pending record is KEPT, and the next pass's recovery measures what
+    // is installed first and smokes it for itself (a third version), as the recovery does when its
+    // own smoke sees the version change.
+    if let Some(drift) = changed_during_smoke(env, launcher, latest_v) {
+        let msg = format!("unresolved: {drift}");
+        println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
+        return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
+    }
+
     let msg = "ok".to_string();
     println!("c3 maintain: {name} {installed_text} -> {after_text} {msg}");
     (
@@ -1158,6 +1173,29 @@ fn update_and_verify(
         format!("{installed_text} -> {after_text} ok"),
         true,
     )
+}
+
+/// (F57-3, F67-1) The final identity check after a PASSING smoke, shared by the recovery and the
+/// ordinary update: `--version` read again must still show exactly the release measured before the
+/// smoke (`measured`). `None` when it does; otherwise the clause that says what is installed now,
+/// exactly (`unknown` when unreadable) - the smoke's pass is then credited to no release.
+fn changed_during_smoke(
+    env: &dyn Env,
+    launcher: &str,
+    measured: &version::CliVersion,
+) -> Option<String> {
+    let after = engine::installed_version(env, launcher);
+    if after.as_ref().is_some_and(|a| a.same_release(measured)) {
+        return None;
+    }
+    let now_t = after
+        .as_ref()
+        .map(|v| v.text().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    Some(format!(
+        "the installed version changed during the smoke ({} -> {now_t}), so its pass is credited to no version",
+        measured.text()
+    ))
 }
 
 /// Resolve a pending update left by an interrupted pass. Returns (report clause, state action,
@@ -1311,16 +1349,8 @@ fn handle_pending_smoke(
         smoke::Smoke::Pass => {
             // (F57-3) the pass belongs to the version that ran: `--version` again after the smoke
             // must still show the version measured before it - (F62-1) the same exact release
-            let after = engine::installed_version(env, launcher);
-            if !after.as_ref().is_some_and(|a| a.same_release(inst)) {
-                let after_t = after
-                    .as_ref()
-                    .map(|v| v.text().to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let msg = format!(
-                    "pending update to {} unresolved: the installed version changed during the smoke ({installed_text} -> {after_t}), so its pass is credited to no version",
-                    p.target
-                );
+            if let Some(drift) = changed_during_smoke(env, launcher, inst) {
+                let msg = format!("pending update to {} unresolved: {drift}", p.target);
                 println!("c3 maintain: {name} {installed_text} - {msg}");
                 return Done(format!("{installed_text} {msg}"), msg, false);
             }

@@ -93,7 +93,14 @@ switch ($role) {
       # FAKE_GROK_SLEEP: the version probe sleeps this many seconds, so a pass spawned by the hook
       # takes measurable wall time (used to prove the hook returns without waiting for the pass).
       if ($env:FAKE_GROK_SLEEP) { Start-Sleep -Seconds ([int]$env:FAKE_GROK_SLEEP) }
-      Out-Line "grok $cur"; exit 0
+      Out-Line "grok $cur"
+      # FAKE_GROK_SWITCH_ON / FAKE_GROK_SWITCH_TO: right after a probe has REPORTED the version
+      # SWITCH_ON, the installed version becomes SWITCH_TO - a concurrent update between the
+      # post-install probe (which sees the target) and the smoke that follows it.
+      if ($env:FAKE_GROK_SWITCH_ON -and $vf -and $cur -eq [string]$env:FAKE_GROK_SWITCH_ON) {
+        Set-Content -LiteralPath $vf -Value ([string]$env:FAKE_GROK_SWITCH_TO) -NoNewline
+      }
+      exit 0
     }
     if ($argv.Count -ge 1 -and $argv[0] -eq 'models') { Out-Line '  * grok-4.7 (default)'; Out-Line '  - grok-4.6'; exit 0 }
     exit 0

@@ -95,11 +95,16 @@ impl CliVersion {
 
 /// Semver's pre-release precedence: dot-separated identifiers left to right, numeric ones
 /// numerically, others in ASCII order, a numeric identifier below a non-numeric one, and of two runs
-/// equal so far the shorter one first (`alpha` < `alpha.1` < `beta` < `rc.2` < `rc.10`).
+/// equal so far the shorter one first (`alpha` < `alpha.1` < `beta` < `rc.2` < `rc.10`). (F67-2) A
+/// numeric identifier is recognised by its digits alone, never by a machine-integer conversion, so
+/// one of any length compares numerically: by its count of significant digits (leading zeros
+/// stripped), then digit by digit (`18446744073709551616` < `100000000000000000000`).
 fn cmp_pre_release(a: &str, b: &str) -> Ordering {
-    fn numeric(s: &str) -> Option<u64> {
+    /// The significant digits of an all-digit identifier (`"007"` -> `"7"`, `"0"` -> `""`), or
+    /// `None` when the identifier is not numeric.
+    fn numeric(s: &str) -> Option<&str> {
         if !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()) {
-            s.parse().ok()
+            Some(s.trim_start_matches('0'))
         } else {
             None
         }
@@ -112,7 +117,9 @@ fn cmp_pre_release(a: &str, b: &str) -> Ordering {
             (None, Some(_)) => return Ordering::Less,
             (Some(_), None) => return Ordering::Greater,
             (Some(x), Some(y)) => match (numeric(x), numeric(y)) {
-                (Some(m), Some(n)) => m.cmp(&n),
+                // more significant digits is the larger number; equal counts compare digit by
+                // digit, which for ASCII digits is the byte order
+                (Some(m), Some(n)) => m.len().cmp(&n.len()).then_with(|| m.cmp(n)),
                 (Some(_), None) => Ordering::Less,
                 (None, Some(_)) => Ordering::Greater,
                 (None, None) => x.cmp(y),
@@ -506,6 +513,39 @@ mod tests {
         assert!(!b1.same_release(&b2) && !b1.same_release(&fin));
         // a pre-release with build metadata is still a pre-release
         assert!(fin.is_newer_than(&v("1.0.80-rc.1+b.2")));
+    }
+
+    /// (F67-2, the reviewer's RC2) Numeric pre-release identifiers compare numerically at any
+    /// length - by the count of significant digits, then digit by digit - never lexically once
+    /// they no longer fit a machine integer; numeric still sorts below alphanumeric.
+    #[test]
+    fn numeric_pre_release_identifiers_compare_numerically_at_any_length() {
+        let small = v("1.0.0-18446744073709551616"); // 2^64: one past u64
+        let large = v("1.0.0-100000000000000000000"); // 10^20
+        assert_eq!(small.precedence(&large), Ordering::Less);
+        assert_eq!(large.precedence(&small), Ordering::Greater);
+        assert!(large.is_newer_than(&small));
+        assert!(!small.is_newer_than(&large));
+        // equal counts of significant digits compare digit by digit, past u64 too
+        assert!(
+            v("1.0.0-rc.18446744073709551617").is_newer_than(&v("1.0.0-rc.18446744073709551616"))
+        );
+        // leading zeros are not significant: a tie in ordering, still two releases
+        let zeros = v("1.0.0-rc.007");
+        assert_eq!(zeros.precedence(&v("1.0.0-rc.7")), Ordering::Equal);
+        assert!(!zeros.same_release(&v("1.0.0-rc.7")));
+        assert!(v("1.0.0-rc.1").is_newer_than(&v("1.0.0-rc.0")));
+        // ordinary numeric identifiers still compare numerically, in both directions
+        assert!(v("1.0.0-rc.10").is_newer_than(&v("1.0.0-rc.2")));
+        assert!(!v("1.0.0-rc.2").is_newer_than(&v("1.0.0-rc.10")));
+        assert_eq!(
+            v("1.0.0-rc.2").precedence(&v("1.0.0-rc.10")),
+            Ordering::Less
+        );
+        // numeric below alphanumeric, whatever the length of the number
+        assert!(v("1.0.0-alpha").is_newer_than(&v("1.0.0-100000000000000000000")));
+        assert!(v("1.0.0-rc.a").is_newer_than(&v("1.0.0-rc.99999999999999999999999")));
+        assert!(!v("1.0.0-99").is_newer_than(&v("1.0.0-a")));
     }
 
     #[test]

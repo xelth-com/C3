@@ -735,14 +735,26 @@ pub(crate) fn publish_exchange(p: &Publish<'_>, basis: &[u8]) -> Result<Exchange
             remove_temp(p),
         ))
     };
-    if c3_core::test_hooks::hook(NO_EXCHANGE_HOOK).is_some() {
-        return refuse("the exchange is switched off by a test hook".to_string());
-    }
+    let no_exchange = c3_core::test_hooks::hook(NO_EXCHANGE_HOOK).is_some();
     let mut backup = p.tmp.to_os_string();
     backup.push(".displaced");
     // a file that disappears and reappears between the tries is given three rounds
     for _ in 0..3 {
-        match exchange(p.dir, p.tmp, p.leaf, &backup) {
+        let tried = if no_exchange {
+            Exchange::Unsupported("the exchange is switched off by a test hook".to_string())
+        } else {
+            exchange(p.dir, p.tmp, p.leaf, &backup)
+        };
+        // (acceptance review 67, F67-3) a file that is NOT THERE needs no exchange - nothing can
+        // be displaced: it is created without replacing anything, also where no exchange exists
+        // (a system without one answers "unsupported" before it looks at the file)
+        let tried = match tried {
+            Exchange::Unsupported(_) if matches!(entry(p.dir, p.leaf), Ok(None)) => {
+                Exchange::Missing
+            }
+            other => other,
+        };
+        match tried {
             Exchange::Swapped(at) => {
                 return Ok(Exchanged {
                     how: Publication::Exchange,
@@ -1837,6 +1849,8 @@ pub(crate) mod tests {
 
     /// A [`publish_exchange`] of `bytes` onto `<root>/inner/own.txt` whose check (at both stages)
     /// requires the file to read as `basis` - the comparison of the roster writer and the repair.
+    /// (F67-3) Only for a target that HAS an atomic exchange: elsewhere the write is refused, and
+    /// a test that calls this returns first ([`HAS_EXCHANGE`]).
     fn exchange_own(root: &Root, tmp: &str, bytes: &[u8], basis: &[u8]) -> Exchanged {
         let (dir, leaf) = root.open_parent(Path::new("inner/own.txt"), false).unwrap();
         let check = |_: Stage| -> Result<(), String> {
@@ -1910,6 +1924,11 @@ pub(crate) mod tests {
 
     #[test]
     fn publish_exchange_keeps_an_edit_saved_before_the_exchange_and_nothing_without_one() {
+        if !HAS_EXCHANGE {
+            // (F67-3) no atomic exchange on this target: the write is refused, which
+            // `without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was` proves here too
+            return;
+        }
         let (base, root_p, _outside) = scratch("exchange");
         let root = Root::open(&root_p).unwrap();
         let file = root_p.join("inner").join("own.txt");
@@ -2012,8 +2031,8 @@ pub(crate) mod tests {
         drop(edit);
         assert_eq!(std::fs::read(&file).unwrap(), b"EDITED");
         assert_eq!(names(&root_p.join("inner")), vec!["own.txt".to_string()]);
-        drop(_off);
-        // a first write: nothing to displace, nothing replaced
+        // (F67-3) a first write needs no exchange: nothing to displace, nothing replaced - it is
+        // made WITHOUT one too (the hook is still on)
         let done = publish_exchange(
             &Publish {
                 dir: &dir,
@@ -2027,9 +2046,8 @@ pub(crate) mod tests {
             b"",
         )
         .unwrap();
-        if HAS_EXCHANGE {
-            assert_eq!(done.how, Publication::Created);
-        }
+        drop(_off);
+        assert_eq!(done.how, Publication::Created);
         assert_eq!(done.kept, None);
         assert_eq!(
             std::fs::read(root_p.join("inner").join("first.txt")).unwrap(),
@@ -2048,7 +2066,7 @@ pub(crate) mod tests {
     // `renamex_np(RENAME_SWAP)` relative to the directory's descriptor - an edit saved before it is
     // kept byte for byte, the new file carries the permission bits the caller gave it, and the
     // directory renamed away meanwhile (the descriptor still names it) receives the publication.
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
     #[test]
     fn publish_exchange_on_unix_swaps_relative_to_the_directory_descriptor() {
         use std::os::unix::fs::PermissionsExt;

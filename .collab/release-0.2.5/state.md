@@ -1304,3 +1304,38 @@ swap -> xelth.com/C3 page after the tag.
 - ChatGPT week: 90 % (a peer's two passes; its last one ended 20:24 with ACCEPT), the 5-hour
   window 44 % until 00:16. An acceptance run is what the reserve is kept for (the peer's run at
   86 % was not held).
+
+## 2026-11-24 22:10 - Astra's third pass launched (on the operator's word)
+
+- Head c4a74af (brief 66 above 82d2abe). Quota at the dry run: 5-hour window 44 % until 00:16,
+  week 90 % until Nov 29; preflight available - the reserve does not hold an acceptance run.
+- Launched 22:10 with `scratchpad/bin/c3-review9.exe`: `--purpose acceptance --mode new --brief
+  66 --reply-name acceptance-delta-2 --rev HEAD --detach`, no `--spend-reserve`.
+- CI for 82d2abe / c4a74af running. `target/debug` removed again (disk).
+
+## 2026-11-24 22:17 - Astra's third pass: REJECT (handoff 67, n=46) - ONE blocker, three minors
+
+- 383 s; week 90 % -> 93 %. All six F62 rows and the exchange refusal: closed. The two path
+  limits "do not independently block the tag for an operator-controlled checkout and temp
+  directory".
+- **F67-1** (blocker): the ordinary update path trusted its post-install probe through the whole
+  smoke - `-> target ok` and the record cleared without reading the version again (the recovery
+  did read it). **F67-2** (minor): numeric prerelease identifiers beyond u64 sorted by text.
+  **F67-3** (minor): exchange tests unwrap success where the contract now refuses; a first write
+  was refused on a system without an exchange. **F67-4** (minor): the CHANGELOG equated "can swap
+  a directory" with "has the operator's rights".
+
+## 2026-11-24 22:42 - F67-1..4 fixed and verified; the fourth pass
+
+- Wave B1, second follow-up (type-check only): `maintain::changed_during_smoke` - the recovery's
+  after-smoke identity check, now also on the ordinary target path: a release that changed or
+  became unreadable during a passing smoke gets no success line (`... unresolved: the installed
+  version changed during the smoke (1.0.80 -> 1.0.81), so its pass is credited to no version`),
+  the record is kept, nothing is rolled back; the next pass's recovery smokes what is installed
+  for itself. Numeric prerelease identifiers compare by digit count, then digits. Three tests.
+- Coordinator: a file that is not there is created by a hard link with or without an exchange;
+  the no-exchange hook emulates an unsupported exchange instead of refusing at once; tests that
+  need a real exchange return where there is none; the CHANGELOG states the operating assumption
+  (trusted writers on the directories a run's later writes pass through).
+- Verified in the foreground (a cold build): fmt clean, clippy -D warnings clean, c3 lib 968,
+  c3-core 257, c3-cli maintain 56. CI for 82d2abe and c4a74af: GREEN on all three jobs.
