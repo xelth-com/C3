@@ -1,0 +1,113 @@
+# A measuring tool, started by hand only: how often does one c3-cli test fail on a Windows runner?
+#
+# Why it exists: the Windows job of `ci` failed twice (runs 45389095446 and 45438780916) in the
+# same test at the same line - `claude_engine.rs`,
+# `a_decomposed_config_dir_inside_an_nfc_repository_refuses_the_endpoint_run`, its third
+# `c3 consult`: the fake launcher's `claude --version` "did not finish within 15 s". It never
+# fails on the development machine. Two loops give a rate instead of a guess:
+#   1. the one test alone, N times;
+#   2. the whole test binary with one test thread (the way `ci` runs it), M times.
+# The job always ends green: its log is the result.
+name: flake-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      binary:
+        description: "c3-cli test binary"
+        default: "claude_engine"
+      test:
+        description: "the test's exact name"
+        default: "a_decomposed_config_dir_inside_an_nfc_repository_refuses_the_endpoint_run"
+      alone:
+        description: "runs of the one test alone"
+        default: "40"
+      whole:
+        description: "runs of the whole binary, one test thread"
+        default: "8"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 0
+
+jobs:
+  loop:
+    name: windows-latest / loop one test
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustc --version && cargo --version
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+      # the same exclusions as the `ci` job, so the numbers describe that job
+      - name: Keep the virus scanner off the build and scratch directories
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE", "$env:RUNNER_TEMP", "$env:TEMP", "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+          Add-MpPreference -ExclusionProcess "cargo.exe", "rustc.exe", "c3.exe", "git.exe", "powershell.exe", "pwsh.exe"
+      - name: Cache target (default features)
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: target-default-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: target-default-${{ runner.os }}-
+      - name: Build the test binary
+        shell: pwsh
+        env:
+          BINARY: ${{ inputs.binary }}
+        run: cargo test -p c3-cli --test $env:BINARY --no-run
+      - name: The one test alone
+        shell: pwsh
+        env:
+          BINARY: ${{ inputs.binary }}
+          TEST: ${{ inputs.test }}
+          RUNS: ${{ inputs.alone }}
+        run: |
+          $fail = 0
+          for ($i = 1; $i -le [int]$env:RUNS; $i++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            cargo test -p c3-cli --test $env:BINARY $env:TEST -- --exact *> out.txt
+            $ok = $LASTEXITCODE -eq 0
+            "{0,3} {1,6:n1} s {2}" -f $i, $sw.Elapsed.TotalSeconds, $(if ($ok) { 'ok' } else { 'FAILED' })
+            if (-not $ok) {
+              $fail++
+              Get-Content out.txt | Select-String -Pattern 'panicked|did not finish|left:|right:|is available' | Select-Object -First 8 | ForEach-Object { "      " + $_.Line }
+            }
+          }
+          "alone: $fail failed of $env:RUNS"
+          exit 0
+      - name: The whole binary, one test thread
+        shell: pwsh
+        env:
+          BINARY: ${{ inputs.binary }}
+          RUNS: ${{ inputs.whole }}
+        run: |
+          $fail = 0
+          for ($i = 1; $i -le [int]$env:RUNS; $i++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            cargo test -p c3-cli --test $env:BINARY --no-fail-fast -- --test-threads=1 *> out.txt
+            $ok = $LASTEXITCODE -eq 0
+            "{0,3} {1,6:n1} s {2}" -f $i, $sw.Elapsed.TotalSeconds, $(if ($ok) { 'ok' } else { 'FAILED' })
+            if (-not $ok) {
+              $fail++
+              Get-Content out.txt | Select-String -Pattern '\.\.\. FAILED|panicked|did not finish|left:|right:|is available' | Select-Object -First 12 | ForEach-Object { "      " + $_.Line }
+            }
+          }
+          "whole binary: $fail failed of $env:RUNS"
+          exit 0

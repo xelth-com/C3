@@ -1139,3 +1139,27 @@ swap -> xelth.com/C3 page after the tag.
   c3-cli kimi_engine 26, work 30, panel_light_required 6.
 - Findings store: 242 - 225 implemented, 15 decided (wontfix), 2 rejected, none proposed.
 - CI for 8087bad (run 45438780916): see the next entry.
+
+## 2026-11-24 18:37 - fe877b2 green in CI; brief 58 names the three code commits; the Windows flake has a second log
+
+- fe877b2 pushed 18:16; CI run 45446676389 GREEN on all three jobs at the first attempt (18:36).
+  Seen live with its build: a scratch repository whose `.collab` is a junction out of it -
+  `c3 consult` refuses (".collab is a link ... nothing was started"), the target untouched; the
+  8087bad build said "collab dir outside the repository" in a dry run of the same command.
+- CI for 8087bad (run 45438780916): both Linux jobs green, Windows FAILED in
+  `claude_engine.rs::a_decomposed_config_dir_inside_an_nfc_repository_refuses_the_endpoint_run`
+  at its third consult ("`claude --version` did not finish within 15 s") - the same test and line
+  as on d476520. The virus-scanner exclusion did not cure it. From the log: the binary started
+  16:44:05, the test failed 17.4 s later, so its first two consults (each with a `--version`
+  probe, which runs before the refusal they assert) took about 2 s and only the third probe hit
+  the limit; the job runs one test thread and this is the first test of its binary. Cause not
+  known. Rerun of the failed job started (attempt 2). Recorded in the tech-debt file with what to
+  try; a hand-started workflow `.github/workflows/flake-probe.yml` loops the one test (and the
+  whole binary, one thread) on a Windows runner to get a rate.
+- Brief 58 updated: three code commits (ea74a4d, 8087bad, fe877b2), the F57-6 row with the
+  resolver's rule, the evidence of both commits, the two CI results, the live observations, the
+  outcome of the two diff reviews.
+- Launch at 19:11 (after a dry-run look at the quota):
+  `scratchpad/bin/c3-review9.exe consult --task release-0.2.5 --purpose acceptance --mode new
+  --brief .collab/release-0.2.5/handoffs/58-claude-acceptance-delta.md --reply-name
+  acceptance-delta --rev HEAD --detach` - never `--spend-reserve`.
