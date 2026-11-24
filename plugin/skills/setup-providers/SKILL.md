@@ -216,7 +216,8 @@ ignores — C3 reads and validates it and appends the reviewer after the plugin'
 }
 ```
 
-- `base_url` must be `https://` (parsed strictly: a host, no userinfo/query/fragment);
+- `base_url` must be `https://` (parsed strictly: a host, no userinfo/query/fragment; plain
+  http only to a loopback host under `CODEX_CONSULT_TEST_MODE=1`, a test harness's listener);
   `key_env` is the *name* of the variable the key is read from (a valid environment-variable
   name), never the key. **c3 sends a variable only to the host it belongs to:** a known key
   (`OPENROUTER_API_KEY`→openrouter.ai, `OPENAI_API_KEY`→api.openai.com, and the Anthropic /

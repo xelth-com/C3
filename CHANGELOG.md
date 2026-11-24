@@ -1067,6 +1067,22 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   starts instead of measuring the live tree. Test: a repository whose revision, HEAD and uncommitted
   file differ - the pack shows the revision's file, never the live one, carries the patch, and is
   refused with a too-small budget or without a worktree.
+- **The http engine under `--rev` is proved end to end (F19-1).** The fix above was covered at unit
+  level only: the pack builder was shown to read the revision's worktree, but no test drove the
+  `c3` binary and looked at what reaches the reviewer's endpoint. The test
+  `an_http_review_under_rev_sends_the_revision_not_the_live_tree` does: a scratch repository whose
+  committed file differs from the live one, plus an untracked file, is reviewed with `c3 consult
+  --engine http --rev HEAD` and with `--diff HEAD~1..HEAD` against a loopback listener of the test
+  that records the request. The body holds the revision's content and the patch of the range and
+  nothing of the live tree, the request carries no `Authorization` header (the proxy auth mode for
+  that host), the pack kept in the handoffs is the request's user message, and the ledger names the
+  reviewed revision (`worktree.sha`, `reviewed_revision`, the `diff` record). For that, `base_url`
+  (`--base-url` and a roster entry alike) accepts plain `http://` in one case only: a loopback host
+  (`127.0.0.0/8`, `::1`, `localhost` - the URL parser's host, so `127.0.0.1.example.com` is not one)
+  while `CODEX_CONSULT_TEST_MODE=1` is set, the rule the telemetry intake already follows. It is a
+  test harness's own listener on the same machine, not a way to reach any other host over plain
+  http: without test mode, or for any other host, the URL is refused as before (`base_url must be
+  https://`). Unit test: `s2_plain_http_only_to_a_loopback_host_in_test_mode`.
 - **A `--diff` patch never carries a secret off the machine (F19-2, F18-4, F20-6).** A one-revision
   `--diff` put every untracked, not-ignored file into the patch handed to the reviewer, a remote one
   included. Every patch now passes through the redactor packs for remote models use: a

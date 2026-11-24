@@ -16,8 +16,9 @@
 //!
 //! C3 validates these with the same rules and wording style as an ordinary `reviewers[]` entry
 //! (a non-empty provider/model without surrounding blanks or the reserved delimiters, a clean
-//! `lab`, slug `roles`), plus the API-path additions: `base_url` must be `https://`, `key_env`
-//! must be a valid environment-variable NAME, header names/values carry no CR or LF and none is
+//! `lab`, slug `roles`), plus the API-path additions: `base_url` must be `https://` (plain http
+//! only to a loopback host in test mode, [`parse_base_url`]), `key_env` must be a valid
+//! environment-variable NAME, header names/values carry no CR or LF and none is
 //! named `Authorization` (the engine sets that itself from the environment). The reviewers are
 //! then appended AFTER the plugin's entries, their positions continuing the numbering, so the
 //! panel and `c3 providers` see them exactly as they see the plugin's own entries.
@@ -123,7 +124,23 @@ const RESERVED_HEADERS: &[&str] = &[
 /// S1 key-to-host binding). The scheme must be exactly `https`, the host non-empty, with no
 /// userinfo, query or fragment; a port and a path are allowed; no control characters; at most
 /// 2048 bytes. The host is the URL parser's host, never a substring of the raw string.
+///
+/// (0.2.5 D6) One exception, for a test endpoint on this machine: plain `http` is accepted when
+/// the host is a LOOPBACK host (`127.0.0.0/8`, `::1`, `localhost` - the parser's host, so a name
+/// that only looks like one, such as `127.0.0.1.example.com`, is not) AND test mode is on
+/// (`CODEX_CONSULT_TEST_MODE=1`, [`crate::test_hooks::mode_on`]). That is a harness's own listener:
+/// nothing leaves the machine. It is the rule the telemetry intake already follows (`c3`'s
+/// `telemetry::hub`: plain http only to a loopback intake in test mode), applied to the http
+/// reviewer so an end-to-end test can record what the binary sends. It is not a way to reach any
+/// other host over plain http: every other non-https URL is refused, test mode or not, with the
+/// same message as before.
 pub fn parse_base_url(raw: &str) -> Result<String, String> {
+    parse_base_url_in(raw, crate::test_hooks::mode_on())
+}
+
+/// [`parse_base_url`] with the test-mode switch passed in (the unit tests drive both states without
+/// touching the process environment, which the tests running in parallel share).
+fn parse_base_url_in(raw: &str, test_mode: bool) -> Result<String, String> {
     if raw.len() > 2048 {
         return Err(format!(
             "base_url is too long ({} bytes; at most 2048)",
@@ -139,7 +156,7 @@ pub fn parse_base_url(raw: &str) -> Result<String, String> {
     // (S6) The url crate's parse error can echo the input, so it is dropped: the value may be a
     // pasted secret.
     let u = url::Url::parse(raw).map_err(|_| "base_url is not a valid URL".to_string())?;
-    if u.scheme() != "https" {
+    if u.scheme() != "https" && !(u.scheme() == "http" && test_mode && is_loopback_host(&u)) {
         return Err("base_url must be https://".to_string());
     }
     if !u.username().is_empty() || u.password().is_some() {
@@ -154,6 +171,17 @@ pub fn parse_base_url(raw: &str) -> Result<String, String> {
     match u.host_str() {
         Some(h) if !h.is_empty() => Ok(h.to_ascii_lowercase()),
         _ => Err("base_url must have a host".to_string()),
+    }
+}
+
+/// (0.2.5 D6) Whether the URL's host - as the URL parser reads it, never a substring - is a
+/// loopback host: an IPv4 address in `127.0.0.0/8`, the IPv6 `::1`, or the name `localhost`.
+fn is_loopback_host(u: &url::Url) -> bool {
+    match u.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        None => false,
     }
 }
 
@@ -1053,6 +1081,60 @@ mod tests {
             "control char"
         );
         assert!(parse_base_url(&format!("https://{}", "a".repeat(3000))).is_err());
+    }
+
+    #[test]
+    fn s2_plain_http_only_to_a_loopback_host_in_test_mode() {
+        const REFUSED: &str = "base_url must be https://";
+        // a loopback host: refused without test mode, accepted with it (the host as parsed)
+        for url in [
+            "http://127.0.0.1:8080/v1",
+            "http://127.9.9.9/v1",
+            "http://[::1]:9/v1",
+            "http://localhost:1234/v1",
+            "http://LocalHost/v1",
+        ] {
+            assert_eq!(
+                parse_base_url_in(url, false).unwrap_err(),
+                REFUSED,
+                "{url} without test mode"
+            );
+            assert!(parse_base_url_in(url, true).is_ok(), "{url} in test mode");
+        }
+        assert_eq!(
+            parse_base_url_in("http://127.0.0.1:8080/v1", true).unwrap(),
+            "127.0.0.1"
+        );
+        assert_eq!(
+            parse_base_url_in("http://LocalHost/v1", true).unwrap(),
+            "localhost"
+        );
+        // any other host, or another scheme, is refused in both states - including a host that
+        // only LOOKS like loopback
+        for url in [
+            "http://openrouter.ai/api/v1",
+            "http://10.0.0.1/v1",
+            "http://0.0.0.0/v1",
+            "http://[::2]/v1",
+            "http://127.0.0.1.example.com/v1",
+            "http://localhost.example.com/v1",
+            "ftp://127.0.0.1/v1",
+            "ws://localhost/v1",
+        ] {
+            for test_mode in [false, true] {
+                assert_eq!(
+                    parse_base_url_in(url, test_mode).unwrap_err(),
+                    REFUSED,
+                    "{url} (test mode {test_mode})"
+                );
+            }
+        }
+        // the other S2 rules still bind a loopback http URL in test mode
+        assert!(parse_base_url_in("http://u:p@127.0.0.1/v1", true).is_err());
+        assert!(parse_base_url_in("http://127.0.0.1/v1?a=b", true).is_err());
+        assert!(parse_base_url_in("http://127.0.0.1/v1#f", true).is_err());
+        // https is unaffected by the switch
+        assert!(parse_base_url_in("https://openrouter.ai/api/v1", false).is_ok());
     }
 
     #[test]

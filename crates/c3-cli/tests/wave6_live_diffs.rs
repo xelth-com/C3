@@ -12,13 +12,17 @@
 //!    to the intake without another run - the run does not wait for it and the sender holds none of
 //!    the run's handles - with the allow-listed environment only; a rating does the same.
 //!
-//! Nothing reaches a real intake or provider: the intake is a loopback listener of this test (or
-//! telemetry is off), `C3_PRIORS=off`, and HOME/USERPROFILE/CODEX_HOME are scratch directories.
+//! And (0.2.5 D6, review blocker F19-1) the http engine under `--rev`: what the binary sends to the
+//! reviewer's endpoint is the revision's tree (and the `--diff` patch), never the live tree.
+//!
+//! Nothing reaches a real intake or provider: the intake and the http reviewer's endpoint are
+//! loopback listeners of this test (or telemetry is off), `C3_PRIORS=off`, and
+//! HOME/USERPROFILE/CODEX_HOME are scratch directories.
 //! Windows only (the fake codex is a `.cmd` wrapper around a PowerShell script).
 #![cfg(windows)]
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
@@ -58,6 +62,17 @@ fn git(repo: &Path, args: &[&str]) {
         .status()
         .expect("git on PATH");
     assert!(st.success(), "git {args:?}");
+}
+
+fn git_out(repo: &Path, args: &[&str]) -> String {
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("git on PATH");
+    assert!(o.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
 }
 
 const FAKE_CMD: &str = "@echo off\r\nset \"FAKE_CODEX_ARGS=%*\"\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-codex.ps1\"\r\nexit /b %ERRORLEVEL%\r\n";
@@ -330,10 +345,50 @@ fn the_providers_header_counts_this_repositorys_consultations_only() {
 
 // ------------------------------------------------------------------ 4. the detached sender
 
-/// One HTTP request the intake received.
+/// One HTTP request a loopback listener of this file received.
 struct Request {
     line: String,
+    /// The header lines as sent (`name: value`).
+    headers: Vec<String>,
     body: String,
+}
+
+/// Read one request from `stream` and answer it `200` with the JSON `body`.
+fn answer(stream: TcpStream, body: &str) -> Request {
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut stream = stream;
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut first = String::new();
+    let _ = reader.read_line(&mut first);
+    let mut content_length = 0usize;
+    let mut headers = Vec::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+            content_length = v.trim().parse().unwrap_or(0);
+        }
+        headers.push(line.trim_end().to_string());
+    }
+    let mut buf = vec![0u8; content_length];
+    let _ = reader.read_exact(&mut buf);
+    let resp = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = stream.write_all(resp.as_bytes());
+    let _ = stream.flush();
+    Request {
+        line: first.trim().to_string(),
+        headers,
+        body: String::from_utf8_lossy(&buf).to_string(),
+    }
 }
 
 /// Accept requests on `listener` until `count` arrived or `deadline` passed, answering each with
@@ -343,45 +398,10 @@ fn serve(listener: &TcpListener, count: usize, deadline: Duration) -> Vec<Reques
     let until = Instant::now() + deadline;
     let mut out = Vec::new();
     while out.len() < count && Instant::now() < until {
-        let stream = match listener.accept() {
-            Ok((s, _)) => s,
-            Err(_) => {
-                std::thread::sleep(Duration::from_millis(50));
-                continue;
-            }
-        };
-        stream.set_nonblocking(false).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .unwrap();
-        let mut stream = stream;
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
-        let mut first = String::new();
-        let _ = reader.read_line(&mut first);
-        let mut content_length = 0usize;
-        let mut line = String::new();
-        loop {
-            line.clear();
-            if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
-                break;
-            }
-            if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                content_length = v.trim().parse().unwrap_or(0);
-            }
+        match listener.accept() {
+            Ok((s, _)) => out.push(answer(s, r#"{"ok":true}"#)),
+            Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
-        let mut buf = vec![0u8; content_length];
-        let _ = reader.read_exact(&mut buf);
-        let body = r#"{"ok":true}"#;
-        let resp = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        let _ = stream.write_all(resp.as_bytes());
-        let _ = stream.flush();
-        out.push(Request {
-            line: first.trim().to_string(),
-            body: String::from_utf8_lossy(&buf).to_string(),
-        });
     }
     out
 }
@@ -504,5 +524,168 @@ fn a_run_with_telemetry_off_starts_no_sender() {
     assert_eq!(run.status.code(), Some(0), "{}", text(&run));
     assert!(serve(&listener, 1, Duration::from_secs(3)).is_empty());
     assert!(!e.telemetry_dir().join("last-flush.json").exists());
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
+// ------------------------------------------------------------------ 5. the http engine under --rev
+
+/// A loopback OpenAI-compatible endpoint for ONE `chat/completions` request: the request is
+/// recorded and answered with `reply` as the assistant's message.
+fn reviewer_endpoint(reply: &str) -> (String, std::sync::mpsc::Receiver<Request>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let completion = serde_json::json!({
+        "id": "gen-1",
+        "choices": [{ "message": { "role": "assistant", "content": reply }, "finish_reason": "stop" }],
+        "usage": { "prompt_tokens": 120, "completion_tokens": 45, "total_tokens": 165 }
+    })
+    .to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        if let Ok((stream, _)) = listener.accept() {
+            let _ = tx.send(answer(stream, &completion));
+        }
+    });
+    (base, rx)
+}
+
+/// One `c3 consult --engine http` run of `task` (its brief in the task's handoffs) against a fresh
+/// loopback endpoint, with `extra` flags: the run, the one request the endpoint received, and the
+/// request's messages.
+fn http_review(e: &Env, task: &str, extra: &[&str]) -> (Output, Request, Vec<Value>) {
+    let handoffs = e.repo.join(".collab").join(task).join("handoffs");
+    std::fs::create_dir_all(&handoffs).unwrap();
+    let brief = handoffs.join("01-claude-review.md");
+    std::fs::write(&brief, "# Review\n\n1. Check app.txt.\n").unwrap();
+    let brief_s = brief.to_string_lossy().to_string();
+    let (base, rx) = reviewer_endpoint(ADVISE);
+    let mut args = vec![
+        "consult",
+        "--task",
+        task,
+        "--brief",
+        &brief_s,
+        "--artifact",
+        "app.txt",
+        "--engine",
+        "http",
+        "--provider",
+        "openrouter",
+        "--model",
+        "test/reviewer",
+        "--base-url",
+        &base,
+        "--reply-name",
+        "r1",
+        "--telemetry",
+        "off",
+    ];
+    args.extend_from_slice(extra);
+    let run = e.c3(
+        &args,
+        &[
+            // a plain-http loopback endpoint is accepted in test mode only (`parse_base_url`); the
+            // proxy auth mode for its host reads and sends no key at all
+            ("CODEX_CONSULT_TEST_MODE", "1"),
+            ("C3_HTTP_AUTH_PROXY", "127.0.0.1"),
+            ("OPENROUTER_API_KEY", ""),
+        ],
+    );
+    let req = rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|_| panic!("no request reached the endpoint:\n{}", text(&run)));
+    let body: Value = serde_json::from_str(&req.body).expect("the request body is JSON");
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    (run, req, messages)
+}
+
+/// The one ledger entry of `task`.
+fn only_entry(e: &Env, task: &str) -> Value {
+    let v: Value = serde_json::from_str(&e.sessions_text(task)).unwrap();
+    let consults = v["codex"]["consults"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(consults.len(), 1, "{v}");
+    consults[0].clone()
+}
+
+#[test]
+fn an_http_review_under_rev_sends_the_revision_not_the_live_tree() {
+    let e = setup("httprev");
+    // the revision under review ...
+    std::fs::write(e.repo.join("app.txt"), "CONTENT-AT-REVISION\n").unwrap();
+    git(
+        &e.repo,
+        &["commit", "-q", "-am", "the revision under review"],
+    );
+    let head = git_out(&e.repo, &["rev-parse", "HEAD"]);
+    // ... and a live tree that differs from it: the committed file changed, a new untracked file
+    std::fs::write(e.repo.join("app.txt"), "LIVE-ONLY-CONTENT\n").unwrap();
+    std::fs::write(e.repo.join("notes.txt"), "UNTRACKED-LIVE\n").unwrap();
+    let live_only = ["LIVE-ONLY-CONTENT", "UNTRACKED-LIVE"];
+
+    // --rev HEAD: the request carries the revision's file and nothing of the live tree
+    let (run, req, messages) = http_review(&e, "rev", &["--rev", "HEAD"]);
+    assert_eq!(run.status.code(), Some(0), "{}", text(&run));
+    assert_eq!(
+        req.line.split(' ').take(2).collect::<Vec<_>>(),
+        ["POST", "/v1/chat/completions"]
+    );
+    assert!(
+        !req.headers
+            .iter()
+            .any(|h| h.to_ascii_lowercase().starts_with("authorization:")),
+        "a credential was sent: {:?}",
+        req.headers
+    );
+    assert_eq!(messages.len(), 2, "{}", req.body);
+    let pack = messages[1]["content"].as_str().unwrap_or("").to_string();
+    assert!(pack.contains("CONTENT-AT-REVISION"), "{pack}");
+    for live in live_only {
+        assert!(!req.body.contains(live), "{live} left the machine:\n{pack}");
+    }
+    // the records name the reviewed revision, and the pack kept in the handoffs is what was sent
+    let entry = only_entry(&e, "rev");
+    assert_eq!(entry["worktree"]["reason"], "rev", "{entry}");
+    assert_eq!(entry["worktree"]["sha"], head.as_str(), "{entry}");
+    let reviewed = entry["reviewed_revision"].as_str().unwrap_or("");
+    assert!(reviewed.starts_with(&head[..7]), "{entry}");
+    let handoffs = e.repo.join(".collab").join("rev").join("handoffs");
+    let kept = std::fs::read_dir(&handoffs)
+        .unwrap()
+        .filter_map(|d| d.ok())
+        .find(|d| {
+            d.file_name()
+                .to_string_lossy()
+                .ends_with("-http-r1.pack.md")
+        })
+        .map(|d| std::fs::read_to_string(d.path()).unwrap())
+        .expect("the pack in the handoffs");
+    assert_eq!(kept, pack, "the kept pack is the request's user message");
+
+    // --rev HEAD --diff HEAD~1..HEAD: the patch of the range is sent with the revision's tree
+    let (run, req, messages) =
+        http_review(&e, "diff", &["--rev", "HEAD", "--diff", "HEAD~1..HEAD"]);
+    assert_eq!(run.status.code(), Some(0), "{}", text(&run));
+    let pack = messages
+        .get(1)
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or("")
+        .to_string();
+    for line in ["-one", "+CONTENT-AT-REVISION"] {
+        assert!(pack.lines().any(|l| l == line), "no `{line}` in:\n{pack}");
+    }
+    for live in live_only {
+        assert!(!req.body.contains(live), "{live} left the machine:\n{pack}");
+    }
+    let entry = only_entry(&e, "diff");
+    assert_eq!(entry["worktree"]["sha"], head.as_str(), "{entry}");
+    assert_eq!(entry["diff"]["range"], "HEAD~1..HEAD", "{entry}");
+    let patch = entry["diff"]["patch"].as_str().unwrap_or("");
+    assert!(
+        !patch.is_empty() && pack.contains(&format!("## Patch under review (`{patch}`)")),
+        "the ledger's patch {patch:?} is not the one sent:\n{pack}"
+    );
     let _ = std::fs::remove_dir_all(&e.work);
 }

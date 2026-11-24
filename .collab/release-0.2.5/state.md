@@ -890,3 +890,24 @@ swap -> xelth.com/C3 page after the tag.
 - Plan: land D5 + the gate fix in one commit, CI; at 14:10 the acceptance again - a NEW thread, a
   short brief (pass 2) that names the partial and the changes since adac2ed. One full window must
   do: no Sol run, nothing else on the ChatGPT account until then.
+
+## 2026-11-24 13:00 - d476520 pushed (the lock gate, wave D5, the fixture); D6 runs; the acceptance waits for 14:09
+
+- d476520 on origin/main: the move lock's takeover gate, wave D5 (one Cf table, write_in temp
+  sweep, the lock message names its owner, an untracked file git cannot read is left out, a dotted
+  Claude id in telemetry), and the test fixture renamed. Verified in the foreground: clippy clean,
+  c3 lib 940, c3-core 253, c3-cli init_doctor 22, ci_check 14, telemetry_parity 12,
+  snapshot_partb 7, finish 27. CI run 45389095446 in progress.
+- **The U+202E mystery was Windows Defender.** The fixture `<U+202E>txt.exe` of
+  a_one_revision_patch_leaves_untracked_files_out_unless_asked has the name shape of a spoofed
+  executable: Defender quarantined it in the middle of the test (Trojan:Win32/Artoelo.A, nine
+  detections today, reported by the peer session dmytro-cd and by the operator with a screenshot).
+  Two workers had read the failing `git diff` as a limit of Git for Windows. The fixture is
+  `a<U+202E>b.txt` now; the operator was told to finish the dialog with Remove, not Allow.
+- Wave D6 (worktree-agent-a0be8bab7b841e153, opus): one end-to-end test of the http engine under
+  --rev, no product code - the last "to build" item besides the Windows CI hang.
+- Tech-debt file: 7 open items left - four observations that need a live run (maintain pass
+  2026-11-26, agy after 2026-11-28, kimi, the folder move on real projects), the Windows CI hang
+  (needs an occurrence with its log), the http end-to-end test (D6), the operator's open question
+  about a knowledge base for reviewers.
+- Next: land D6, green CI, then at 14:10 the acceptance pass 2 with a self-contained brief 56.
