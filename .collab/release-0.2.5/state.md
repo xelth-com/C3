@@ -1398,3 +1398,24 @@ swap -> xelth.com/C3 page after the tag.
   prebuilt binaries never failed: 0 of 66). The next failure, if any, names the process.
 - Verified in the foreground (a cold build): clippy -D warnings clean, c3 lib 969 (the new
   `a_probe_that_hits_its_limit_names_what_was_still_running` among them).
+
+## 2026-11-25 00:20 - what is left after the release, and why none of it can be closed today
+
+- 00:17: `c3 maintain --run --engine codex` - "codex 0.169.0 -> 0.172.0 held: released 0 days
+  ago": the cool-down, seen live; nothing installed. Its smoke target is `ZAI::glm-5.3-flash`,
+  so a codex update never draws on the ChatGPT account. Not forced: the cool-down exists to keep
+  a same-day release off the CLI every session's Astra runs through.
+- The tech-debt file now has five open boxes, each waiting for something outside this session:
+  1. `c3 maintain` live: the codex update after its cool-down (the scheduled pass of Nov 26 or
+     the next), a failed smoke with its rollback, a kimi update once its plan has quota.
+  2. agy's first live run: its plan is out of quota until Nov 28.
+  3. The first OTHER project's move from `.eck/` to `.c3/`: when that project's own session runs
+     `c3 finish` (xelth.com is still an eckSnapshot-managed project - converting it is its
+     session's work, not a guest's).
+  4. The Windows CI flake: the probe now names the hung process and the job builds the tests in
+     their own step (6fe515b); the next occurrence, if any, gives the evidence.
+  5. A run's writes bound to directory handles: a rewrite of the run's output path, for the
+     release after this one, with its own acceptance (Astra's week is spent until Nov 29).
+- Moved out of the tech-debt list because they are not work owed: the twelve field proposals
+  (roadmap, "Next"), the operator's knowledge-base question (his to decide, listed under "For
+  the operator" with the Sol protection question).
