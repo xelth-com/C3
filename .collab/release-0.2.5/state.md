@@ -1419,3 +1419,20 @@ swap -> xelth.com/C3 page after the tag.
 - Moved out of the tech-debt list because they are not work owed: the twelve field proposals
   (roadmap, "Next"), the operator's knowledge-base question (his to decide, listed under "For
   the operator" with the Sol protection question).
+
+## 2026-11-25 00:50 - the time-gated leftovers are scheduled; a hand-over for whoever opens this next
+
+- CI: 6fe515b (the probe note, the exchange tests, the separate build step) GREEN on all three
+  jobs; 2c7b738 (records) GREEN.
+- xelth.com `deploy.sh` (commit f57395b there, pushed): polls /health for up to 60 s after the
+  restart instead of a fixed 2 s pause - the false "i18n: HTTP 502" stop of the 0.2.5 deploy.
+- Two one-shot jobs are scheduled IN THIS SESSION (they exist only while it stays open):
+  - 2026-11-26 15:37 - `c3 maintain --run --engine codex --engine kimi` (never `--force`): the
+    codex update after its cool-down, the kimi update if its plan has quota; record the lines.
+  - 2026-11-28 14:23 - agy's first live consultation with 0.2.5 (`--task smoke-agy`, the
+    live-member rule), and the two CLI updates again if still open.
+  If this session is gone by then, a later session does the same from this entry and from the
+  tech-debt file's section "State at the 0.2.5 release".
+- Waiting for the operator's word, nothing else: whether `gpt-6.2-sol` gets a reserve or
+  `on_request` in the roster; whether a run's writes are bound to directory handles now or in
+  0.2.6 (the coordinator's recommendation: 0.2.6, with Astra after Nov 29).
