@@ -1009,3 +1009,28 @@ swap -> xelth.com/C3 page after the tag.
 - Next: land A1-A4 (3-way, conflicts in CHANGELOG and consult/orchestrate/mod.rs expected), the
   whole foreground verification, CI, then ONE delta pass (a new thread, a short brief that lists
   each finding with its fix and closing test).
+
+## 2026-11-24 16:17 - ea74a4d: the fixes for the acceptance review are on main, CI green; the delta pass
+
+- Waves A1-A4 all reported; I merged the four patches (3-way; one CHANGELOG conflict, both sides
+  kept) and committed them as ea74a4d. On top: the telemetry intake's test-mode rule accepts a
+  loopback literal only (F57-9, the same rule as base_url), and the unit test
+  telemetry::classes a_published_id_of_the_maintain_state_is_sent_as_itself got a page record
+  with its URL (F57-1's new format; the worker had not run that module).
+- **My mistake in the briefs:** I gave all four workers one shared build directory
+  (CARGO_TARGET_DIR=C:/Users/Dmytro/C3/target). Cargo names the workspace crates' artifacts the
+  same in every worktree, so a worker could link another worktree's build (A3 saw it: its new
+  strings were in no binary; my own first lib run on main failed to compile against a foreign
+  c3-core). Never share a target directory between worktrees of one workspace. All numbers below
+  are from main after touching every .rs file (a forced rebuild).
+- Verified in the foreground on ea74a4d: fmt clean; clippy -D warnings clean; c3 lib 961,
+  c3-core 256; c3-cli finish 28, kimi_engine 25, panel_light_required 6, work 30, maintain 46,
+  telemetry_parity 13, init_doctor 22, delegation_rule 7, wave6_live_diffs 6, claude_engine 19,
+  compat_wave2b 21, branches 18.
+- CI run 45418818364 (ea74a4d): GREEN on all three jobs, Linux included - the rustix exchange
+  code compiled and its tests passed. (5031982's run had failed on Linux in the patch test: the
+  "empty patch" defect A4 fixed - a temporary index copy with a new modification time.)
+- Found on the way: a one-revision --diff patch could be EMPTY for a file edited to the same size
+  in the same instant as the index (copy_index now keeps the index's modification time).
+- Brief 58 (handoffs/58-claude-acceptance-delta.md): the delta for the standing partner - a table
+  finding / fix / closing test / remaining limit, four questions, ACCEPT or REJECT.
