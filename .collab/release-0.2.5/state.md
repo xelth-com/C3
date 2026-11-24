@@ -1339,3 +1339,21 @@ swap -> xelth.com/C3 page after the tag.
   (trusted writers on the directories a run's later writes pass through).
 - Verified in the foreground (a cold build): fmt clean, clippy -D warnings clean, c3 lib 968,
   c3-core 257, c3-cli maintain 56. CI for 82d2abe and c4a74af: GREEN on all three jobs.
+- 22:42: 808a1bb (the fixes) and 8706a2f (brief 68) pushed; quota 5-hour 63 % until 00:16, week
+  93 %; the fourth pass launched 22:42:47, detach 484d6ce6 (`--brief 68 --reply-name
+  acceptance-delta-3 --rev HEAD`, no `--spend-reserve`).
+
+## 2026-11-24 22:47 - ACCEPT (handoff 69, n=47): Astra's fourth delta pass
+
+- 242 s; week 93 % -> 95 %. "ACCEPT, given green three-job CI for 8706a2f". F67-1, F67-2, F67-4
+  closed; F67-3 partly (first creation works without an exchange; the tests still choose by build
+  target - a Linux build on a file system that rejects the exchange would fail them: tech debt).
+  One minor, F69-1: a CHANGELOG sentence promised a refusal where the code retries - reworded in
+  the acceptance-records commit.
+- The day's passes: 57 REJECT (six blockers), 62 REJECT (five), 67 REJECT (one), 69 ACCEPT. Each
+  round of fixes was read first by grok-4.7 and glm-5.4 (handoffs 60/61, 64/65).
+- Findings store: 259 - 242 implemented, 15 decided (wontfix), 2 rejected, none proposed.
+- Next, in this order: the acceptance-records commit; green CI on it; annotated tag v0.2.5 on it,
+  pushed; the release build from the clean tag commit and the install; `c3 doctor --fix`;
+  `.c3/config.json` with the finish check; the global skills to `.c3/collab`; the real
+  `c3 maintain --run`; the xelth.com page.

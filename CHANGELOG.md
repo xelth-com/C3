@@ -886,9 +886,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - **A file that is not there is created without an exchange, wherever (F67-3).** A system
   without an atomic exchange answered "unsupported" before it looked at the file, so since the
   refusal above even a FIRST write - which displaces nothing - was refused there. A write whose
-  file does not exist is now created by a hard link from its temporary name (it fails when a file
-  appeared meanwhile, and the write is then refused like any other), with or without an exchange
-  (`contain::publish_exchange`). The tests that need a real exchange say so and return on a target
+  file does not exist is now created by a hard link from its temporary name, with or without an
+  exchange (`contain::publish_exchange`). The link fails when a file appeared meanwhile; the write
+  is then tried again against that file (F69-1, said exactly): where an exchange exists the new
+  file is exchanged with it and its bytes are kept as a displaced version, where none exists the
+  write is refused. The tests that need a real exchange say so and return on a target
   that has none; `without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was` makes its
   first write under the no-exchange hook.
 - **A linked task directory refuses the run (F57-6).** A run start checked
