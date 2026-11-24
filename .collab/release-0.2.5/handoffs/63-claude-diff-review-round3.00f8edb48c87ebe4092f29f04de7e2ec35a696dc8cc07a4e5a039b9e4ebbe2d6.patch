@@ -1,0 +1,2491 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b52ceea..ec1691a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -525,7 +525,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   that the next pass recovers. The record was matched by engine; the recovery treated "installed ==
+   previous" specially and otherwise smoked the launcher and recorded a pass as `update to <target>
+   verified` - also when a THIRD version was installed (by hand or by another updater meanwhile) or
+-  when the installed version could not be read. The installed version, measured first, now decides.
++  when the installed version could not be read. The installed version, measured first, now decides,
++  compared as the exact release (the first version of this fix compared the numbers only, so a
++  pre-release of the target's numbers counted as the target - corrected by F62-1, the next entry).
+   The previous version: cleared as before. The target: smoked, and only a pass with `--version`
+   read again after the smoke still showing the target records `recovered: update to <target>
+   verified after an interrupted pass`. A third version: smoked for itself; a pass is recorded as
+@@ -546,6 +548,50 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   `a_pending_recovery_with_an_unreadable_installed_version_verifies_nothing`; the existing
+   `a_pending_update_whose_install_never_took_is_cleared` and
+   `a_pending_update_whose_new_binary_smokes_clean_is_recorded_verified` keep their meaning.
++- **A recovery credits exactly the release it smoked: a pre-release is never its final release
++  (F62-1, found by the acceptance review; supersedes the comparison of F57-3).** The parser of a
++  CLI's `--version` line kept only the numbers - the tag was dropped from the numeric parts AND from
++  the text that was kept - so an installed `1.0.80-rc.1` read as `1.0.80`. The recovery of a pending
++  update compared those numbers, so with the pending target `1.0.80` the smoke of the pre-release
++  was recorded as `update to 1.0.80 verified`, and the state named `1.0.80`. A read release now
++  keeps two things apart (`maintain::version::CliVersion`). Its IDENTITY is the exact release text
++  as the CLI printed it, normalised only by the surrounding whitespace, a leading `v`, a trailing
++  full stop and the punctuation printed right after the token (`version 1.0.77,`); the tag and
++  build metadata are part of it (`1.0.80-rc.1`, `1.0.80rc1` and `1.0.80+build.7` are three releases
++  other than `1.0.80`), and a version-shaped token that cannot be read exactly (`1.0.80(rc1)`,
++  `1.0.80_rc1`) names no release - the version is unknown, and no later number on the line is taken
++  instead. Its ORDERING is semver precedence: the numbers first, then a pre-release BEFORE the final
++  release of the same numbers, two tags by semver's identifier rule, build metadata ignored; the
++  type has no `Ord`, and every caller asks `same_release` or `is_newer_than` by name. Every "is it
++  the same release" question compares the identity: in the recovery the previous version, the
++  target, the version read again after the smoke and the version after a rollback; outside it, the
++  "did the update take" check after an install (it accepted any version not older than the target
++  by its numbers, so an installed `1.0.80-rc.1` passed for the target `1.0.80` and was reported as
++  `-> 1.0.80 ok`; any release other than the pinned target - a newer one too - is now "did not
++  take", the record kept for the next pass to recover as a third version) and the "is the previous
++  version back" check after a rollback. Every "is it newer"
++  question uses the ordering: the update decision (an installed `1.0.80-rc.1` was "up to date" with
++  a vendor `1.0.80`; it is now updated to it) and the newer-release step of an unresolved recovery.
++  The action line, the report, the state's `installed`, the pending journal and the version an
++  install or a rollback pins name the exact release - so a vendor whose latest release is a
++  pre-release is installed as exactly that release (the bare numbers pinned the final release, or
++  nothing), the npm release date that keys the cool-down is the pre-release's own, and a rollback
++  pins the exact previous release. Limits: two builds that differ only in build metadata are equal
++  in ordering - neither is installed over the other - yet different releases, so a CLI whose
++  `--version` printed build metadata the vendor's latest reading lacks would have its updates
++  reported as "did not take" and recovered as a third version (none of the `--version` shapes C3
++  records carries build metadata); a
++  pending record written by an older build holds the bare numbers, so a pre-release installed then
++  recovers as a third version (smoked for itself, the target not verified); C3's own self-update
++  (`update/`) is outside this fix. Tests: the reviewer's RC1,
++  `a_pending_recovery_never_credits_a_prerelease_smoke_to_the_final_release` (previous 1.0.77,
++  target 1.0.80, installed 1.0.80-rc.1: the action and the state name 1.0.80-rc.1, the target is not
++  verified, the record is cleared as in the third-version case; a failing smoke of the pre-release
++  is named and rolled back), its mirror
++  `a_pending_recovery_never_credits_a_final_release_smoke_to_a_prerelease_target`,
++  `an_installed_prerelease_is_updated_to_its_final_release`, and the unit tests
++  `equal_numbers_with_different_identities_are_different_releases` and
++  `a_pre_release_sorts_before_its_final_release`.
+ - **Plain http in test mode goes only to a loopback IP literal (F57-9, found by the acceptance
+   review).** Wave D6 accepted `http://` under `CODEX_CONSULT_TEST_MODE=1` for `127.0.0.0/8`, `::1`
+   and the NAME `localhost`; a name is resolved by the system resolver at connect time, which need not
+@@ -616,7 +662,13 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   when empty. What remains: between the exclusive create and the open there is no handle yet, so an
+   EMPTY directory swapped in at that instant cannot be told from the one made (it holds nothing to
+   lose; one with content, or a link, is refused); from the claim on, Windows refuses any rename of
+-  the held directory, while on Linux and macOS a swap is caught by the identity check. Tests:
++  the held directory, while on Linux and macOS a swap is caught by the identity check.
++  (Acceptance review 62 - said plainly.) Caught, not prevented: git takes a pathname, so on
++  Linux and macOS a directory swapped in before the identity check can receive checkout files
++  before the seat is refused; nothing is staged and no reviewer starts. The temp directory is the
++  operator's own (in a shared `/tmp` the sticky bit keeps other users from renaming or removing
++  the claimed directory), so a swap needs the operator's own rights: the check is against a
++  leftover or mistaken path, not against a concurrent actor with those rights. Tests:
+   `a_claimed_worktree_directory_replaced_before_the_check_refuses_and_is_kept` (a replacement
+   directory with content swapped in at the race points `worktree-claim`, `worktree-add` and
+   `worktree-checkout`: refused, the replacement and its content preserved, nothing staged, no
+@@ -733,6 +785,46 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   (c3-cli: a mover held before its rename while a switch-off `c3 manifest` writer waits for the lock,
+   and while it finds the lock held - one folder, both records, the second says it used `.eck/`),
+   `a_fresh_folder_beside_the_old_one_is_created_only_under_the_move_lock`.
++- **A namespace nested inside `collaboration` keeps that ancestry (F62-5).** The tool inventory
++  of a Codex smoke turn (F57-2: complete / breached / unproven) passed only the IMMEDIATE namespace
++  name down when it read a nested namespace: a function of `collaboration.<child>` whose own name
++  is in no list was then an ordinary tool, and a fully readable list with an offered sub-agent
++  tool counted as clean switch evidence. A list inside the `collaboration` namespace now stays
++  inside it at any depth (`quota::walk_tool_list`), so such a tool is offered - a breach, and the
++  update is held. Test: `quota::tests::a_namespace_nested_in_the_multi_agent_namespace_keeps_its_ancestry`
++  (two and three levels, a hosted tool known by its kind, the same nesting outside the namespace
++  still complete, an unreadable entry below it still unproven).
++- **A displaced edit is never overwritten by the next one (F62-4).** The version a write displaces
++  (F57-10: kept as `<file>.displaced-<UTC time>`) got its name by a look for a free name followed
++  by a REPLACING rename, and the search returned its thousandth candidate without looking at it:
++  two writes of one file that chose the same millisecond's name could leave one displaced edit
++  where there were two, both reported at that one path. The name is now taken by a hard link,
++  which fails when the name exists - then `-2`, `-3` ... are tried - and the temporary name is
++  removed only after the link exists (`contain::place_displaced`): no displaced version replaces
++  a file. Where no hard link can be made, and after a thousand taken names, the name gets 32
++  random hex digits, is checked to be free and is taken by rename - that one step is still a look
++  followed by a rename. Test:
++  `contain::tests::two_displaced_versions_never_share_a_name_and_nothing_is_replaced`.
++- **A long brief name no longer makes the patch name too long (F62-6).** With the full sha256 in
++  the patch name (F57-5) the longest name built from a brief's stem grew to `<stem>` + 104 bytes
++  (`<stem>.<64 hex>.<32 hex>.patch`; the write-temp name is 102 more than the stem): a brief with a
++  160-byte stem, which the short-hash name still fitted, could not get its `--diff` patch written
++  on a file system with 255-byte names. The readable stem is now cut to 120 bytes at a character
++  boundary (`consult::reviewed::PATCH_STEM_MAX`, `bounded_stem`); the digest is never shortened.
++  Test: `consult::reviewed::tests::a_long_brief_stem_is_bounded_so_every_patch_name_fits`.
++- **Without an atomic exchange a hand-edited file is not written at all (acceptance review 62,
++  answer 3; the limit F57-10 left).** The roster and a repository's agent and rule files are
++  published by an atomic exchange that keeps the version it displaces. Where the system or the
++  file system has none (another Unix; `EINVAL` / `ENOSYS` / `ENOTSUP`; `ReplaceFileW`
++  unsupported; a missing file on a file system without hard links) C3 fell back to the old
++  compare-then-rename and said so afterwards - and an edit saved in that instant was lost, on
++  exactly the files a person edits by hand. The fallback is gone: the write is refused, the
++  temporary file removed, the file as it was, and the command says it (`could not replace the
++  roster (there is no atomic exchange here (...), and a plain rename could lose an edit saved
++  during the write: the file was not written - make this change by hand)`). `c3 maintain` then
++  seats no model on such a file system and the repair of agent files changes nothing there; both
++  say why. Test: `contain::tests::without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was`
++  (it replaces `without_an_exchange_publication_falls_back_to_the_rename_and_says_so`).
+ - **A linked task directory refuses the run (F57-6).** A run start checked
+   and prepared the collab ROOT through handles; the callers then appended `<task>/handoffs` and
+   created it with `create_dir_all`, so a task directory that already was a link (no race needed)
+@@ -764,11 +856,23 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   reached through a link above its root. (F61-3) `c3 work` resolves `.` and `..` in its collab
+   path by text before it uses it, the way the path is classified: `--collab-dir link/../.collab`
+   was checked as the repository's `.collab` while, where the file system applies `..` to a link's
+-  target (not on Windows), the run wrote beside that target. A run whose collab directory names `.eck/` while neither folder exists is refused instead of
++  target (not on Windows), the run wrote beside that target. (F62-2) The commands' resolver does
++  the same now, BEFORE its link check and its canonical form: it had kept the spelling it was
++  given, so for `c3 consult`, a panel and a detached run `link/../.collab` passed the link check
++  as the repository's `.collab` and was then canonicalised to a directory beside the link's
++  target - read as a directory outside the repository and followed. Consult, panel, detach and
++  work now name one directory, the textual one. Tests: the unit test above (`l/../.collab4`
++  through `resolve_collab_root` and handed straight to the run start), `work.rs`
++  `a_collab_path_with_dot_dot_after_a_link_is_taken_by_text`. A run whose collab directory names `.eck/` while neither folder exists is refused instead of
+   creating a new `.eck/` (C3 never creates it again). What remains: the run's later writes (the
+   handoff, the reply, the events, the lock, the ledger) still go by path into the directories
+   checked at the start - a component swapped for a link AFTER the check, while the run writes, is
+-  not caught; binding every write of a run to those handles is not in this release. Tests:
++  not caught; binding every write of a run to those handles is not in this release.
++  (Acceptance review 62, answer 3 - what is promised, said plainly.) The promise is about a link
++  that EXISTS when the run starts: one that arrived with a clone, was left in the tree, or sits
++  under a name the operator typed. It is not containment by directory identity for the whole run:
++  whoever can swap a directory of the working tree WHILE a run writes already has the operator's
++  own rights over the repository and its records and gains nothing by redirecting them. Tests:
+   `a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing` (the task
+   directory, `handoffs/` and `work/` as links under `.c3/collab` and, under the move lock,
+   `.eck/collab`; a panel member's check; a normal start; under `.collab/` a linked task directory,
+@@ -2021,9 +2125,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   public when they were read (`public`). A page is trusted by `page:<canonical URL>`, never by its
+   label, and its ids count only when the CURRENT configuration declares exactly that URL public AND
+   the record says it was public when read. A page record of an older build (label only, no URL) is
+-  withheld until the next `c3 maintain` refresh rewrites it. Catalogs keep their per-URL rule
+-  (F16-1); both kinds now go through one rule (`maintain::web::canonical_url` for the URL,
+-  `maintain::web::provenance` for a record's trust key), so they cannot drift apart. What remains: a
++  withheld until the next `c3 maintain` refresh rewrites it. Catalogs kept their per-URL rule
++  (F16-1) but recorded no collection-time status - the defect F62-3 closes (below); since then both
++  kinds go through one rule (`maintain::web::canonical_url` for the URL, `maintain::web::provenance`
++  for a record's trust key, the same two recorded fields), so they cannot drift apart. What remains: a
+   page whose URL stays the same and is declared public only later is published after the next
+   refresh, not at once. Tests: `maintain::models::tests::a_page_id_is_published_only_by_the_exact_public_url_it_was_read_from`,
+   `maintain::web::tests::a_reused_page_label_never_lends_its_trust_to_ids_of_the_earlier_url`,
+@@ -2032,6 +2137,41 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   offline through the real binary: `c3 maintain --models` records an id from a non-public page, the
+   label then names a public `docs.z.ai` page - the backfilled event's model is `other`; an older
+   build's label-only record - `other`; after a refresh from the public URL - the id by name).
++- **A catalog URL declared public later never publishes the ids cached while it was private (F62-3,
++  found by the acceptance review; it supersedes F02-19 for catalogs and completes F57-1's one
++  rule).** A catalog record carried only its URL (its name, `web:<url>`), and telemetry published
++  its ids as soon as the CURRENT configuration declared that URL `"public": true`: a catalog read
++  while it was private - its response holding a private model id - then cleaned and declared public
++  at the same URL lent today's trust to the old cached ids until the next successful refresh. A
++  catalog record now carries what a page record carries since F57-1: the canonical URL its ids were
++  read from (`url`) and whether that exact URL was trusted as public when they were read (`public`:
++  a catalog shipped in the code, or a config entry declaring it public). Catalogs and pages are
++  stamped at collection by the same trust function that later publishes (`maintain::web::sources_of`
++  over `trusted_sources` - for a page the same answer as its own `"public"`, unless another entry
++  declares the same URL public), recorded by one function and read back by one rule
++  (`maintain::web::provenance`): an id counts only when the record says its URL was public when read
++  AND the current configuration trusts exactly that URL; a record whose URL disagrees with its
++  catalog name is withheld. A custom catalog's record written by an earlier build (no status) is
++  withheld until `c3 maintain` refreshes it. The built-in catalog's record of an earlier build is
++  kept: the code identifies it by its exact canonical URL (`maintain::web::is_builtin_catalog_source`;
++  another URL on openrouter.ai, an added query or a host-keyed record is not it), and that URL's
++  trust never came from the configuration - every build trusted it by code and read it keyless - so
++  it was public when its ids were read. The swap decision (`c3 maintain --models`: candidates, the
++  date gate) is not affected: it reads the lists of the running pass, not the cache, publishes
++  nothing, and a private catalog feeds candidates by design (the smoke decides). What remains: a URL
++  declared public later is published only after the next successful refresh; the recorded status is
++  what the configuration declared at collection - a URL declared public while it still served
++  private ids stays the operator's declaration. Tests:
++  `maintain::web::tests::a_catalog_declared_public_later_never_publishes_ids_cached_while_it_was_private`,
++  `maintain::models::tests::a_catalog_id_is_published_only_when_its_record_was_public_when_read`,
++  `telemetry::classes::tests::a_published_id_of_the_maintain_state_is_sent_as_itself` (extended),
++  and `telemetry_parity.rs`'s `a_catalog_declared_public_later_never_publishes_an_id_cached_while_it_was_private`
++  (the reviewer's RC3, offline through the real binary: `c3 maintain --models` reads a catalog not
++  declared public whose response holds a synthetic private id; the backfilled models are `other`
++  before the declaration, `other` right after it with the old cache kept, `other` for an older
++  build's record without status, and after a refresh of the cleaned catalog its public id goes by
++  name while the private one stays `other`). The catalog fixtures of the earlier tests carry the
++  status they were read under.
+ - **A roster edit saved while `c3 maintain` writes the roster is kept (F57-10, found by the
+   acceptance review).** The swap re-read the roster, compared it with the snapshot the smoke was
+   judged on, and then replaced it by a separate temp-file-and-rename: an edit saved between that
+@@ -2046,14 +2186,15 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   path and opened once as a handle; a roster that is a link is followed to the file it names, which
+   is the file exchanged; the new roster keeps the old one's permission bits on Unix. On Windows a
+   sharing violation (an editor holding the file) is retried up to 8 times, 250 ms apart, as the
+-  earlier write did. What remains: where the system has no exchange (a Unix other than Linux and
++  earlier write did. Where the system has no exchange (a Unix other than Linux and
+   macOS, a file system that refuses it - `EINVAL`, `ENOSYS`, `ENOTSUP` - or `ReplaceFileW`
+-  unsupported) the roster is replaced by the earlier compare-then-rename and the report says so
+-  (`... was replaced by rename, not by an atomic exchange (<why>)`); a kept file is the operator's to
++  unsupported) the roster is NOT written and the command says so (as first shipped in this entry
++  it was replaced by the earlier compare-then-rename; the entry "Without an atomic exchange a
++  hand-edited file is not written at all" above changed that); a kept file is the operator's to
+   compare and remove. Tests: `maintain::models::tests::a_roster_edit_saved_at_the_publication_boundary_is_kept_byte_for_byte`
+   (the reviewer's Verify: an unrelated roster change saved at the pre-publication boundary stays
+   recoverable byte for byte), `contain::tests::publish_exchange_keeps_an_edit_saved_before_the_exchange_and_nothing_without_one`,
+-  `contain::tests::without_an_exchange_publication_falls_back_to_the_rename_and_says_so` (the new
++  `contain::tests::without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was` (the new
+   hook `CODEX_CONSULT_TEST_CONTAIN_NO_EXCHANGE`; a first write too) and, on Unix,
+   `contain::tests::publish_exchange_on_unix_swaps_relative_to_the_directory_descriptor`. The race
+   hook `CODEX_CONSULT_TEST_CONTAIN_RACE` takes `<point>|write:<file>|<text>` for an editor's save at
+@@ -2071,8 +2212,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   `.displaced-` file in the repository root, `.claude/agents` and `.claude/rules` until it is
+   removed (`[!] <file>: a version a C3 write displaced (a hand edit saved during it) is kept here -
+   compare it with the file and remove it`, JSON `displaced_files`; not a finding). On Windows a file
+-  held open by an editor is retried as for the roster. What remains: as for the roster, a system
+-  without an exchange falls back to compare-then-rename and the line says so; a kept file lies in the
++  held open by an editor is retried as for the roster. As for the roster, on a system
++  without an exchange the file is not written and the line says so; a kept file lies in the
+   working tree, so `c3 finish` commits it unless the operator removes it first. Tests:
+   `setup::repo_models::tests::an_edit_saved_during_the_repair_is_kept_beside_the_file_and_reported`,
+   the `contain` tests of F57-10, and the earlier repair tests (an edit before the comparison, a held
+diff --git a/README.md b/README.md
+index 0b1940e..fa8c430 100644
+--- a/README.md
++++ b/README.md
+@@ -403,9 +403,11 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
+   of `alibaba` only), or a configured catalog / page declared `"public": true` (a page's plain ids
+   count for the class of its own host, e.g. `docs.z.ai` -> `zai`) - judged per catalog URL, never
+   per host (another URL on the same host is trusted only by its own entry), and a page by the exact
+-  URL its ids were read from, never by its label: an id read while the page was not declared public,
+-  or from another URL now under the same label, is not sent until a refresh reads it from the public
+-  URL itself (a page record of an older build, label only, waits for that refresh too). An endpoint's own model list, an
++  URL its ids were read from, never by its label: an id read while the catalog or page was not
++  declared public, or from another URL now under the same page label, is not sent until a refresh
++  reads it from the public URL itself (a page record or a configured catalog's record of an older
++  build, without that status, waits for that refresh too; the built-in catalog's own record, known
++  by its exact URL, does not). An endpoint's own model list, an
+   engine's list, an undeclared configured source, another class's name and a reviewer without a
+   class never count; without a maintain state the closed lists alone decide.
+ * **Never:** task names, prompts, briefs, paths, thread ids, `consult_id`, finding texts, notes,
+@@ -665,7 +667,8 @@ its one-line report.
+   A catalog is identified by its full URL (scheme, host, port, path, query): every configured URL
+   is fetched and recorded on its own, and trust is per URL, never per host. A page is shown by its
+   label, but its ids are recorded with the URL they were read from and whether that URL was declared
+-  public then - its trust follows that URL, not the label.
++  public then - its trust follows that URL, not the label. A catalog's ids are recorded the same way:
++  a catalog declared public only after it was read is published from the next refresh on.
+ - **By hand.** `c3 maintain` prints the report; `c3 maintain --run [--engine <name>] [--dry-run]
+   [--force]` runs a pass now; `c3 maintain --models [--dry-run]` runs only the model step (no CLI is
+   checked or updated, the weekly schedule does not move; with `--dry-run` nothing is smoked or
+@@ -813,7 +816,7 @@ both reports this (`c3 doctor`) and repairs it in place.
+   edit saved after that re-read is not lost - it is kept next to the file as
+   `<file>.displaced-<UTC time>`, the hook line ends with `ATTENTION: a hand edit of <file> ...`, and
+   `c3 doctor` names every such file until it is removed (on a system without an atomic exchange the
+-  file is replaced by rename and the line says so). The hook does not do this inside a session C3 itself started:
++  file is not written at all and the line says so). The hook does not do this inside a session C3 itself started:
+   every reviewer, worker and launcher probe, and every child of `c3 update`, gets `C3_CHILD=1`, so a
+   read-only reviewer on the `claude` engine cannot change the tree it reviews and a worker's patch
+   holds only its own change.
+diff --git a/crates/c3-cli/tests/maintain.rs b/crates/c3-cli/tests/maintain.rs
+index 45247bb..070dfcc 100644
+--- a/crates/c3-cli/tests/maintain.rs
++++ b/crates/c3-cli/tests/maintain.rs
+@@ -831,6 +831,118 @@ fn a_pending_recovery_never_credits_a_third_installed_version_to_the_target() {
+     assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
+ }
+ 
++/// (F62-1, the reviewer's RC1) The third-version fixture with an installed PRE-RELEASE of the
++/// target's numbers: 1.0.77 -> 1.0.80 was pending, 1.0.80-rc.1 is installed. The pre-release is a
++/// third version, not the target: a passing smoke is recorded for 1.0.80-rc.1 - the action and the
++/// state name it exactly, never the bare 1.0.80 - the target 1.0.80 is NOT verified, and the record
++/// is cleared as the third-version case clears it; a failing smoke names the pre-release and rolls
++/// back to the recorded previous version.
++#[test]
++fn a_pending_recovery_never_credits_a_prerelease_smoke_to_the_final_release() {
++    let e = setup("pend-rc");
++    e.write_pending(
++        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
++    );
++    let env = e.grok_env("1.0.80-rc.1", "1.0.80", "grok::grok-4.7=pass");
++    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
++    let t = text(&o);
++    assert_eq!(o.status.code(), Some(0), "{t}");
++    assert!(
++        t.contains("grok 1.0.80-rc.1 - pending update to 1.0.80 not verified: 1.0.80-rc.1 is installed instead (changed since the update was recorded); the smoke passed on 1.0.80-rc.1"),
++        "{t}"
++    );
++    assert!(!t.contains("update to 1.0.80 verified"), "{t}");
++    assert!(!t.contains("recovered"), "{t}");
++    let rec = grok_state(&e);
++    assert_eq!(rec["installed"], "1.0.80-rc.1", "{rec}");
++    let action = rec["action"].as_str().unwrap_or_default();
++    assert!(
++        action
++            .starts_with("pending update to 1.0.80 not verified: 1.0.80-rc.1 is installed instead")
++            && action.ends_with("the smoke passed on 1.0.80-rc.1"),
++        "{rec}"
++    );
++    // the record is cleared as in the third-version case; nothing was installed or rolled back
++    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
++    assert_eq!(verfile(&e.grok_verfile), "1.0.80-rc.1");
++    assert!(!e.mnt_log().contains("update --version"), "{}", e.mnt_log());
++
++    // the pre-release FAILS its smoke: named exactly, rolled back to the previous version
++    let e = setup("pend-rc-fail");
++    e.write_pending(
++        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
++    );
++    let env = e.grok_env("1.0.80-rc.1", "1.0.80", "grok::grok-4.7=fail");
++    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
++    let t = text(&o);
++    assert_eq!(o.status.code(), Some(0), "{t}");
++    assert!(
++        t.contains("grok 1.0.80-rc.1 - recovered (1.0.80-rc.1 is installed, not the pending target 1.0.80): smoke failed, rolled back to 1.0.77"),
++        "{t}"
++    );
++    assert!(!t.contains("verified"), "{t}");
++    assert_eq!(verfile(&e.grok_verfile), "1.0.77");
++    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
++}
++
++/// (F62-1) The mirror of RC1: a PRE-RELEASE target (1.0.77 -> 1.0.80-rc.1 was pending) and the final
++/// release 1.0.80 installed. The final release is not the pending target either: the smoke passes
++/// on 1.0.80, which the action and the state name, and the target 1.0.80-rc.1 is NOT verified.
++#[test]
++fn a_pending_recovery_never_credits_a_final_release_smoke_to_a_prerelease_target() {
++    let e = setup("pend-rc-target");
++    e.write_pending(
++        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80-rc.1","when":"2026-11-15T00:00:00Z"}]"#,
++    );
++    let env = e.grok_env("1.0.80", "1.0.80-rc.1", "grok::grok-4.7=pass");
++    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
++    let t = text(&o);
++    assert_eq!(o.status.code(), Some(0), "{t}");
++    assert!(
++        t.contains("grok 1.0.80 - pending update to 1.0.80-rc.1 not verified: 1.0.80 is installed instead (changed since the update was recorded); the smoke passed on 1.0.80"),
++        "{t}"
++    );
++    assert!(!t.contains("update to 1.0.80-rc.1 verified"), "{t}");
++    assert!(!t.contains("recovered"), "{t}");
++    let rec = grok_state(&e);
++    assert_eq!(rec["installed"], "1.0.80", "{rec}");
++    let action = rec["action"].as_str().unwrap_or_default();
++    assert!(
++        action
++            .starts_with("pending update to 1.0.80-rc.1 not verified: 1.0.80 is installed instead")
++            && action.ends_with("the smoke passed on 1.0.80"),
++        "{rec}"
++    );
++    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
++    assert_eq!(verfile(&e.grok_verfile), "1.0.80");
++    assert!(!e.mnt_log().contains("update --version"), "{}", e.mnt_log());
++}
++
++/// (F62-1, outside the recovery) The update decision orders a pre-release BEFORE its final release
++/// and pins the exact release: an installed 1.0.80-rc.1 is not "up to date" with the vendor's
++/// 1.0.80 (the numbers alone called it so), the update pins exactly 1.0.80, and the report and the
++/// state name 1.0.80-rc.1 as the release it came from.
++#[test]
++fn an_installed_prerelease_is_updated_to_its_final_release() {
++    let e = setup("rc-update");
++    let env = e.grok_env("1.0.80-rc.1", "1.0.80", "grok::grok-4.7=pass");
++    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
++    let t = text(&o);
++    assert_eq!(o.status.code(), Some(0), "{t}");
++    assert!(!t.contains("up to date"), "{t}");
++    assert!(t.contains("grok 1.0.80-rc.1 -> 1.0.80 ok"), "{t}");
++    assert!(
++        e.mnt_log().contains("update --version 1.0.80"),
++        "{}",
++        e.mnt_log()
++    );
++    assert_eq!(verfile(&e.grok_verfile), "1.0.80");
++    let rec = grok_state(&e);
++    assert_eq!(rec["installed"], "1.0.80-rc.1", "{rec}");
++    assert_eq!(rec["action"], "1.0.80-rc.1 -> 1.0.80 ok", "{rec}");
++    assert_eq!(e.pending_json().trim(), "[]", "{}", e.pending_json());
++}
++
+ /// (F57-3) An installed version that cannot be read verifies nothing: no smoke is run, the action
+ /// and the state say the pending update to the target is not verified, and the record is kept.
+ #[test]
+diff --git a/crates/c3-cli/tests/telemetry_parity.rs b/crates/c3-cli/tests/telemetry_parity.rs
+index b3cfbd0..032ba32 100644
+--- a/crates/c3-cli/tests/telemetry_parity.rs
++++ b/crates/c3-cli/tests/telemetry_parity.rs
+@@ -891,13 +891,14 @@ fn backfilled_models_of(e: &Env, reviewers: &[(&str, &str, &str)]) -> Vec<String
+ fn only_a_trusted_vendor_bound_published_id_is_sent_by_name() {
+     let e = setup("tel-published");
+     // the maintain state `c3 maintain` left: the built-in catalog, a configured catalog NOT declared
+-    // public, one declared public, an endpoint's own list and a configured page (not public)
++    // public, one declared public, an endpoint's own list and a configured page (not public) -
++    // (F62-3) each catalog with the URL it was read from and whether it was public then
+     let mdir = e.home.join("c3").join("maintain");
+     std::fs::create_dir_all(&mdir).unwrap();
+     let state = serde_json::json!({"models": {"sources": [
+-        {"source": "web:https://openrouter.ai:443/api/v1/models", "ids": ["z-ai/glm-9-pub", "anthropic/claude-opus-9-2"]},
+-        {"source": "web:https://models.example.com:443/v1/models", "ids": ["z-ai/glm-9-cfg"]},
+-        {"source": "web:https://pub.example.com:443/v1/models", "ids": ["z-ai/glm-9-trusted"]},
++        {"source": "web:https://openrouter.ai:443/api/v1/models", "url": "https://openrouter.ai:443/api/v1/models", "public": true, "ids": ["z-ai/glm-9-pub", "anthropic/claude-opus-9-2"]},
++        {"source": "web:https://models.example.com:443/v1/models", "url": "https://models.example.com:443/v1/models", "ids": ["z-ai/glm-9-cfg"]},
++        {"source": "web:https://pub.example.com:443/v1/models", "url": "https://pub.example.com:443/v1/models", "public": true, "ids": ["z-ai/glm-9-trusted"]},
+         {"source": "endpoint:https://api.z.ai:443/api/v1|RT_ZAI_KEY|", "ids": ["glm-9-ep"]},
+         {"source": "page:zai-docs", "ids": ["glm-9-page"]}
+     ]}});
+@@ -936,7 +937,7 @@ fn a_published_claude_id_spelled_with_dots_is_sent_by_its_dash_name() {
+     let mdir = e.home.join("c3").join("maintain");
+     std::fs::create_dir_all(&mdir).unwrap();
+     let state = serde_json::json!({"models": {"sources": [
+-        {"source": "web:https://openrouter.ai:443/api/v1/models", "ids": ["anthropic/claude-opus-9.3"]}
++        {"source": "web:https://openrouter.ai:443/api/v1/models", "url": "https://openrouter.ai:443/api/v1/models", "public": true, "ids": ["anthropic/claude-opus-9.3"]}
+     ]}});
+     std::fs::write(mdir.join("state.json"), state.to_string()).unwrap();
+     let models = backfilled_models_of(
+@@ -1056,6 +1057,10 @@ fn two_catalogs_on_one_host_the_private_first_never_publish_the_private_id() {
+         ],
+         "each URL under its own key; the host-keyed record is replaced"
+     );
++    // (F62-3) each record says whether its URL was public when it was read
++    let records = st["models"]["sources"].as_array().unwrap();
++    assert!(records[0].get("public").is_none(), "{}", records[0]);
++    assert_eq!(records[1]["public"], true, "{}", records[1]);
+     let mut want = CLOSED_LISTS_ONLY;
+     want[4] = "glm-9-trusted"; // the declared catalog's id, for its own vendor
+     assert_eq!(
+@@ -1152,6 +1157,131 @@ fn a_page_label_reused_for_a_public_url_never_publishes_the_earlier_pages_id() {
+     let _ = std::fs::remove_dir_all(&e.work);
+ }
+ 
++/// (F62-3, the reviewer's RC3) A catalog URL declared public only after it was read, end to end and
++/// offline: `c3 maintain --models` reads a configured catalog while it is NOT declared public, its
++/// response holding a synthetic private id (`glm-9-cfg`) beside a public one (`glm-9-trusted`); the
++/// configuration then declares the SAME URL public and the old cache is kept - the backfilled
++/// events' models stay `other`, exactly as before the declaration (before the fix, today's trust of
++/// the URL published the old cache). A custom catalog's record of an older build (no
++/// collection-time status) is withheld the same way. After a refresh of the cleaned catalog (the
++/// private id removed) the public id is sent by name and the private one stays `other`.
++#[test]
++fn a_catalog_declared_public_later_never_publishes_an_id_cached_while_it_was_private() {
++    let e = setup("tel-published-catalog-reclassified");
++    let mdir = e.home.join("c3").join("maintain");
++    std::fs::create_dir_all(&mdir).unwrap();
++    let url = "https://models.example.com/v1/models";
++    let body = e.work.join("catalog.json");
++    let configure = |public: bool| {
++        let cfg = serde_json::json!({"config_version": 1,
++            "model_catalogs": [{"url": url, "public": public}]});
++        std::fs::write(e.home.join("c3").join("config.json"), cfg.to_string()).unwrap();
++    };
++    let maintain = || {
++        let map = format!("{url}|{}", body.display());
++        let o = e.c3(
++            &["maintain", "--models"],
++            &[
++                ("CODEX_CONSULT_TEST_MODE", "1"),
++                ("C3_MAINTAIN_MODELS", "announce"),
++                ("C3_MAINTAIN_TEST_HTTP", map.as_str()),
++            ],
++        );
++        assert_eq!(o.status.code(), Some(0), "{}", text(&o));
++    };
++    let catalog_record = || -> Value {
++        let st: Value =
++            serde_json::from_str(&std::fs::read_to_string(mdir.join("state.json")).unwrap())
++                .unwrap();
++        st["models"]["sources"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|s| s["source"] == "web:https://models.example.com:443/v1/models")
++            .cloned()
++            .unwrap_or(Value::Null)
++    };
++    // each backfill after the first starts from an empty spool
++    let clear_spool = || {
++        let dir = e.home.join("c3").join("telemetry");
++        for f in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
++            let n = f.file_name().to_string_lossy().into_owned();
++            if n.starts_with("spool") && n.ends_with(".ndjson") {
++                std::fs::remove_file(f.path()).unwrap();
++            }
++        }
++    };
++
++    // 1. read while NOT declared public: the private id is cached, with that status
++    std::fs::write(
++        &body,
++        r#"{"data":[{"id":"z-ai/glm-9-cfg","created":1794000000},{"id":"z-ai/glm-9-trusted","created":1794000000}]}"#,
++    )
++    .unwrap();
++    configure(false);
++    maintain();
++    let rec = catalog_record();
++    assert_eq!(
++        rec["ids"],
++        serde_json::json!(["z-ai/glm-9-cfg", "z-ai/glm-9-trusted"]),
++        "{rec}"
++    );
++    assert_eq!(
++        rec["url"], "https://models.example.com:443/v1/models",
++        "{rec}"
++    );
++    assert!(rec.get("public").is_none(), "{rec}");
++    assert_eq!(
++        backfilled_models(&e),
++        CLOSED_LISTS_ONLY,
++        "before the declaration"
++    );
++    // 2. the same URL declared public, the old cache kept (no refresh): still anonymised
++    configure(true);
++    clear_spool();
++    assert_eq!(
++        backfilled_models(&e),
++        CLOSED_LISTS_ONLY,
++        "declared public, not refreshed"
++    );
++    let spool = e.spool_lines().join("\n");
++    assert!(
++        !spool.contains("glm-9-cfg") && !spool.contains("glm-9-trusted"),
++        "{spool}"
++    );
++    // 3. an older build's record of the same custom catalog (no collection-time status): withheld
++    let legacy = serde_json::json!({"models": {"sources": [
++        {"source": "web:https://models.example.com:443/v1/models", "ids": ["z-ai/glm-9-cfg", "z-ai/glm-9-trusted"]}
++    ]}});
++    std::fs::write(mdir.join("state.json"), legacy.to_string()).unwrap();
++    clear_spool();
++    assert_eq!(backfilled_models(&e), CLOSED_LISTS_ONLY, "a legacy record");
++    // 4. a refresh of the cleaned catalog: the public id by name; the private one - no longer
++    // listed - stays `other`
++    std::fs::write(
++        &body,
++        r#"{"data":[{"id":"z-ai/glm-9-trusted","created":1794000000}]}"#,
++    )
++    .unwrap();
++    maintain();
++    let rec = catalog_record();
++    assert_eq!(
++        rec["ids"],
++        serde_json::json!(["z-ai/glm-9-trusted"]),
++        "{rec}"
++    );
++    assert_eq!(rec["public"], true, "{rec}");
++    clear_spool();
++    let mut want = CLOSED_LISTS_ONLY;
++    want[4] = "glm-9-trusted"; // row 5: a zai reviewer on glm-9-trusted
++    assert_eq!(
++        backfilled_models(&e),
++        want,
++        "glm-9-cfg (row 2) is never sent by name"
++    );
++    let _ = std::fs::remove_dir_all(&e.work);
++}
++
+ #[test]
+ fn without_a_maintain_state_the_closed_lists_decide() {
+     let e = setup("tel-published-none");
+diff --git a/crates/c3-cli/tests/work.rs b/crates/c3-cli/tests/work.rs
+index 5e085ef..b4851c8 100644
+--- a/crates/c3-cli/tests/work.rs
++++ b/crates/c3-cli/tests/work.rs
+@@ -2422,3 +2422,31 @@ fn a_linked_task_directory_in_the_project_folder_refuses_the_work_run() {
+     );
+     assert!(std::fs::read_dir(&target).unwrap().next().is_none());
+ }
++
++/// (0.2.5, F61-3 / F62-2, RC2) `--collab-dir l/../.collab4` where `l` is a link out of the
++/// repository: `..` is resolved by text, so the run's record lands in the repository's own
++/// `.collab4` - the directory the run start checked - and nothing appears beside the link's
++/// target, where the file system would go when it applies `..` to the target of the link.
++#[test]
++fn a_collab_path_with_dot_dot_after_a_link_is_taken_by_text() {
++    let e = setup("dotdot-link");
++    let side = e.work.join("side");
++    std::fs::create_dir_all(side.join("sub")).unwrap();
++    std::fs::create_dir_all(side.join(".collab4")).unwrap();
++    assert!(dir_link(&e.repo.join("l"), &side.join("sub")), "link l");
++    let out = e.work("ZAI-claude", &["--collab-dir", "l/../.collab4"], &[]);
++    let t = text(&out);
++    assert_eq!(out.status.code(), Some(0), "{t}");
++    assert!(
++        !files_under(&e.repo.join(".collab4").join("t").join("work")).is_empty(),
++        "the record is in the repository's own directory: {t}"
++    );
++    assert!(
++        std::fs::read_dir(side.join(".collab4"))
++            .unwrap()
++            .next()
++            .is_none(),
++        "nothing beside the link's target: {t}"
++    );
++    drop_link(&e.repo.join("l"));
++}
+diff --git a/crates/c3-core/src/quota.rs b/crates/c3-core/src/quota.rs
+index 6e45564..3b87363 100644
+--- a/crates/c3-core/src/quota.rs
++++ b/crates/c3-core/src/quota.rs
+@@ -1052,6 +1052,9 @@ pub fn tool_inventory(tools: Option<&Value>) -> ToolInventory {
+ 
+ /// (F57-2) Walk one list of [`tool_inventory`]: `namespace` is the enclosing namespace's name
+ /// (`""` at the top), `at` the enclosing entry's position (`"2."` inside the second entry).
++/// (F62-5) Once a list lies inside the [`MULTI_AGENT_NAMESPACE`] namespace, at ANY depth, it stays
++/// inside it: a namespace nested there passes that namespace down instead of its own name, so a
++/// tool of `collaboration.<child>.<...>` is a multi-agent tool whatever its own name is.
+ fn walk_tool_list(
+     list: &[Value],
+     namespace: &str,
+@@ -1106,9 +1109,15 @@ fn walk_tool_list(
+                     problems.push(format!("entry {pos} (a namespace) has no name"));
+                     continue;
+                 };
++                // (F62-5) the multi-agent namespace is an ancestry, not only a parent
++                let inner_ns = if namespace == MULTI_AGENT_NAMESPACE {
++                    MULTI_AGENT_NAMESPACE
++                } else {
++                    ns
++                };
+                 match obj.get("tools") {
+                     Some(Value::Array(inner)) => {
+-                        walk_tool_list(inner, ns, &format!("{pos}."), offered, problems)
++                        walk_tool_list(inner, inner_ns, &format!("{pos}."), offered, problems)
+                     }
+                     Some(other) => problems.push(format!(
+                         "entry {pos} (a namespace) holds `tools` as {}, not an array",
+@@ -4470,6 +4479,54 @@ mod tests {
+     /// multi-agent tool makes it BREACHED whatever else is unreadable; anything it cannot interpret
+     /// makes it UNPROVEN, and the reason names the entry's position and kind or key, never its
+     /// content.
++    #[test]
++    fn a_namespace_nested_in_the_multi_agent_namespace_keeps_its_ancestry() {
++        let inv = |j: &str| tool_inventory(Some(&serde_json::from_str::<Value>(j).unwrap()));
++        // (F62-5, RC5) a child namespace inside `collaboration` with a function whose name is in
++        // no list: offered - the enclosing namespace decides, at two levels ...
++        assert_eq!(
++            inv(
++                r#"[{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"pool","tools":[{"type":"function","name":"enlist_helper"}]}]}]"#
++            ),
++            ToolInventory::Breached(vec!["enlist_helper".to_string()])
++        );
++        // ... at three, beside readable ordinary tools ...
++        assert_eq!(
++            inv(
++                r#"[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"wait"}]},{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"a","tools":[{"type":"namespace","name":"b","tools":[{"type":"custom","name":"quiet_one"}]}]}]}]"#
++            ),
++            ToolInventory::Breached(vec!["quiet_one".to_string()])
++        );
++        // ... and for a hosted tool known by its kind alone
++        assert_eq!(
++            inv(
++                r#"[{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"pool","tools":[{"type":"web_search"}]}]}]"#
++            ),
++            ToolInventory::Breached(vec!["web_search".to_string()])
++        );
++        // the same nesting OUTSIDE the multi-agent namespace is an ordinary complete list, and a
++        // namespace that merely holds one named `collaboration` further down is judged from there
++        assert_eq!(
++            inv(
++                r#"[{"type":"namespace","name":"functions","tools":[{"type":"namespace","name":"pool","tools":[{"type":"function","name":"enlist_helper"}]}]}]"#
++            ),
++            ToolInventory::Complete
++        );
++        assert_eq!(
++            inv(
++                r#"[{"type":"namespace","name":"functions","tools":[{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"pool","tools":[{"type":"function","name":"enlist_helper"}]}]}]}]"#
++            ),
++            ToolInventory::Breached(vec!["enlist_helper".to_string()])
++        );
++        // an unreadable entry below the nested namespace is still unproven when nothing is offered
++        assert!(matches!(
++            inv(
++                r#"[{"type":"namespace","name":"collaboration","tools":[{"type":"namespace","name":"pool","tools":{"type":"function","name":"x"}}]}]"#
++            ),
++            ToolInventory::Unproven(_)
++        ));
++    }
++
+     #[test]
+     fn a_tool_inventory_is_complete_breached_or_unproven() {
+         let inv = |j: &str| tool_inventory(Some(&serde_json::from_str::<Value>(j).unwrap()));
+diff --git a/crates/c3/src/consult/reviewed.rs b/crates/c3/src/consult/reviewed.rs
+index be7247f..6919fe4 100644
+--- a/crates/c3/src/consult/reviewed.rs
++++ b/crates/c3/src/consult/reviewed.rs
+@@ -747,7 +747,7 @@ impl DiffPlan {
+ /// those handoffs, the brief's own stem (`<NN>-<prefix>-<slug>`); otherwise `<nn>-<prefix>-diff`
+ /// with the run's handoff number (a panel member: the panel's first, so members share it) and the
+ /// coordinator's brief prefix. A brief named like a reply (`04-codex-reply.md`) is not taken as a
+-/// stem.
++/// stem. (F62-6) The stem is at most [`PATCH_STEM_MAX`] bytes ([`bounded_stem`]).
+ pub fn patch_stem(
+     brief_file: Option<&str>,
+     brief_in_handoffs: bool,
+@@ -763,13 +763,34 @@ pub fn patch_stem(
+                 let first = &c[2];
+                 if !super::args::reply_prefixes().contains(&first) {
+                     if let Some(stem) = f.strip_suffix(".md") {
+-                        return stem.to_string();
++                        return bounded_stem(stem.to_string());
+                     }
+                 }
+             }
+         }
+     }
+-    format!("{nn:02}-{prefix}-diff")
++    bounded_stem(format!("{nn:02}-{prefix}-diff"))
++}
++
++/// (F62-6) The longest patch stem, in bytes. The longest name built from a stem is the run's own
++/// one, `<stem>.<64 hex>.<32 hex>.patch` - 104 bytes more ([`patch_run_name`]; the write-temp name
++/// `<stem>.<64 hex>.<32 hex>.tmp` is 102 more) - and a file name may have 255 bytes on the usual
++/// file systems. With the full digest in the name (F57-5) a brief with a 160-byte stem, which the
++/// short-hash name still fitted, could no longer get its patch written.
++pub const PATCH_STEM_MAX: usize = 120;
++
++/// (F62-6) `stem` cut to [`PATCH_STEM_MAX`] bytes at a character boundary. Only the readable part
++/// of the name is shortened: the digest that follows it stays whole, and it is what tells two
++/// patches apart.
++fn bounded_stem(stem: String) -> String {
++    if stem.len() <= PATCH_STEM_MAX {
++        return stem;
++    }
++    let mut end = PATCH_STEM_MAX;
++    while !stem.is_char_boundary(end) {
++        end -= 1;
++    }
++    stem[..end].to_string()
+ }
+ 
+ /// The repo-relative (`/`) form of `path`, else its absolute form.
+@@ -2023,6 +2044,54 @@ mod tests {
+         assert_eq!(patch_stem(None, false, 1, "claude"), "01-claude-diff");
+     }
+ 
++    // (F62-6) A long brief name: the readable stem is cut to PATCH_STEM_MAX bytes at a character
++    // boundary, so every name built from it - the content name, the run's own name, the write-temp
++    // name - fits a 255-byte file name; a short stem is untouched and the digest is never cut.
++    #[test]
++    fn a_long_brief_stem_is_bounded_so_every_patch_name_fits() {
++        let digest = "a".repeat(64);
++        let id = "b".repeat(32);
++        let fits = |stem: &str| {
++            let name = format!("{stem}.{digest}.patch");
++            for n in [
++                name.clone(),
++                patch_run_name(&name, &id),
++                patch_temp_name(&name, &id),
++            ] {
++                assert!(n.len() <= 255, "{} bytes: {n}", n.len());
++                assert!(n.contains(&digest), "the digest is whole: {n}");
++            }
++        };
++        // the reviewer's case: a recognised 160-byte ASCII stem
++        let long = format!("03-claude-{}", "x".repeat(150));
++        assert_eq!(long.len(), 160);
++        let stem = patch_stem(Some(&format!("{long}.md")), true, 7, "claude");
++        assert_eq!(stem, &long[..PATCH_STEM_MAX]);
++        fits(&stem);
++        // two-byte characters across the cut: a character boundary, never half a character
++        let cyr = format!("03-claude-a{}", "\u{436}".repeat(100));
++        let stem = patch_stem(Some(&format!("{cyr}.md")), true, 7, "claude");
++        assert!(
++            stem.len() <= PATCH_STEM_MAX && cyr.starts_with(&stem),
++            "{stem}"
++        );
++        assert_eq!(
++            stem.len(),
++            PATCH_STEM_MAX - 1,
++            "11 ASCII bytes, then whole pairs"
++        );
++        fits(&stem);
++        // the run's own stem with a very long prefix
++        let stem = patch_stem(None, false, 7, &"p".repeat(300));
++        assert_eq!(stem.len(), PATCH_STEM_MAX);
++        fits(&stem);
++        // a short stem is as it was
++        assert_eq!(
++            patch_stem(Some("03-claude-acceptance.md"), true, 7, "claude"),
++            "03-claude-acceptance"
++        );
++    }
++
+     #[test]
+     fn diff_specs_parse_and_refuse() {
+         assert_eq!(
+diff --git a/crates/c3/src/contain.rs b/crates/c3/src/contain.rs
+index 8c15507..accb743 100644
+--- a/crates/c3/src/contain.rs
++++ b/crates/c3/src/contain.rs
+@@ -645,16 +645,13 @@ pub(crate) enum Publication {
+     /// The file was not there: published without replacing anything (a hard link to the new
+     /// name, which fails when a file appeared meanwhile - then the exchange is tried again).
+     Created,
+-    /// No atomic exchange on this system or file system: published by [`publish`]'s
+-    /// compare-then-rename, so an edit saved between the last comparison and the rename is lost -
+-    /// the limit that remains there. Why.
+-    Rename(String),
+ }
+ 
+ /// A displaced version [`publish_exchange`] kept.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub(crate) struct Kept {
+-    /// Its name in the directory (`<file>.displaced-<UTC time>`, [`displaced_name`]).
++    /// Its name in the directory (`<file>.displaced-<UTC time>`, with `-<n>` when that name was
++    /// taken: [`displaced_name`], [`place_displaced`]).
+     pub(crate) name: OsString,
+     /// `None`: it differs from the version the edit was computed from - an edit saved during the
+     /// write. `Some`: it could not be proved to be that version, or could not be removed - why.
+@@ -690,11 +687,6 @@ impl Exchanged {
+                 ),
+             });
+         }
+-        if let Publication::Rename(why) = &self.how {
+-            parts.push(format!(
+-                "{file} was replaced by rename, not by an atomic exchange ({why}): an edit saved during the write would not be kept"
+-            ));
+-        }
+         if let Some(why) = &self.cleanup {
+             parts.push(format!("{file}: {why}"));
+         }
+@@ -713,8 +705,12 @@ impl Exchanged {
+ /// `<file>.displaced-<UTC time>` ([`displaced_name`]) and returned ([`Exchanged::kept`]) for the
+ /// caller to report. Not there at all: published without replacing anything
+ /// ([`Publication::Created`]). No exchange on this system or file system (other Unix targets,
+-/// `EINVAL` / `ENOSYS` / `ENOTSUP`, `ReplaceFileW` unsupported): [`publish`]'s compare-then-rename,
+-/// said in the result ([`Publication::Rename`]).
++/// `EINVAL` / `ENOSYS` / `ENOTSUP`, `ReplaceFileW` unsupported): (acceptance review 62, answer 3)
++/// the write is REFUSED - the temporary file is removed and the file stays as it was. Until then
++/// it fell back to [`publish`]'s compare-then-rename and said so afterwards; but a rename cannot
++/// keep an edit saved between the last comparison and the rename, and these files are the ones a
++/// person edits by hand - "the displaced version is never lost" must not depend on the file
++/// system. The caller reports the refusal; the operator makes the edit by hand there.
+ ///
+ /// On Windows the exchange is `ReplaceFileW` on the paths of the directory the handle holds
+ /// (`GetFinalPathNameByHandleW`; while the handle is open the directory cannot be renamed, the same
+@@ -726,18 +722,21 @@ impl Exchanged {
+ pub(crate) fn publish_exchange(p: &Publish<'_>, basis: &[u8]) -> Result<Exchanged, PublishFailure> {
+     stage_temp(p)?;
+     race_point(&format!("{}-publish", p.race));
+-    let fallback = |why: String| -> Result<Exchanged, PublishFailure> {
+-        p.dir
+-            .rename(p.tmp, p.dir, p.leaf)
+-            .map_err(|e| failure(p, PublishError::Rename(e), remove_temp(p)))?;
+-        Ok(Exchanged {
+-            how: Publication::Rename(why),
+-            kept: None,
+-            cleanup: None,
+-        })
++    // no atomic exchange: never a rename - it could lose an edit saved during the write
++    let refuse = |why: String| -> Result<Exchanged, PublishFailure> {
++        Err(failure(
++            p,
++            PublishError::Rename(io::Error::new(
++                io::ErrorKind::Unsupported,
++                format!(
++                    "there is no atomic exchange here ({why}), and a plain rename could lose an edit saved during the write: the file was not written - make this change by hand"
++                ),
++            )),
++            remove_temp(p),
++        ))
+     };
+     if c3_core::test_hooks::hook(NO_EXCHANGE_HOOK).is_some() {
+-        return fallback("the exchange is switched off by a test hook".to_string());
++        return refuse("the exchange is switched off by a test hook".to_string());
+     }
+     let mut backup = p.tmp.to_os_string();
+     backup.push(".displaced");
+@@ -767,12 +766,12 @@ pub(crate) fn publish_exchange(p: &Publish<'_>, basis: &[u8]) -> Result<Exchange
+                 }
+                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                 Err(e) => {
+-                    return fallback(format!(
++                    return refuse(format!(
+                         "the file was not there and no hard link could be made ({e})"
+                     ))
+                 }
+             },
+-            Exchange::Unsupported(why) => return fallback(why),
++            Exchange::Unsupported(why) => return refuse(why),
+             Exchange::Failed(e, left) => {
+                 let kept = left.and_then(|at| settle_displaced(p.dir, &at, p.leaf, None));
+                 let e = match kept.map(|k| k.name) {
+@@ -813,10 +812,9 @@ fn settle_displaced(dir: &Dir, at: &OsStr, leaf: &OsStr, basis: Option<&[u8]>) -
+         Ok(_) => None,
+         Err(why) => Some(format!("it could not be read back: it {why}")),
+     };
+-    let name = displaced_name(dir, leaf);
+-    match dir.rename(at, dir, &name) {
+-        Ok(()) => Some(Kept { name, unproven }),
+-        Err(e) => Some(Kept {
++    match place_displaced(dir, at, &displaced_name(leaf), true) {
++        Ok(name) => Some(Kept { name, unproven }),
++        Err((name, e)) => Some(Kept {
+             name: at.to_os_string(),
+             unproven: Some(format!(
+                 "{}it could not be renamed to {} ({e})",
+@@ -827,19 +825,69 @@ fn settle_displaced(dir: &Dir, at: &OsStr, leaf: &OsStr, basis: Option<&[u8]>) -
+     }
+ }
+ 
+-/// A free name for a displaced version of `leaf` in `dir`: `<leaf>.displaced-<yyyymmddTHHMMSS.mmm>Z`
+-/// (UTC), with `-2`, `-3` ... appended while such an entry exists. (Only C3 makes such names; two
+-/// C3 writes of one file in the same millisecond are what the suffix is for.)
+-pub(crate) fn displaced_name(dir: &Dir, leaf: &OsStr) -> OsString {
++/// The name stem of a displaced version of `leaf`: `<leaf>.displaced-<yyyymmddTHHMMSS.mmm>Z`
++/// (UTC). [`place_displaced`] gives the version this name or the next free one.
++pub(crate) fn displaced_name(leaf: &OsStr) -> String {
+     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+-    let base = format!("{}.displaced-{stamp}", leaf.to_string_lossy());
+-    let mut name = OsString::from(&base);
+-    let mut n = 1;
+-    while !matches!(entry(dir, &name), Ok(None)) && n < 1000 {
+-        n += 1;
+-        name = OsString::from(format!("{base}-{n}"));
+-    }
+-    name
++    format!("{}.displaced-{stamp}", leaf.to_string_lossy())
++}
++
++/// (F62-4) The displaced version at `at` given its lasting name WITHOUT replacing anything, and
++/// the name it got. The name is taken by a HARD LINK - which fails when the name exists, whoever
++/// made it and whenever - first `stem`, then `stem-2`, `stem-3` ...; the temporary name is removed
++/// only after the link exists. So two writes of one file in the same millisecond can never get
++/// one name, and a file that already has a name (an earlier displaced edit) is never overwritten:
++/// before this the name was looked for and then taken by a REPLACING rename, and the search gave
++/// its last candidate back without looking at it.
++///
++/// Where no hard link can be made (`links` false in a test; a file system without them), and
++/// after a thousand taken names, the name gets 32 random hex digits - a name no other write can
++/// have - is checked to be free and is taken by rename; that one step is a look followed by a
++/// rename, the limit that remains there. `Err`: the name that was tried and why; the version is
++/// still at `at`.
++fn place_displaced(
++    dir: &Dir,
++    at: &OsStr,
++    stem: &str,
++    links: bool,
++) -> Result<OsString, (OsString, io::Error)> {
++    if links {
++        for n in 1..=1000 {
++            let name = if n == 1 {
++                OsString::from(stem)
++            } else {
++                OsString::from(format!("{stem}-{n}"))
++            };
++            match dir.hard_link(at, dir, &name) {
++                Ok(()) => {
++                    // a second name of the same file: removing the temporary one loses nothing
++                    // (when that fails the version has both names until the stale-temp sweep)
++                    let _ = dir.remove_file(at);
++                    return Ok(name);
++                }
++                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
++                Err(_) => break,
++            }
++        }
++    }
++    let name = OsString::from(format!("{stem}-{}", uuid::Uuid::new_v4().simple()));
++    match entry(dir, &name) {
++        Ok(None) => {}
++        Ok(Some(_)) => {
++            return Err((
++                name,
++                io::Error::new(
++                    io::ErrorKind::AlreadyExists,
++                    "a name with 32 random digits is taken",
++                ),
++            ))
++        }
++        Err(e) => return Err((name, e)),
++    }
++    match dir.rename(at, dir, &name) {
++        Ok(()) => Ok(name),
++        Err(e) => Err((name, e)),
++    }
+ }
+ 
+ /// What one exchange attempt did.
+@@ -1816,6 +1864,50 @@ pub(crate) mod tests {
+     // publication (the race hook writes it at `x-publish`) is displaced, not lost: the file holds the
+     // new bytes, the edit is kept byte for byte as `own.txt.displaced-<UTC time>` and returned; on
+     // this platform the publication was the atomic exchange. Without an edit nothing is left behind.
++    // (F62-4, RC4) Two displaced versions of one file with the SAME name stem (two writes in one
++    // millisecond) get two different names, each holding its own bytes, and a file that already
++    // has the name is never replaced; without hard links the name is one no other write can have.
++    #[test]
++    fn two_displaced_versions_never_share_a_name_and_nothing_is_replaced() {
++        let (base, root_p, _outside) = scratch("displaced");
++        let dir_p = root_p.join("inner");
++        let dir = Dir::open_ambient_dir(&dir_p, ambient_authority()).unwrap();
++        let stem = "own.txt.displaced-20261124T190000.000Z";
++        let read = |n: &OsStr| std::fs::read(dir_p.join(n)).unwrap();
++        // an earlier displaced edit already has the plain name
++        std::fs::write(dir_p.join(stem), b"EARLIER").unwrap();
++        std::fs::write(dir_p.join(".a.tmp"), b"FIRST").unwrap();
++        std::fs::write(dir_p.join(".b.tmp"), b"SECOND").unwrap();
++        let one = place_displaced(&dir, OsStr::new(".a.tmp"), stem, true).unwrap();
++        let two = place_displaced(&dir, OsStr::new(".b.tmp"), stem, true).unwrap();
++        assert_eq!(one, OsString::from(format!("{stem}-2")));
++        assert_eq!(two, OsString::from(format!("{stem}-3")));
++        assert_eq!(read(OsStr::new(stem)), b"EARLIER");
++        assert_eq!(read(&one), b"FIRST");
++        assert_eq!(read(&two), b"SECOND");
++        assert!(!dir_p.join(".a.tmp").exists() && !dir_p.join(".b.tmp").exists());
++        // without hard links: a name of its own, and nothing that was there is touched
++        std::fs::write(dir_p.join(".c.tmp"), b"THIRD").unwrap();
++        let three = place_displaced(&dir, OsStr::new(".c.tmp"), stem, false).unwrap();
++        let three_s = three.to_string_lossy().to_string();
++        assert!(
++            three_s.starts_with(&format!("{stem}-")) && three_s.len() == stem.len() + 1 + 32,
++            "{three_s}"
++        );
++        assert_eq!(read(&three), b"THIRD");
++        assert_eq!(read(OsStr::new(stem)), b"EARLIER");
++        assert_eq!(read(&one), b"FIRST");
++        assert_eq!(read(&two), b"SECOND");
++        assert!(!dir_p.join(".c.tmp").exists());
++        // the stem is the file's name and a UTC time
++        let now = displaced_name(OsStr::new("own.txt"));
++        assert!(
++            now.starts_with("own.txt.displaced-2") && now.ends_with('Z'),
++            "{now}"
++        );
++        let _ = std::fs::remove_dir_all(&base);
++    }
++
+     #[test]
+     fn publish_exchange_keeps_an_edit_saved_before_the_exchange_and_nothing_without_one() {
+         let (base, root_p, _outside) = scratch("exchange");
+@@ -1867,44 +1959,61 @@ pub(crate) mod tests {
+         let _ = std::fs::remove_dir_all(&base);
+     }
+ 
+-    // (F57-10, F02-2) Without an atomic exchange (forced by its test hook) the publication is the
+-    // compare-then-rename it was before and SAYS so: the new bytes are in place, nothing is left
+-    // behind, and an edit landing after the last comparison is not kept - the limit that remains on
+-    // such a system, named in the notice. A file that is not there is published without replacing
+-    // anything.
++    // (F57-10, F02-2; acceptance review 62, answer 3) Without an atomic exchange (forced by its
++    // test hook) the write is REFUSED: the file keeps its bytes, the temporary file is gone and the
++    // error says why and that nothing was written - never the compare-then-rename, which could
++    // lose an edit saved during the write. An edit landing at that moment is therefore still the
++    // file. A file that is not there is published without replacing anything.
+     #[test]
+-    fn without_an_exchange_publication_falls_back_to_the_rename_and_says_so() {
++    fn without_an_exchange_the_write_is_refused_and_the_file_is_as_it_was() {
+         let (base, root_p, _outside) = scratch("no-exchange");
+         let root = Root::open(&root_p).unwrap();
+         let file = root_p.join("inner").join("own.txt");
++        let dir = root.open_dir(Path::new("inner"), false).unwrap();
++        let any = |_: Stage| -> Result<(), String> { Ok(()) };
++        let write = |tmp: &str, bytes: &[u8], basis: &[u8]| {
++            publish_exchange(
++                &Publish {
++                    dir: &dir,
++                    leaf: OsStr::new("own.txt"),
++                    tmp: OsStr::new(tmp),
++                    bytes,
++                    permissions: None,
++                    check: &any,
++                    race: "x",
++                },
++                basis,
++            )
++        };
+         let _off = c3_core::test_hooks::set_thread_hook(NO_EXCHANGE_HOOK, "1");
+-        let done = exchange_own(&root, ".own.t1.tmp", b"NEW\n", b"INSIDE\n");
++        let refused = write(".own.t1.tmp", b"NEW\n", b"INSIDE\n").unwrap_err();
++        let why = match &refused.error {
++            PublishError::Rename(e) => {
++                assert_eq!(e.kind(), io::ErrorKind::Unsupported);
++                e.to_string()
++            }
++            other => panic!("{other:?}"),
++        };
+         assert!(
+-            matches!(&done.how, Publication::Rename(why) if why.contains("test hook")),
+-            "{done:?}"
++            why.contains("no atomic exchange")
++                && why.contains("test hook")
++                && why.contains("the file was not written"),
++            "{why}"
+         );
+-        assert_eq!(done.kept, None);
+-        assert_eq!(std::fs::read(&file).unwrap(), b"NEW\n");
++        assert!(refused.cleanup.is_none(), "the temporary file is removed");
++        assert_eq!(std::fs::read(&file).unwrap(), b"INSIDE\n");
+         assert_eq!(names(&root_p.join("inner")), vec!["own.txt".to_string()]);
+-        let notice = done.notice("own.txt", |_| String::new()).unwrap();
+-        assert!(
+-            notice.contains("replaced by rename, not by an atomic exchange"),
+-            "{notice}"
+-        );
+-        // an edit at the same moment is lost here (what the exchange closes elsewhere)
++        // an edit saved at that very moment is simply the file: nothing replaced it
+         let edit = c3_core::test_hooks::set_thread_hook(
+             RACE_HOOK,
+             &format!("x-publish|write:{}|EDITED", file.display()),
+         );
+-        let done = exchange_own(&root, ".own.t2.tmp", b"NEWER\n", b"NEW\n");
++        assert!(write(".own.t2.tmp", b"NEWER\n", b"INSIDE\n").is_err());
+         drop(edit);
+-        assert_eq!(done.kept, None);
+-        assert_eq!(std::fs::read(&file).unwrap(), b"NEWER\n");
++        assert_eq!(std::fs::read(&file).unwrap(), b"EDITED");
+         assert_eq!(names(&root_p.join("inner")), vec!["own.txt".to_string()]);
+         drop(_off);
+         // a first write: nothing to displace, nothing replaced
+-        let dir = root.open_dir(Path::new("inner"), false).unwrap();
+-        let any = |_: Stage| -> Result<(), String> { Ok(()) };
+         let done = publish_exchange(
+             &Publish {
+                 dir: &dir,
+diff --git a/crates/c3/src/maintain/engine.rs b/crates/c3/src/maintain/engine.rs
+index 05bc658..4ccd2ab 100644
+--- a/crates/c3/src/maintain/engine.rs
++++ b/crates/c3/src/maintain/engine.rs
+@@ -85,7 +85,8 @@ pub fn resolve_launcher(name: &str) -> Option<String> {
+     }
+ }
+ 
+-/// The installed version from `<launcher> --version` (first semver-like token), or `None`.
++/// The installed release from `<launcher> --version` (the first semver-like token, read as an exact
++/// release identity - (F62-1) `grok 1.0.80-rc.1` is `1.0.80-rc.1`, never `1.0.80`), or `None`.
+ pub fn installed_version(env: &dyn Env, launcher: &str) -> Option<CliVersion> {
+     // A version probe runs with the operator's provider secrets stripped (run_clean).
+     let r = env.run_clean(launcher, &["--version"], &[], None);
+@@ -95,7 +96,8 @@ pub fn installed_version(env: &dyn Env, launcher: &str) -> Option<CliVersion> {
+ /// What a check learned about the latest available version.
+ #[derive(Debug, Clone, Default)]
+ pub struct Latest {
+-    /// The latest version string (e.g. `0.170.0`), or `None` when it could not be learned.
++    /// The latest release (e.g. `0.170.0`, or exactly `0.170.0-alpha.1` - the version an update
++    /// pins), or `None` when it could not be learned.
+     pub version: Option<CliVersion>,
+     /// The release date of `version` when it can be known (npm `time`); else `None`.
+     pub released: Option<DateTime<Utc>>,
+@@ -148,6 +150,7 @@ fn check_codex(env: &dyn Env, launcher: &str) -> Latest {
+             return None;
+         }
+         let data: serde_json::Value = serde_json::from_str(out.stdout.trim()).ok()?;
++        // (F62-1) keyed by the exact release: a pre-release's own date, never its final release's
+         let stamp = data.get(v.text()).and_then(|x| x.as_str())?;
+         DateTime::parse_from_rfc3339(stamp)
+             .ok()
+diff --git a/crates/c3/src/maintain/mod.rs b/crates/c3/src/maintain/mod.rs
+index 2a1a614..cceb939 100644
+--- a/crates/c3/src/maintain/mod.rs
++++ b/crates/c3/src/maintain/mod.rs
+@@ -901,8 +901,9 @@ fn maintain_one_engine(
+         println!("c3 maintain: {name} {installed_text} {msg}");
+         return (format!("{installed_text} {msg}"), msg);
+     };
+-    // up to date
+-    if &latest_v <= inst {
++    // up to date: ORDERING (F62-1) - a pre-release is older than its final release, so an installed
++    // `1.0.80-rc.1` is not "up to date" with a vendor `1.0.80`; a tie (build metadata only) is.
++    if !latest_v.is_newer_than(inst) {
+         println!("c3 maintain: {name} up to date ({installed_text})");
+         return ("up to date".to_string(), "up to date".to_string());
+     }
+@@ -1041,8 +1042,10 @@ fn update_and_verify(
+ 
+     // Require the update to have actually taken: re-read `--version` and demand the checked target
+     // (a `grok update` that installed something else, or a silent no-op, is a failed update).
++    // (F62-1) IDENTITY, not ordering: the smoke below is credited to the release installed, so it
++    // must be exactly the target the command pinned - a `1.0.80-rc.1` is not the target `1.0.80`.
+     let after = engine::installed_version(env, launcher);
+-    if !matches!(&after, Some(v) if v >= latest_v) {
++    if !after.as_ref().is_some_and(|v| v.same_release(latest_v)) {
+         // (R1) Some other version may now be on disk: keep the pending record for recovery.
+         let now_t = after
+             .as_ref()
+@@ -1067,12 +1070,10 @@ fn update_and_verify(
+         if caps.has_rollback {
+             if let Some(res) = engine::do_rollback(env, name, launcher, installed_text, dir) {
+                 let cmd_ok = matches!(res, Ok(ref r) if r.ok());
+-                // Believe a rollback only when `--version` actually shows the previous version.
++                // Believe a rollback only when `--version` actually shows the previous version -
++                // (F62-1) exactly that release, not one of the same numbers.
+                 let back = engine::installed_version(env, launcher);
+-                let restored = back
+-                    .as_ref()
+-                    .map(|v| v.parts == inst.parts)
+-                    .unwrap_or(false);
++                let restored = back.as_ref().map(|v| v.same_release(inst)).unwrap_or(false);
+                 // (R1) Resolved only when the previous version is verified back; a failed rollback
+                 // leaves the broken new version on disk, so keep the pending record.
+                 let (msg, resolved) = if cmd_ok && restored {
+@@ -1125,6 +1126,12 @@ fn update_and_verify(
+ /// - a version that cannot be read: nothing is credited and no smoke is run (its result could not
+ ///   be attributed to a version); the record is kept for a pass that can read it.
+ ///
++/// (F62-1) Each "is it the same release" question - the previous version, the target, the version
++/// after the smoke, the version after a rollback - compares the exact release identity
++/// ([`version::CliVersion::same_release`]), never the numeric parts: an installed `1.0.80-rc.1`
++/// against a pending target `1.0.80` (or the reverse) is a THIRD version, smoked for itself and
++/// named in the action and the state.
++///
+ /// A passing smoke during which the installed version changed is credited to no version (kept). A
+ /// failing smoke is rolled back to the recorded previous version and the record is
+ /// cleared only when the rollback command succeeds AND the previous version is actually restored. A
+@@ -1200,8 +1207,9 @@ fn handle_pending_smoke(
+     use PendingOutcome::{Done, StillFailing};
+     let prev = version::parse_cli_version(&p.previous);
+     // The installed version is still the previous one: the interrupted update never took. Clear.
++    // (F62-1) exactly the previous release, not one of the same numbers
+     if let (Some(inst), Some(prev)) = (installed, prev.as_ref()) {
+-        if inst.parts == prev.parts {
++        if inst.same_release(prev) {
+             let msg = "pending update cleared (installed version unchanged)".to_string();
+             println!("c3 maintain: {name} {installed_text} - {msg}");
+             return Done(format!("{installed_text} {msg}"), msg, true);
+@@ -1218,8 +1226,10 @@ fn handle_pending_smoke(
+         return Done(format!("{installed_text} {msg}"), msg, false);
+     };
+     // (F57-3) Only the measured target can be credited with the update; a THIRD version (changed
+-    // since the record was written) is smoked for itself and every clause names it.
+-    let is_target = version::parse_cli_version(&p.target).is_some_and(|t| t.parts == inst.parts);
++    // since the record was written) is smoked for itself and every clause names it. (F62-1) The
++    // exact release: a pre-release of the target's numbers (or the final release of a pre-release
++    // target) is a third version.
++    let is_target = version::parse_cli_version(&p.target).is_some_and(|t| t.same_release(inst));
+     let third = if is_target {
+         String::new()
+     } else {
+@@ -1240,9 +1250,9 @@ fn handle_pending_smoke(
+     match outcome {
+         smoke::Smoke::Pass => {
+             // (F57-3) the pass belongs to the version that ran: `--version` again after the smoke
+-            // must still show the version measured before it
++            // must still show the version measured before it - (F62-1) the same exact release
+             let after = engine::installed_version(env, launcher);
+-            if !after.as_ref().is_some_and(|a| a.parts == inst.parts) {
++            if !after.as_ref().is_some_and(|a| a.same_release(inst)) {
+                 let after_t = after
+                     .as_ref()
+                     .map(|v| v.text().to_string())
+@@ -1277,7 +1287,7 @@ fn handle_pending_smoke(
+                     let restored = back
+                         .as_ref()
+                         .zip(prev.as_ref())
+-                        .map(|(b, pv)| b.parts == pv.parts)
++                        .map(|(b, pv)| b.same_release(pv))
+                         .unwrap_or(false);
+                     // Rollback succeeded and the previous version is back: the failed update is
+                     // undone, so the pending record may be cleared.
+@@ -1349,9 +1359,11 @@ fn try_newer_release(
+     let failing = engine::installed_version(env, launcher)?;
+     let new_text = latest_v.text().to_string();
+     let failing_text = failing.text().to_string();
+-    if latest_v <= failing {
++    // ORDERING (F62-1): a final release is newer than its failing pre-release; a pre-release is
++    // never newer than (nor tied with) its final release, so it is never tried over it.
++    if !latest_v.is_newer_than(&failing) {
+         // say so when only the fresh read stopped it (the pass-start version would have let it in)
+-        if installed_at_start.is_some_and(|start| latest_v > *start) {
++        if installed_at_start.is_some_and(|start| latest_v.is_newer_than(start)) {
+             println!(
+                 "c3 maintain: {name} {new_text} is not tried: {failing_text} is installed now (not older than it)"
+             );
+@@ -1742,7 +1754,9 @@ fn run_models(
+ 
+     // Record the collected ids as the new baseline. A public source that was not collected this
+     // time (switched off, or the fetch failed) keeps its previous record, so a later pass does not
+-    // take it for a first collection and its names stay published. (F16-1, F17-5) A legacy
++    // take it for a first collection and its names stay published - (F62-3) with the public status
++    // it was read under: a record read while its URL was not public stays unpublished until a
++    // fetch rewrites it, whatever the configuration declares meanwhile. (F16-1, F17-5) A legacy
+     // host-keyed catalog record (`web:<host>`, never trusted) is kept only until a catalog of that
+     // host is recorded under its URL: then the fetch has rewritten it.
+     let mut sources = current;
+diff --git a/crates/c3/src/maintain/models.rs b/crates/c3/src/maintain/models.rs
+index ef0812c..4295e12 100644
+--- a/crates/c3/src/maintain/models.rs
++++ b/crates/c3/src/maintain/models.rs
+@@ -22,16 +22,18 @@ use c3_core::roster::{Roster, RosterEntry};
+ pub struct SourceList {
+     pub source: String,
+     pub ids: Vec<String>,
+-    /// (F57-1) A page's provenance: the canonical URL its ids were read from
+-    /// ([`super::web::canonical_url`]) - a page's name is only its label, which a later
+-    /// configuration may give to another URL. Persisted; `None` on every other kind (a catalog's
+-    /// name is its URL) and on a page record of an older build, whose ids are then never published
+-    /// ([`super::web::provenance`]) until the next refresh rewrites the record.
++    /// (F57-1, F62-3) A public source's provenance, for a catalog and a page alike: the canonical
++    /// URL its ids were read from ([`super::web::canonical_url`]) - a page's name is only its label,
++    /// which a later configuration may give to another URL; a catalog's name is that URL again
++    /// (`web:<url>`). Persisted; `None` on an engine's or an endpoint's list and on a record of an
++    /// earlier build, whose ids are then never published ([`super::web::provenance`] - the built-in
++    /// catalog's own record excepted) until the next refresh rewrites the record.
+     #[serde(default, skip_serializing_if = "Option::is_none")]
+     pub url: Option<String>,
+-    /// (F57-1) Whether that URL was declared `"public": true` when the ids were collected - a page
+-    /// read while it was not public stays unpublished whatever a later configuration declares.
+-    /// Persisted; absent means false.
++    /// (F57-1, F62-3) Whether that URL was trusted as public ([`super::web::trusted_sources`]: a
++    /// catalog shipped in the code, or a config entry declaring it `"public": true`) when the ids
++    /// were collected - a catalog or page read while it was not public stays unpublished whatever a
++    /// later configuration declares. Persisted; absent means false.
+     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+     pub public: bool,
+     /// The catalog's `created` stamp (unix seconds) per id, when it gives one: the first-collection
+@@ -1029,11 +1031,13 @@ pub type Published = std::collections::HashSet<(String, String)>;
+ /// source, which may be private), bound to a vendor class: a `<vendor>/<model>` id to the class of
+ /// its OpenRouter vendor slug (`qwen/qwen4-max` -> `(alibaba, qwen4-max)`; an unknown slug binds
+ /// nowhere), a plain id to the class of the source's own host ([`super::web::TrustedSource`]), or
+-/// nowhere. Lower-cased. Empty when there is no state. (F16-1, F17-5, F57-1) A record matches by
+-/// its provenance ([`super::web::provenance`]) - the exact URL its ids were read from, for a
+-/// catalog and a page alike - so an id counts only when the URL it was read from is trusted itself
+-/// (and, for a page, was declared public when it was read); a legacy host-keyed catalog record or
+-/// a label-only page record of an older build matches nothing until a fetch rewrites it.
++/// nowhere. Lower-cased. Empty when there is no state. (F16-1, F17-5, F57-1, F62-3) A record matches
++/// by its provenance ([`super::web::provenance`]) - the exact URL its ids were read from, for a
++/// catalog and a page alike - so an id counts only when BOTH hold: the record says that URL was
++/// trusted as public when the ids were read, and the URL is trusted itself now. A record of an
++/// earlier build (a legacy host-keyed catalog, a custom catalog or a page without the
++/// collection-time status) matches nothing until a fetch rewrites it - except the built-in
++/// catalog's own record, identified by its exact URL.
+ pub fn published_from(state: &ModelsState, trusted: &[super::web::TrustedSource]) -> Published {
+     let mut out = Published::new();
+     for s in state.sources.iter().filter(|s| is_public_source(&s.source)) {
+@@ -2094,8 +2098,9 @@ mod tests {
+     fn published_names_come_from_public_sources_only() {
+         let st = ModelsState {
+             sources: vec![
+-                sl(
+-                    "web:https://openrouter.ai:443/api/v1/models",
++                cat_rec(
++                    "https://openrouter.ai:443/api/v1/models",
++                    true,
+                     &["qwen/Qwen4-Max"],
+                 ),
+                 page_rec("zai-docs", "https://docs.z.ai:443/models", true, &["glm-6"]),
+@@ -2158,6 +2163,115 @@ mod tests {
+         }
+     }
+ 
++    /// A catalog record as `c3 maintain` writes it since F62-3: named by its canonical URL
++    /// (`web:<url>`), with that URL and whether it was trusted as public when its ids were read.
++    fn cat_rec(url: &str, public: bool, ids: &[&str]) -> SourceList {
++        SourceList {
++            url: Some(url.into()),
++            public,
++            ..sl(&format!("web:{url}"), ids)
++        }
++    }
++
++    /// (F62-3, the reviewer's RC3 at unit level) A catalog's ids are published only when BOTH hold:
++    /// the record says its URL was trusted as public when they were read, and the configuration
++    /// trusts exactly that URL now. A record read while private stays withheld after the URL is
++    /// declared public; one read while public is withheld once the declaration is gone; a record
++    /// whose URL disagrees with its name is withheld; a custom catalog's record of an earlier build
++    /// (no status) is withheld; the built-in catalog's record of an earlier build is kept - its
++    /// exact URL proves it is the built-in one, trusted by the code in every build and read
++    /// keyless - while a record of another URL on its host is a custom catalog's.
++    #[test]
++    fn a_catalog_id_is_published_only_when_its_record_was_public_when_read() {
++        use crate::maintain::web::{provenance, trusted_sources};
++        let url = "https://models.example:443/v1/models";
++        let declared = crate::c3config::C3Config {
++            model_catalogs: Some(vec![crate::c3config::ModelCatalogConfig {
++                url: "https://Models.Example/v1/models".into(),
++                public: true,
++            }]),
++            ..Default::default()
++        };
++        let one = |rec: SourceList, cfg: Option<&crate::c3config::C3Config>| {
++            published_from(
++                &ModelsState {
++                    sources: vec![rec],
++                    ..Default::default()
++                },
++                &trusted_sources(cfg),
++            )
++        };
++        let has = |p: &Published, id: &str| p.contains(&("zai".to_string(), id.to_string()));
++        // read while private, declared public now: withheld
++        let private = cat_rec(url, false, &["z-ai/glm-9-private"]);
++        assert_eq!(provenance(&private), None);
++        assert!(one(private, Some(&declared)).is_empty());
++        // read while public and declared now: published
++        let public = cat_rec(url, true, &["z-ai/glm-9-public"]);
++        assert_eq!(
++            provenance(&public).as_deref(),
++            Some("web:https://models.example:443/v1/models")
++        );
++        assert!(has(&one(public.clone(), Some(&declared)), "glm-9-public"));
++        // ...and no longer declared: withheld - today's trust is required as well
++        assert!(one(public, None).is_empty());
++        // a record whose URL disagrees with its name: withheld
++        let odd = SourceList {
++            url: Some("https://other.example:443/v1/models".into()),
++            ..cat_rec(url, true, &["z-ai/glm-9-odd"])
++        };
++        assert_eq!(provenance(&odd), None);
++        assert!(one(odd, Some(&declared)).is_empty());
++        // a custom catalog's record of an earlier build: withheld until a refresh rewrites it
++        let legacy: ModelsState = serde_json::from_str(
++            r#"{"sources":[{"source":"web:https://models.example:443/v1/models","ids":["z-ai/glm-9-legacy"]}]}"#,
++        )
++        .unwrap();
++        assert!(legacy.sources[0].url.is_none() && !legacy.sources[0].public);
++        assert_eq!(provenance(&legacy.sources[0]), None);
++        assert!(published_from(&legacy, &trusted_sources(Some(&declared))).is_empty());
++        // the built-in catalog's record of an earlier build: kept, by its exact URL; a record of
++        // another URL on its host - declared public now - is a custom catalog's: withheld
++        let on_host = crate::c3config::C3Config {
++            model_catalogs: Some(vec![crate::c3config::ModelCatalogConfig {
++                url: "https://openrouter.ai/api/v1/models?tier=x".into(),
++                public: true,
++            }]),
++            ..Default::default()
++        };
++        let builtin_legacy: ModelsState = serde_json::from_str(
++            r#"{"sources":[{"source":"web:https://openrouter.ai:443/api/v1/models","ids":["qwen/qwen4-max"]},
++                {"source":"web:https://openrouter.ai:443/api/v1/models?tier=x","ids":["qwen/qwen4-plus"]}]}"#,
++        )
++        .unwrap();
++        assert_eq!(
++            provenance(&builtin_legacy.sources[0]).as_deref(),
++            Some("web:https://openrouter.ai:443/api/v1/models")
++        );
++        assert_eq!(provenance(&builtin_legacy.sources[1]), None);
++        let p = published_from(&builtin_legacy, &trusted_sources(Some(&on_host)));
++        assert!(
++            p.contains(&("alibaba".to_string(), "qwen4-max".to_string())),
++            "{p:?}"
++        );
++        assert!(!p.iter().any(|(_, m)| m == "qwen4-plus"), "{p:?}");
++        // the record round-trips through the state file with its status
++        let text = serde_json::to_string(&ModelsState {
++            sources: vec![cat_rec(url, true, &["z-ai/glm-9-public"])],
++            ..Default::default()
++        })
++        .unwrap();
++        assert!(
++            text.contains(r#""url":"https://models.example:443/v1/models","public":true"#),
++            "{text}"
++        );
++        let back: ModelsState = serde_json::from_str(&text).unwrap();
++        assert!(has(
++            &published_from(&back, &trusted_sources(Some(&declared))),
++            "glm-9-public"
++        ));
++    }
++
+     /// (F57-1, the reviewer's RC1 at unit level) A page's ids are published only by the exact URL
+     /// they were read from, and only when that URL was declared public when they were read: ids
+     /// collected from a NON-public page stay unpublished after its label is reused for a different,
+@@ -2265,14 +2379,28 @@ mod tests {
+         );
+         let back: ModelsState = serde_json::from_str(&text).unwrap();
+         assert!(has(&published_from(&back, &trusted), "glm-9-public"));
+-        // a catalog: the same rule - its name is its canonical URL
++        // (F62-3) a catalog: the same rule - the URL it was read from (its name is that URL) and
++        // that it was public then; a custom catalog's record without the status has none
+         assert_eq!(
+-            crate::maintain::web::provenance(&sl(
+-                "web:https://openrouter.ai:443/api/v1/models",
++            crate::maintain::web::provenance(&cat_rec(
++                "https://models.example:443/v1/models",
++                true,
+                 &[]
+             ))
+             .as_deref(),
+-            Some("web:https://openrouter.ai:443/api/v1/models")
++            Some("web:https://models.example:443/v1/models")
++        );
++        assert_eq!(
++            crate::maintain::web::provenance(&cat_rec(
++                "https://models.example:443/v1/models",
++                false,
++                &[]
++            )),
++            None
++        );
++        assert_eq!(
++            crate::maintain::web::provenance(&sl("web:https://models.example:443/v1/models", &[])),
++            None
+         );
+         assert_eq!(
+             crate::maintain::web::provenance(&sl("web:openrouter.ai", &[])),
+@@ -2306,15 +2434,17 @@ mod tests {
+         ] {
+             assert!(published_from(&old, &trusted).is_empty());
+         }
+-        // the same ids under their URL are published
++        // the same ids under their URL, read while public (F62-3), are published
+         let rewritten = ModelsState {
+             sources: vec![
+-                sl(
+-                    "web:https://openrouter.ai:443/api/v1/models",
++                cat_rec(
++                    "https://openrouter.ai:443/api/v1/models",
++                    true,
+                     &["qwen/qwen4-max"],
+                 ),
+-                sl(
+-                    "web:https://pub.example.com:443/v1/models",
++                cat_rec(
++                    "https://pub.example.com:443/v1/models",
++                    true,
+                     &["z-ai/glm-9-trusted"],
+                 ),
+             ],
+@@ -2906,8 +3036,9 @@ mod tests {
+         assert_eq!(claude_dash_form("gpt-6.2"), None);
+         let st = ModelsState {
+             sources: vec![
+-                sl(
+-                    "web:https://openrouter.ai:443/api/v1/models",
++                cat_rec(
++                    "https://openrouter.ai:443/api/v1/models",
++                    true,
+                     &[
+                         "anthropic/claude-opus-6.1",
+                         "anthropic/claude-3.5-sonnet",
+diff --git a/crates/c3/src/maintain/version.rs b/crates/c3/src/maintain/version.rs
+index 7546c87..4221990 100644
+--- a/crates/c3/src/maintain/version.rs
++++ b/crates/c3/src/maintain/version.rs
+@@ -1,83 +1,207 @@
+-//! Pure version helpers for `c3 maintain`: the installed-version parse of a CLI's `--version`
+-//! line, a numeric semver compare, and the model-id successor rule (`C3_MAINTAIN_MODELS=swap`).
++//! Pure version helpers for `c3 maintain`: the release read from a CLI's `--version` line (an exact
++//! identity plus a semver ordering), and the model-id successor rule (`C3_MAINTAIN_MODELS=swap`).
+ //!
+ //! Everything here is a pure function over strings, so the whole of the maintenance logic that
+ //! decides *what* to do (is there a newer CLI, which seated model has a successor) is proven by
+ //! unit tests without touching the machine, the network or a model.
+ 
+-/// A dotted numeric version (`0.169.0`, `1.0.77`), with an optional pre-release-ish tail kept for
+-/// display but ignored by the ordering (`1.0.70-fake` sorts as `1.0.70`). `parts` is the comparison
+-/// order, so a longer prefix-equal version is the greater one (`1.0.1 > 1.0`).
+-#[derive(Debug, Clone, PartialEq, Eq)]
++use std::cmp::Ordering;
++
++/// A CLI release as a `--version` line or a vendor's latest-release reading names it. (F62-1) It
++/// answers two different questions with two different parts, never the one by the other:
++///
++/// * IDENTITY - "is this the same release" ([`CliVersion::text`], [`CliVersion::same_release`] and
++///   `==`): the exact release text as the CLI printed it, normalised only by what cannot tell two
++///   releases apart - the surrounding whitespace, a leading `v`, a trailing full stop and the
++///   punctuation the CLI prints right after the token (`version 1.0.77,` -> `1.0.77`). The tag after
++///   the numbers is part of it: `1.0.80-rc.1` and `1.0.80` are DIFFERENT releases. So is build
++///   metadata: `1.0.80+build.7` is not `1.0.80` (two builds are two artifacts; the parser before
++///   F62-1 dropped it together with every other suffix, which was the defect, not a rule to keep).
++///   Every attribution uses the identity: which release a smoke ran on, whether the installed
++///   release is the pending target, the previous one or still the one measured before a smoke,
++///   whether a rollback restored the previous release, the version an install command pins, and what
++///   the pending journal, the state and the report name.
++/// * ORDERING - "is A newer than B" ([`CliVersion::precedence`], [`CliVersion::is_newer_than`]):
++///   semver precedence. The numeric parts first, zero-padded (`1.0.1` is newer than `1.0`, `1.0`
++///   ties `1.0.0`); on equal numbers a PRE-RELEASE - any tag after the numbers, `1.0.80-rc.1` or
++///   `1.0.80rc1` - sorts BEFORE the final release `1.0.80`, two tags compare by semver's identifier
++///   rule, and build metadata is ignored. Ordering only decides whether a release is worth
++///   installing; a tie never makes two releases the same and never seats or verifies anything.
++///
++/// The type deliberately has no `Ord`: an ordering that ignores build metadata cannot agree with an
++/// identity `==` that keeps it.
++#[derive(Debug, Clone)]
+ pub struct CliVersion {
+-    pub parts: Vec<u64>,
+-    pub raw: String,
++    /// The exact release identity (`1.0.80-rc.1`, `0.169.0`).
++    raw: String,
++    /// The numeric parts (`1.0.80-rc.1` -> `[1, 0, 80]`): ordering only, never identity.
++    parts: Vec<u64>,
++    /// The tag between the numbers and any build metadata, without its leading `-` (`rc.1`);
++    /// `None` for a final release. Ordering only.
++    pre: Option<String>,
++}
++
++impl PartialEq for CliVersion {
++    /// Identity: the same exact release ([`CliVersion::same_release`]), never the same numbers.
++    fn eq(&self, other: &Self) -> bool {
++        self.same_release(other)
++    }
+ }
+ 
++impl Eq for CliVersion {}
++
+ impl CliVersion {
+-    /// The version string as installed (the exact token parsed, e.g. `0.169.0`).
++    /// The exact release identity as installed or announced (`0.169.0`, `1.0.80-rc.1`).
+     pub fn text(&self) -> &str {
+         &self.raw
+     }
+-}
+ 
+-impl PartialOrd for CliVersion {
+-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+-        Some(self.cmp(other))
++    /// Whether `self` and `other` are the same release: the exact identity, so `1.0.80-rc.1` is not
++    /// `1.0.80`, and `1.0.80+build.7` is not `1.0.80`.
++    pub fn same_release(&self, other: &Self) -> bool {
++        self.raw == other.raw
+     }
+-}
+ 
+-impl Ord for CliVersion {
+-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
++    /// Semver precedence of `self` against `other`: the numeric parts (zero-padded), then a
++    /// pre-release BEFORE the final release of the same numbers, then the tags by semver's identifier
++    /// rule; build metadata is ignored. `Equal` is a tie in ordering only - it never means the same
++    /// release (that is [`CliVersion::same_release`]).
++    pub fn precedence(&self, other: &Self) -> Ordering {
+         let n = self.parts.len().max(other.parts.len());
+         for i in 0..n {
+             let a = self.parts.get(i).copied().unwrap_or(0);
+             let b = other.parts.get(i).copied().unwrap_or(0);
+             match a.cmp(&b) {
+-                std::cmp::Ordering::Equal => {}
++                Ordering::Equal => {}
+                 ord => return ord,
+             }
+         }
+-        std::cmp::Ordering::Equal
++        match (&self.pre, &other.pre) {
++            (None, None) => Ordering::Equal,
++            // a pre-release of the same numbers comes BEFORE its final release
++            (Some(_), None) => Ordering::Less,
++            (None, Some(_)) => Ordering::Greater,
++            (Some(a), Some(b)) => cmp_pre_release(a, b),
++        }
++    }
++
++    /// Whether `self` is a strictly newer release than `other` by [`CliVersion::precedence`]: a final
++    /// release is newer than its own pre-release, a pre-release is never newer than (nor ties) its
++    /// final release, and a build-metadata-only difference is newer in neither direction.
++    pub fn is_newer_than(&self, other: &Self) -> bool {
++        self.precedence(other) == Ordering::Greater
+     }
+ }
+ 
+-/// The first semver-like token of a CLI's `--version` output: the first whitespace-separated token
+-/// that starts (after an optional leading `v`) with `<digits>.<digits>`. `codex-cli 0.169.0` →
+-/// `0.169.0`; `grok 1.0.77 (abc) [stable]` → `1.0.77`; `2.5.3` → `2.5.3`; `grok 1.0.70-fake` →
+-/// `1.0.70`. `None` when no token looks like a version.
++/// Semver's pre-release precedence: dot-separated identifiers left to right, numeric ones
++/// numerically, others in ASCII order, a numeric identifier below a non-numeric one, and of two runs
++/// equal so far the shorter one first (`alpha` < `alpha.1` < `beta` < `rc.2` < `rc.10`).
++fn cmp_pre_release(a: &str, b: &str) -> Ordering {
++    fn numeric(s: &str) -> Option<u64> {
++        if !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()) {
++            s.parse().ok()
++        } else {
++            None
++        }
++    }
++    let mut left = a.split('.');
++    let mut right = b.split('.');
++    loop {
++        let ord = match (left.next(), right.next()) {
++            (None, None) => return Ordering::Equal,
++            (None, Some(_)) => return Ordering::Less,
++            (Some(_), None) => return Ordering::Greater,
++            (Some(x), Some(y)) => match (numeric(x), numeric(y)) {
++                (Some(m), Some(n)) => m.cmp(&n),
++                (Some(_), None) => Ordering::Less,
++                (None, Some(_)) => Ordering::Greater,
++                (None, None) => x.cmp(y),
++            },
++        };
++        if ord != Ordering::Equal {
++            return ord;
++        }
++    }
++}
++
++/// The release named by a CLI's `--version` output (or a vendor's latest-release reading): the first
++/// whitespace-separated token that starts (after an optional leading `v`) with `<digits>.<digits>`,
++/// read exactly ([`CliVersion`]). `codex-cli 0.169.0` -> `0.169.0`; `grok 1.0.77 (abc) [stable]` ->
++/// `1.0.77`; `2.5.3` -> `2.5.3`; `grok 1.0.80-rc.1` -> `1.0.80-rc.1`; `version v12.0.9,` ->
++/// `12.0.9`. `None` when no token looks like a version, and (F62-1) when the first version-shaped
++/// token cannot be read exactly (`1.0.80(rc1)`, `1.0.80_rc1`): the line then names no readable
++/// release, and a later number on it is not taken instead.
+ pub fn parse_cli_version(text: &str) -> Option<CliVersion> {
+     for token in text.split_whitespace() {
+         let token = token.trim_start_matches('v').trim_start_matches('V');
+-        if let Some(v) = version_from_token(token) {
+-            return Some(v);
++        match read_token(token) {
++            Token::Release(v) => return Some(v),
++            Token::Unclear => return None,
++            Token::Other => {}
+         }
+     }
+     None
+ }
+ 
+-/// Parse a single token as a dotted numeric version: a leading `<digits>(.<digits>)*`, keeping the
+-/// raw numeric prefix for display and the numeric parts for comparison. A trailing non-numeric tail
+-/// (`-fake`, `-alpha.2`) ends the numeric run and is ignored. Requires at least a `major.minor`.
+-fn version_from_token(token: &str) -> Option<CliVersion> {
++/// What one whitespace-separated token of a `--version` line is.
++enum Token {
++    /// Not version-shaped (`grok`, `(50ca579fa996)`, a bare `7`): the scan goes on.
++    Other,
++    /// A release, read exactly.
++    Release(CliVersion),
++    /// Version-shaped, but the release it names cannot be told exactly: the scan stops.
++    Unclear,
++}
++
++/// Read one token. It must start with a dotted number of at least `major.minor` (a bare `7` is not
++/// a version we trust). The release identity runs on over semver's characters (ASCII letters and
++/// digits, `.`, `-`, `+`), less a trailing `.`; what follows it in the token must be punctuation
++/// only (the CLI's decoration: `1.0.77,` `1.0.77)`), else the token is [`Token::Unclear`] - a letter
++/// or digit beyond an unexpected character could make two different releases read as one.
++fn read_token(token: &str) -> Token {
+     let bytes = token.as_bytes();
+-    // the numeric-and-dots prefix
++    // the numeric-and-dots prefix: the parts the ordering uses
+     let mut end = 0;
+     while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+         end += 1;
+     }
+     let head = &token[..end];
+-    let parts: Vec<u64> = head
++    let Some(parts) = head
+         .split('.')
+         .filter(|s| !s.is_empty())
+         .map(|s| s.parse::<u64>().ok())
+-        .collect::<Option<Vec<u64>>>()?;
++        .collect::<Option<Vec<u64>>>()
++    else {
++        return Token::Other;
++    };
+     if parts.len() < 2 {
+-        return None; // a bare "7" is not a version token we trust
++        return Token::Other;
++    }
++    let numbers = head.trim_end_matches('.');
++    // the release identity: the numbers and any tag / build metadata in semver's characters
++    let mut run = end;
++    while run < bytes.len()
++        && (bytes[run].is_ascii_alphanumeric() || matches!(bytes[run], b'.' | b'-' | b'+'))
++    {
++        run += 1;
++    }
++    if !token[run..].chars().all(|c| c.is_ascii_punctuation()) {
++        return Token::Unclear;
+     }
+-    // the raw: the numeric prefix with no trailing dot
+-    let raw = head.trim_end_matches('.').to_string();
+-    Some(CliVersion { parts, raw })
++    // trimming trailing dots never cuts into `numbers` (it ends in a digit)
++    let raw = token[..run].trim_end_matches('.');
++    // the tag: what follows the numbers up to the first `+` (build metadata, ordering-free)
++    let tag = raw[numbers.len()..].split('+').next().unwrap_or("");
++    let pre = if tag.is_empty() {
++        None
++    } else {
++        Some(tag.strip_prefix('-').unwrap_or(tag).to_string())
++    };
++    Token::Release(CliVersion {
++        raw: raw.to_string(),
++        parts,
++        pre,
++    })
+ }
+ 
+ // --------------------------------------------------------------------------- model-id shape guard
+@@ -283,7 +407,8 @@ mod tests {
+         assert_eq!(v("grok 1.0.77 (50ca579fa996) [stable]").text(), "1.0.77");
+         assert_eq!(v("2.5.3").text(), "2.5.3");
+         assert_eq!(v("1.5.9").text(), "1.5.9");
+-        assert_eq!(v("grok 1.0.70-fake").text(), "1.0.70");
++        // (F62-1) the tag is part of the release, never dropped
++        assert_eq!(v("grok 1.0.70-fake").text(), "1.0.70-fake");
+         assert_eq!(v("version v12.0.9 here").text(), "12.0.9");
+         // no version-like token
+         assert!(parse_cli_version("no version here").is_none());
+@@ -292,13 +417,87 @@ mod tests {
+ 
+     #[test]
+     fn version_ordering_is_numeric_not_lexical() {
+-        assert!(v("0.2.10") > v("0.2.9"));
+-        assert!(v("1.0.0") > v("0.99.99"));
+-        assert!(v("0.169.0") > v("0.155.1"));
+-        assert!(v("2.6.0") > v("2.5.3"));
+-        assert_eq!(v("1.0.77").cmp(&v("1.0.77")), std::cmp::Ordering::Equal);
++        assert!(v("0.2.10").is_newer_than(&v("0.2.9")));
++        assert!(v("1.0.0").is_newer_than(&v("0.99.99")));
++        assert!(v("0.169.0").is_newer_than(&v("0.155.1")));
++        assert!(v("2.6.0").is_newer_than(&v("2.5.3")));
++        assert!(!v("2.5.3").is_newer_than(&v("2.6.0")));
++        assert_eq!(v("1.0.77").precedence(&v("1.0.77")), Ordering::Equal);
+         // a longer prefix-equal version is greater
+-        assert!(v("1.0.1") > v("1.0"));
++        assert!(v("1.0.1").is_newer_than(&v("1.0")));
++    }
++
++    /// (F62-1) The release identity is exact - equal numbers with different tags or build metadata
++    /// are different releases - and only the decoration that cannot tell two releases apart is
++    /// dropped. The CLI-specific shapes: codex `codex-cli 0.169.0`, grok `grok 1.0.77 (hash)
++    /// [stable]`, a bare marker body, a trailing comma or full stop.
++    #[test]
++    fn equal_numbers_with_different_identities_are_different_releases() {
++        let rc = v("grok 1.0.80-rc.1");
++        let fin = v("grok 1.0.80");
++        assert_eq!(rc.text(), "1.0.80-rc.1");
++        assert_eq!(fin.text(), "1.0.80");
++        assert!(!rc.same_release(&fin) && !fin.same_release(&rc));
++        assert_ne!(rc, fin);
++        // a tag without a hyphen and build metadata are part of the identity too
++        assert_eq!(v("1.0.80rc1").text(), "1.0.80rc1");
++        assert_ne!(v("1.0.80rc1"), fin);
++        assert_eq!(v("1.0.80+build.7").text(), "1.0.80+build.7");
++        assert_ne!(v("1.0.80+build.7"), fin);
++        assert_eq!(v("1.0.80-rc.1+b.2").text(), "1.0.80-rc.1+b.2");
++        assert_ne!(v("1.0.80-rc.1+b.2"), rc);
++        // the tag is case-sensitive: no folding that could merge two releases
++        assert_ne!(v("1.0.80-RC.1"), rc);
++        // what cannot tell two releases apart is dropped: whitespace, a leading v, the CLI's
++        // decoration after the token, a trailing full stop
++        assert_eq!(v("  v1.0.80-rc.1\n"), rc);
++        assert_eq!(v("grok 1.0.80 (50ca579fa996) [stable]"), fin);
++        assert_eq!(v("kimi, version 1.0.80,"), fin);
++        assert_eq!(v("installed 1.0.80."), fin);
++        assert_eq!(v("installed 1.0.80-rc.1."), rc);
++        assert_eq!(v("(1.0.80-rc.1) 2.0.0").text(), "2.0.0"); // a parenthesised token is not read
++                                                              // the identity text reads back as itself (the pending journal stores it)
++        let full = v("grok 1.0.80-rc.1+b.2");
++        assert_eq!(parse_cli_version(full.text()), Some(full.clone()));
++        assert_eq!(parse_cli_version(rc.text()), Some(rc.clone()));
++        // a version-shaped token whose release cannot be read exactly names no release - and no
++        // later number on the line is taken instead
++        assert!(parse_cli_version("grok 1.0.80(rc1)").is_none());
++        assert!(parse_cli_version("grok 1.0.80_rc1 built with 2.0.0").is_none());
++        assert!(parse_cli_version("grok 1.0.80/linux").is_none());
++    }
++
++    /// (F62-1) The ordering: numbers first; on equal numbers a pre-release sorts BEFORE its final
++    /// release (never newer than it, never tied with it); tags by semver's identifier rule; build
++    /// metadata ignored - a tie in ordering that is still not the same release.
++    #[test]
++    fn a_pre_release_sorts_before_its_final_release() {
++        let rc = v("1.0.80-rc.1");
++        let fin = v("1.0.80");
++        assert_eq!(rc.precedence(&fin), Ordering::Less);
++        assert_eq!(fin.precedence(&rc), Ordering::Greater);
++        assert!(fin.is_newer_than(&rc));
++        assert!(!rc.is_newer_than(&fin));
++        assert!(!v("1.0.80rc1").is_newer_than(&fin));
++        assert!(fin.is_newer_than(&v("1.0.80rc1")));
++        // the numbers decide first
++        assert!(rc.is_newer_than(&v("1.0.79")));
++        assert!(v("1.0.81-alpha").is_newer_than(&fin));
++        // tags: numeric identifiers numerically, a numeric one below a word, shorter first
++        assert!(v("1.0.80-rc.2").is_newer_than(&rc));
++        assert!(v("1.0.80-rc.10").is_newer_than(&v("1.0.80-rc.9")));
++        assert!(v("1.0.80-rc.1").is_newer_than(&v("1.0.80-beta.9")));
++        assert!(v("1.0.80-alpha.1").is_newer_than(&v("1.0.80-alpha")));
++        assert!(v("1.0.80-alpha.beta").is_newer_than(&v("1.0.80-alpha.1")));
++        // build metadata: equal precedence, newer in neither direction, still not the same release
++        let b1 = v("1.0.80+b1");
++        let b2 = v("1.0.80+b2");
++        assert_eq!(b1.precedence(&b2), Ordering::Equal);
++        assert_eq!(b1.precedence(&fin), Ordering::Equal);
++        assert!(!b1.is_newer_than(&b2) && !b2.is_newer_than(&b1));
++        assert!(!b1.same_release(&b2) && !b1.same_release(&fin));
++        // a pre-release with build metadata is still a pre-release
++        assert!(fin.is_newer_than(&v("1.0.80-rc.1+b.2")));
+     }
+ 
+     #[test]
+diff --git a/crates/c3/src/maintain/web.rs b/crates/c3/src/maintain/web.rs
+index ebbdb03..b6372f9 100644
+--- a/crates/c3/src/maintain/web.rs
++++ b/crates/c3/src/maintain/web.rs
+@@ -9,7 +9,8 @@
+ //!
+ //! The step follows `C3_MAINTAIN_MODELS` (`off` = no fetch) and its own switch, default ON:
+ //! `C3_MODEL_WEB=off` or `"model_web": false` in the C3 config. `"model_catalogs"` replaces the
+-//! default catalog list, `"model_pages"` adds pages.
++//! default catalog list, `"model_pages"` adds pages. Every recorded list carries the URL it was read
++//! from and whether that URL was trusted as public then ([`provenance`]).
+ 
+ use std::time::Duration;
+ 
+@@ -30,8 +31,9 @@ pub const MAX_IDS: usize = 5000;
+ const TIMEOUT: Duration = Duration::from_secs(15);
+ 
+ /// A configured documentation page: a label, an https URL and a regex with ONE capture group whose
+-/// every capture is a candidate id. (F57-1) `public` is the page's `"public": true` at the time it
+-/// is read - recorded with its ids ([`SourceList::public`]).
++/// every capture is a candidate id. (F57-1, F62-3) `public` is whether the page's exact URL is
++/// trusted as public ([`trusted_sources`]) at the time it is read - recorded with its ids
++/// ([`SourceList::public`]).
+ #[derive(Debug, Clone)]
+ pub struct Page {
+     pub name: String,
+@@ -40,6 +42,16 @@ pub struct Page {
+     pub public: bool,
+ }
+ 
++/// (F62-3) A catalog to fetch: its URL and whether that exact URL is trusted as public
++/// ([`trusted_sources`]: a catalog shipped in the code, or a config entry declaring it `"public":
++/// true`) at the time it is read - recorded with its ids ([`SourceList::public`]), exactly as for a
++/// [`Page`].
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct Catalog {
++    pub url: String,
++    pub public: bool,
++}
++
+ /// Whether the public sources are fetched: `C3_MODEL_WEB=off` (environment wins) or `"model_web":
+ /// false` in the C3 config turns them off; default ON.
+ pub fn enabled() -> bool {
+@@ -53,33 +65,45 @@ pub fn enabled() -> bool {
+ }
+ 
+ /// The catalogs and pages to fetch, from the C3 config (defaults when there is none or it does not
+-/// load).
+-pub fn configured_sources() -> (Vec<String>, Vec<Page>) {
+-    match crate::c3config::load() {
+-        Ok(Some(cfg)) => {
+-            let catalogs = match &cfg.model_catalogs {
+-                Some(list) => list.iter().map(|c| c.url.clone()).collect(),
+-                None => DEFAULT_CATALOGS.iter().map(|s| s.to_string()).collect(),
+-            };
+-            let pages = cfg
+-                .model_pages
+-                .iter()
+-                .filter_map(|p| {
+-                    regex::Regex::new(&p.pattern).ok().map(|re| Page {
+-                        name: p.name.clone(),
+-                        url: p.url.clone(),
+-                        pattern: re,
+-                        public: p.public,
+-                    })
+-                })
+-                .collect();
+-            (catalogs, pages)
+-        }
+-        _ => (
+-            DEFAULT_CATALOGS.iter().map(|s| s.to_string()).collect(),
+-            Vec::new(),
+-        ),
+-    }
++/// load - the same reading telemetry's [`trusted_sources`] gets), through [`sources_of`].
++pub fn configured_sources() -> (Vec<Catalog>, Vec<Page>) {
++    sources_of(crate::c3config::load().ok().flatten().as_ref())
++}
++
++/// The catalogs and pages of `cfg` (the defaults for `None`: the built-in catalogs, no page), each
++/// stamped (F57-1, F62-3) with whether its exact canonical URL is trusted as public NOW
++/// ([`trusted_sources`] of the same `cfg`) - the collection-time status [`collect`] records with its
++/// ids. ONE rule for a catalog and a page: the trust that later publishes a record's ids is the
++/// trust that decided, when they were read, what the record may claim.
++pub fn sources_of(cfg: Option<&crate::c3config::C3Config>) -> (Vec<Catalog>, Vec<Page>) {
++    let trusted = trusted_sources(cfg);
++    let is_trusted =
++        |key: Option<String>| key.is_some_and(|k| trusted.iter().any(|t| t.source == k));
++    let catalog = |url: &str| Catalog {
++        url: url.to_string(),
++        public: is_trusted(catalog_source(url)),
++    };
++    let builtin = || -> Vec<Catalog> { DEFAULT_CATALOGS.iter().map(|u| catalog(u)).collect() };
++    let Some(cfg) = cfg else {
++        return (builtin(), Vec::new());
++    };
++    let catalogs = match &cfg.model_catalogs {
++        Some(list) => list.iter().map(|c| catalog(&c.url)).collect(),
++        None => builtin(),
++    };
++    let pages = cfg
++        .model_pages
++        .iter()
++        .filter_map(|p| {
++            regex::Regex::new(&p.pattern).ok().map(|re| Page {
++                name: p.name.clone(),
++                url: p.url.clone(),
++                pattern: re,
++                public: is_trusted(page_key(&p.url)),
++            })
++        })
++        .collect();
++    (catalogs, pages)
+ }
+ 
+ /// (F16-1, F17-5, F57-1) The canonical form of a public source's URL - the ONE rule by which a
+@@ -117,26 +141,46 @@ pub fn page_key(url: &str) -> Option<String> {
+     canonical_url(url).map(|u| format!("page:{u}"))
+ }
+ 
+-/// (F57-1) The provenance of a recorded source: the key [`trusted_sources`] must hold for its ids
+-/// to be published, or `None` when they never are. ONE rule for both public kinds - the exact URL
+-/// the ids were read from, in its canonical form ([`canonical_url`]):
++/// (F57-1, F62-3) The provenance of a recorded source: the key [`trusted_sources`] must hold for its
++/// ids to be published, or `None` when they never are. ONE rule for both public kinds, read from
++/// the same two fields [`collect`] writes for both: the record must say that its URL was trusted
++/// as public when the ids were read ([`SourceList::public`]), and the key is that URL
++/// ([`SourceList::url`]) in its canonical form ([`canonical_url`]) under the kind's prefix - a
++/// catalog's `web:<url>` (which must equal the record's name, F16-1: a record whose URL disagrees
++/// with its name is withheld), a page's `page:<url>` ([`page_key`]), whatever its label. So a URL
++/// declared public only later never lends its trust to ids read while it was not (F62-3), and a
++/// label reused for another URL never lends its trust to ids read from the earlier one (F57-1).
+ ///
+-/// * a catalog: its name, which IS its canonical URL (`web:<url>`, F16-1); a legacy host-keyed
+-///   record (`web:<host>`, [`is_legacy_catalog_source`]) has none;
+-/// * a page: `page:<url>` from the URL recorded with its ids ([`SourceList::url`]) - and only when
+-///   that URL was declared `"public": true` when the ids were collected ([`SourceList::public`]).
+-///   A page record of an older build carries its label alone (`page:<name>`, no URL): it has none
+-///   and is withheld until the next refresh rewrites it, so a label reused for another URL never
+-///   lends its trust to ids read from the earlier one;
+-/// * anything else (an engine's or an endpoint's own list): none.
++/// A record of an earlier build carries no collection-time status (no `url`, no `public`): it has
++/// none and is withheld until the next refresh rewrites it - a page record (label only), a custom
++/// catalog record, a legacy host-keyed catalog record (`web:<host>`,
++/// [`is_legacy_catalog_source`]). The ONE exception is the record of a catalog shipped in the code
++/// ([`is_builtin_catalog_source`]: its name is exactly a [`DEFAULT_CATALOGS`] URL in canonical
++/// form): that URL's trust never came from the configuration - every build trusted it by code and
++/// read it keyless - so it was public when its ids were read, and its key is its name. An engine's
++/// or an endpoint's own list: none.
+ pub fn provenance(s: &SourceList) -> Option<String> {
+-    if s.source.starts_with("web:") {
+-        return (!is_legacy_catalog_source(&s.source)).then(|| s.source.clone());
+-    }
+-    if s.source.starts_with("page:") && s.public {
+-        return s.url.as_deref().and_then(page_key);
++    let kind = if s.source.starts_with("web:") {
++        "web"
++    } else if s.source.starts_with("page:") {
++        "page"
++    } else {
++        return None;
++    };
++    if s.public {
++        let key = format!("{kind}:{}", canonical_url(s.url.as_deref()?)?);
++        return (kind == "page" || key == s.source).then_some(key);
+     }
+-    None
++    (s.url.is_none() && is_builtin_catalog_source(&s.source)).then(|| s.source.clone())
++}
++
++/// (F62-3) Whether a source name is exactly the record name ([`catalog_source`]) of a catalog
++/// shipped in the code ([`DEFAULT_CATALOGS`]) - by the full canonical URL, never by host: another
++/// URL on the built-in catalog's host, or a legacy host-keyed `web:openrouter.ai`, is not it.
++pub fn is_builtin_catalog_source(source: &str) -> bool {
++    DEFAULT_CATALOGS
++        .iter()
++        .any(|u| catalog_source(u).as_deref() == Some(source))
+ }
+ 
+ /// A source name as it is SHOWN - in a printed line, a report, the hook line, anything a person or
+@@ -224,6 +268,9 @@ pub struct TrustedSource {
+ /// built-in catalog's included - is trusted only by its own entry, and a legacy host-keyed record
+ /// ([`is_legacy_catalog_source`]) matches no trusted source. (F57-1) A page is trusted by its
+ /// canonical URL too ([`page_key`]) - the same rule, so the two kinds cannot drift apart.
++/// (F62-3) Today's trust alone publishes nothing: a record's ids count only when the record also
++/// says its URL was trusted as public when they were read ([`provenance`]) - the same function,
++/// applied at collection ([`sources_of`]), decided that.
+ pub fn trusted_sources(cfg: Option<&crate::c3config::C3Config>) -> Vec<TrustedSource> {
+     let mut out: Vec<TrustedSource> = Vec::new();
+     let mut add = |source: String, url: &str| {
+@@ -261,27 +308,28 @@ pub fn strip_vendor(id: &str) -> &str {
+ }
+ 
+ /// Collect every configured public source: (F16-1, F17-5) every distinct catalog URL under its own
+-/// name ([`catalog_source`]), every page under its label - (F57-1) with the canonical URL it was
+-/// read from and whether that URL was declared public, recorded with its ids ([`provenance`]). A
+-/// source that fails (network, status, cap, parse) is left out; a source with no valid id is left
+-/// out.
+-pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<SourceList> {
++/// name ([`catalog_source`]), every page under its label - each (F57-1, F62-3) with the canonical
++/// URL it was read from and whether that URL was trusted as public then ([`Catalog::public`],
++/// [`Page::public`]), recorded with its ids by one function ([`recorded`]) and read back by one rule
++/// ([`provenance`]). A source that fails (network, status, cap, parse) is left out; a source with no
++/// valid id is left out.
++pub fn collect(env: &dyn Env, catalogs: &[Catalog], pages: &[Page]) -> Vec<SourceList> {
+     let mut out: Vec<SourceList> = Vec::new();
+     let mut fetched: Vec<String> = Vec::new();
+-    for url in catalogs {
+-        let Some(source) = catalog_source(url) else {
++    for c in catalogs {
++        let (Some(source), Some(url)) = (catalog_source(&c.url), canonical_url(&c.url)) else {
+             continue;
+         };
+         if fetched.contains(&source) {
+             continue;
+         }
+         fetched.push(source.clone());
+-        let Some(body) = keyless_get(env, url) else {
++        let Some(body) = keyless_get(env, &c.url) else {
+             continue;
+         };
+         let list = parse_catalog(&body);
+         if !list.ids.is_empty() {
+-            out.push(SourceList { source, ..list });
++            out.push(recorded(source, url, c.public, list));
+         }
+     }
+     for p in pages {
+@@ -297,18 +345,28 @@ pub fn collect(env: &dyn Env, catalogs: &[String], pages: &[Page]) -> Vec<Source
+         };
+         let ids = parse_page(&body, &p.pattern);
+         if !ids.is_empty() {
+-            out.push(SourceList {
+-                source,
++            let list = SourceList {
+                 ids,
+-                url: Some(url),
+-                public: p.public,
+                 ..Default::default()
+-            });
++            };
++            out.push(recorded(source, url, p.public, list));
+         }
+     }
+     out
+ }
+ 
++/// (F57-1, F62-3) A collected list as it is recorded - ONE shape for a catalog and a page: under
++/// `source`, with the canonical `url` its ids were read from and whether that URL was trusted as
++/// public at that moment ([`sources_of`]); [`provenance`] reads exactly these two fields back.
++fn recorded(source: String, url: String, public: bool, list: SourceList) -> SourceList {
++    SourceList {
++        source,
++        url: Some(url),
++        public,
++        ..list
++    }
++}
++
+ /// A keyless GET of a public source: https only, (F15-1) on a host NAME - an IP literal or
+ /// `localhost` is never requested, in test mode either - no header but the client's own generic
+ /// User-Agent (`c3/<version>`), under [`PUBLIC_GET`] (which also discards an answer from a local or
+@@ -610,14 +668,26 @@ mod tests {
+             status: 200,
+             seen: Default::default(),
+         };
+-        let out = collect(
+-            &env,
+-            &["https://openrouter.ai/api/v1/models".to_string()],
+-            &[],
++        let (catalogs, pages) = sources_of(None);
++        assert_eq!(
++            catalogs,
++            vec![cat("https://openrouter.ai/api/v1/models", true)],
++            "the built-in catalog, trusted by the code"
+         );
++        let out = collect(&env, &catalogs, &pages);
+         assert_eq!(out.len(), 1);
+         assert_eq!(out[0].source, "web:https://openrouter.ai:443/api/v1/models");
+         assert_eq!(out[0].ids, vec!["qwen/qwen4-max"]);
++        // (F62-3) recorded with the URL it was read from and that it was public then
++        assert_eq!(
++            out[0].url.as_deref(),
++            Some("https://openrouter.ai:443/api/v1/models")
++        );
++        assert!(out[0].public);
++        assert_eq!(
++            provenance(&out[0]).as_deref(),
++            Some("web:https://openrouter.ai:443/api/v1/models")
++        );
+         let seen = env.seen.borrow();
+         assert_eq!(seen.len(), 1);
+         assert_eq!(seen[0].1, 0, "no header (no key) is ever attached");
+@@ -638,9 +708,17 @@ mod tests {
+             status: 500,
+             seen: Default::default(),
+         };
+-        assert!(collect(&env2, &["http://example.com/models".to_string()], &[]).is_empty());
++        assert!(collect(&env2, &[cat("http://example.com/models", true)], &[]).is_empty());
+         assert!(env2.seen.borrow().is_empty());
+-        assert!(collect(&env2, &["https://example.com/models".to_string()], &[]).is_empty());
++        assert!(collect(&env2, &[cat("https://example.com/models", true)], &[]).is_empty());
++    }
++
++    /// A catalog to collect, with the public status it is read under.
++    fn cat(url: &str, public: bool) -> Catalog {
++        Catalog {
++            url: url.into(),
++            public,
++        }
+     }
+ 
+     /// A fake that answers per URL (an unmapped URL is a 404) and records what was asked.
+@@ -764,7 +842,22 @@ mod tests {
+             ],
+             seen: Default::default(),
+         };
+-        let out = collect(&env, &[private.to_string(), public.to_string()], &[]);
++        let cfg = crate::c3config::C3Config {
++            model_catalogs: Some(vec![
++                crate::c3config::ModelCatalogConfig {
++                    url: private.into(),
++                    public: false,
++                },
++                crate::c3config::ModelCatalogConfig {
++                    url: public.into(),
++                    public: true,
++                },
++            ]),
++            ..Default::default()
++        };
++        let (catalogs, pages) = sources_of(Some(&cfg));
++        assert_eq!(catalogs, vec![cat(private, false), cat(public, true)]);
++        let out = collect(&env, &catalogs, &pages);
+         assert_eq!(
+             *env.seen.borrow(),
+             vec![private, public],
+@@ -776,23 +869,12 @@ mod tests {
+             "web:https://models.example:443/private/v1/models"
+         );
+         assert_eq!(out[0].ids, vec!["z-ai/glm-9-private"]);
++        assert!(!out[0].public, "read while not declared public");
+         assert_eq!(
+             out[1].source,
+             "web:https://models.example:443/public/v1/models"
+         );
+-        let cfg = crate::c3config::C3Config {
+-            model_catalogs: Some(vec![
+-                crate::c3config::ModelCatalogConfig {
+-                    url: private.into(),
+-                    public: false,
+-                },
+-                crate::c3config::ModelCatalogConfig {
+-                    url: public.into(),
+-                    public: true,
+-                },
+-            ]),
+-            ..Default::default()
+-        };
++        assert!(out[1].public);
+         let trusted = trusted_sources(Some(&cfg));
+         assert!(trusted.iter().any(|t| t.source == out[1].source));
+         assert!(!trusted.iter().any(|t| t.source == out[0].source));
+@@ -835,9 +917,9 @@ mod tests {
+         let out = collect(
+             &env,
+             &[
+-                "https://127.0.0.1/models".to_string(),
+-                "https://[::1]/models".to_string(),
+-                "https://LocalHost./models".to_string(),
++                cat("https://127.0.0.1/models", true),
++                cat("https://[::1]/models", true),
++                cat("https://LocalHost./models", true),
+             ],
+             &[
+                 page("https://192.168.1.10/models"),
+@@ -938,4 +1020,82 @@ mod tests {
+             "the public page lists it itself now: {published:?}"
+         );
+     }
++
++    /// (F62-3, the reviewer's RC3 at collection level) A catalog read while its URL was NOT
++    /// declared public, its cache holding a private id; the configuration then declares the SAME URL
++    /// public and the old cache is kept: nothing of that cache is published - the record says the
++    /// URL was not public when the ids were read (before the fix, today's trust of the URL was
++    /// enough). A refresh of the cleaned catalog rewrites the record: its public id is published,
++    /// the private one - no longer listed - is not. A custom catalog's record of an earlier build
++    /// (no status) is withheld as well.
++    #[test]
++    fn a_catalog_declared_public_later_never_publishes_ids_cached_while_it_was_private() {
++        let url = "https://models.example/v1/models";
++        let configured = |public: bool| crate::c3config::C3Config {
++            model_catalogs: Some(vec![crate::c3config::ModelCatalogConfig {
++                url: url.into(),
++                public,
++            }]),
++            ..Default::default()
++        };
++        let published = |sources: Vec<SourceList>, cfg: &crate::c3config::C3Config| {
++            crate::maintain::models::published_from(
++                &crate::maintain::models::ModelsState {
++                    sources,
++                    ..Default::default()
++                },
++                &trusted_sources(Some(cfg)),
++            )
++        };
++        // 1. read while not public: the private id is cached with that status
++        let private_env = MapHttp {
++            bodies: vec![(
++                url,
++                r#"{"data":[{"id":"z-ai/glm-9-private"},{"id":"z-ai/glm-9-public"}]}"#.to_string(),
++            )],
++            seen: Default::default(),
++        };
++        let (catalogs, pages) = sources_of(Some(&configured(false)));
++        assert_eq!(catalogs, vec![cat(url, false)]);
++        let cached = collect(&private_env, &catalogs, &pages);
++        assert_eq!(cached.len(), 1);
++        assert_eq!(cached[0].source, "web:https://models.example:443/v1/models");
++        assert_eq!(
++            cached[0].url.as_deref(),
++            Some("https://models.example:443/v1/models")
++        );
++        assert!(!cached[0].public);
++        assert_eq!(provenance(&cached[0]), None, "read while not public");
++        assert!(published(cached.clone(), &configured(false)).is_empty());
++        // 2. the same URL declared public, the old cache kept: still nothing
++        let public_cfg = configured(true);
++        assert!(trusted_sources(Some(&public_cfg))
++            .iter()
++            .any(|t| t.source == cached[0].source));
++        let p = published(cached, &public_cfg);
++        assert!(p.is_empty(), "{p:?}");
++        // 3. a refresh of the cleaned catalog: its public id is published, the private one is not
++        let clean_env = MapHttp {
++            bodies: vec![(url, r#"{"data":[{"id":"z-ai/glm-9-public"}]}"#.to_string())],
++            seen: Default::default(),
++        };
++        let (catalogs, pages) = sources_of(Some(&public_cfg));
++        assert_eq!(catalogs, vec![cat(url, true)]);
++        let refreshed = collect(&clean_env, &catalogs, &pages);
++        assert_eq!(refreshed.len(), 1);
++        assert!(refreshed[0].public);
++        let p = published(refreshed, &public_cfg);
++        assert!(
++            p.contains(&("zai".to_string(), "glm-9-public".to_string())),
++            "{p:?}"
++        );
++        assert!(!p.iter().any(|(_, m)| m == "glm-9-private"), "{p:?}");
++        // a custom catalog's record of an earlier build (no status): withheld until refreshed
++        let legacy: crate::maintain::models::ModelsState = serde_json::from_str(
++            r#"{"sources":[{"source":"web:https://models.example:443/v1/models","ids":["z-ai/glm-9-public"]}]}"#,
++        )
++        .unwrap();
++        assert_eq!(provenance(&legacy.sources[0]), None);
++        assert!(published(legacy.sources, &public_cfg).is_empty());
++    }
+ }
+diff --git a/crates/c3/src/providers.rs b/crates/c3/src/providers.rs
+index 7bc6363..f00ff57 100644
+--- a/crates/c3/src/providers.rs
++++ b/crates/c3/src/providers.rs
+@@ -2560,6 +2560,13 @@ fn resolve_collab_root_with(repo_root: &Path, collab_dir: &str, may_move: bool)
+     } else {
+         crate::state_dir::collab_dir(repo_root, joined)
+     };
++    // (0.2.5, F62-2) `.` and `..` by TEXT before anything else looks at the path - the way a
++    // collab path is classified and the way `c3 work` takes it (F61-3). The file system applies
++    // `..` to the TARGET of a link before it (not on Windows, whose path API resolves it by
++    // text): `link/../.collab` passed the link check below as the repository's own `.collab` and
++    // was then canonicalised, in the spelling it was given, to a directory beside the link's
++    // target - an external anchor, followed. One spelling from here to the run start.
++    let joined = crate::state_dir::lexical(&joined);
+     // (0.2.5, F60-1) a link on the collab path BELOW the repository root is never resolved here.
+     // Its canonical form would read as a directory outside the repository - the operator's own
+     // anchor, which a run follows - and the run's records would go where a link that arrived with
+diff --git a/crates/c3/src/state_dir.rs b/crates/c3/src/state_dir.rs
+index 5d80615..c3fe2c5 100644
+--- a/crates/c3/src/state_dir.rs
++++ b/crates/c3/src/state_dir.rs
+@@ -1936,6 +1936,8 @@ fn named_below(croot: &Path, abs: &Path) -> Option<String> {
+ /// target of a link before it (on Windows the path API resolves it by text already) - so
+ /// `link/../.collab` was checked as the repository's `.collab` and written beside the link's
+ /// target. By text in both, the directory a run start checks is the directory the run writes.
++/// (F62-2) The commands' resolver ([`crate::providers::resolve_collab_root`]) does the same before
++/// its link check and its canonical form - consult, panel, detach and work name one directory.
+ pub(crate) fn lexical(p: &Path) -> PathBuf {
+     let mut out = PathBuf::new();
+     for c in p.components() {
+diff --git a/crates/c3/src/state_dir/tests.rs b/crates/c3/src/state_dir/tests.rs
+index 0754fb0..87170b2 100644
+--- a/crates/c3/src/state_dir/tests.rs
++++ b/crates/c3/src/state_dir/tests.rs
+@@ -976,6 +976,39 @@ fn a_linked_task_directory_inside_the_folder_refuses_the_run_and_creates_nothing
+         empty(&err);
+     }
+     drop_link(&c2);
++    // (F62-2, RC2) `..` after a link is resolved by TEXT, in the resolver as in the check:
++    // `l/../.collab4` is the repository's `.collab4`, never `<the target of l>/../.collab4`
++    // (where the file system would take it when it applies `..` to the link's target)
++    let side = r.with_extension("side");
++    std::fs::create_dir_all(side.join("sub")).unwrap();
++    std::fs::create_dir_all(side.join(".collab4")).unwrap();
++    assert!(dir_link(&r.join("l"), &side.join("sub")));
++    let resolved = crate::providers::resolve_collab_root(&r, "l/../.collab4");
++    assert_eq!(resolved, r.join(".collab4"), "one spelling, by text");
++    begin_run(&r, &resolved, "t", &["handoffs"]).unwrap();
++    assert!(real_dir(&r.join(".collab4").join("t").join("handoffs")));
++    assert!(
++        std::fs::read_dir(side.join(".collab4"))
++            .unwrap()
++            .next()
++            .is_none(),
++        "nothing beside the link's target"
++    );
++    // the unresolved spelling handed straight to the run start names the same directory
++    begin_run(
++        &r,
++        &r.join("l").join("..").join(".collab4"),
++        "u",
++        &["handoffs"],
++    )
++    .unwrap();
++    assert!(real_dir(&r.join(".collab4").join("u").join("handoffs")));
++    assert!(std::fs::read_dir(side.join(".collab4"))
++        .unwrap()
++        .next()
++        .is_none());
++    drop_link(&r.join("l"));
++    let _ = std::fs::remove_dir_all(&side);
+     // a real collab root is resolved as before: canonical
+     let real = crate::providers::resolve_collab_root(&r, ".collab");
+     assert_eq!(
+diff --git a/crates/c3/src/telemetry/classes.rs b/crates/c3/src/telemetry/classes.rs
+index ac3228c..b61899e 100644
+--- a/crates/c3/src/telemetry/classes.rs
++++ b/crates/c3/src/telemetry/classes.rs
+@@ -1199,19 +1199,21 @@ mod tests {
+         use crate::maintain::models::{published_from, ModelsState};
+         use crate::maintain::web::trusted_sources;
+         // the maintain state: the built-in catalog lists qwen4-max, gemini-4-hydrogen and a Claude
+-        // id; a configured catalog (not declared public) lists glm-9-cfg; an endpoint's OWN list
+-        // (possibly private) holds glm-9-secret; a configured page lists glm-6
++        // id; a configured catalog lists glm-9-cfg; an endpoint's OWN list (possibly private)
++        // holds glm-9-secret; a configured page lists glm-6
+         let state: ModelsState = serde_json::from_str(
+             r#"{"sources":[
+-                {"source":"web:https://openrouter.ai:443/api/v1/models","ids":["qwen/qwen4-max","google/gemini-4-hydrogen","anthropic/claude-opus-6-1","mistralai/mistral-9"]},
+-                {"source":"web:https://models.example.com:443/v1/models","ids":["z-ai/glm-9-cfg","glm-9-plain"]},
++                {"source":"web:https://openrouter.ai:443/api/v1/models","url":"https://openrouter.ai:443/api/v1/models","public":true,"ids":["qwen/qwen4-max","google/gemini-4-hydrogen","anthropic/claude-opus-6-1","mistralai/mistral-9"]},
++                {"source":"web:https://models.example.com:443/v1/models","url":"https://models.example.com:443/v1/models","public":true,"ids":["z-ai/glm-9-cfg","glm-9-plain"]},
+                 {"source":"endpoint:https://api.z.ai:443/api/v1|ZAI_API_KEY|zai","ids":["glm-9-secret"]},
+                 {"source":"page:zai-docs","url":"https://docs.z.ai:443/models","public":true,"ids":["glm-6"]}
+             ]}"#,
+         )
+         .unwrap();
+-        // (F57-1: the page record carries the URL its ids were read from and that it was public
+-        // then - a label-only record of an older build is published by nothing)
++        // (F57-1, F62-3: a catalog or page record carries the URL its ids were read from and that
++        // it was public then - here both configured sources were read while declared public; a
++        // record of an older build without that status is published by nothing, the built-in
++        // catalog's own excepted)
+         // no config: only the built-in catalog is trusted (F02-19)
+         let published = published_from(&state, &trusted_sources(None));
+         let alibaba = vendor_of_class("alibaba");
+@@ -1253,7 +1255,7 @@ mod tests {
+             "other"
+         );
+         assert_eq!(model_token_with(None, "mistral-9", &published), "other");
+-        // a configured source not declared public, an endpoint's own list -> withheld
++        // a configured source not declared public now, an endpoint's own list -> withheld
+         assert_eq!(model_token_with(zai, "glm-9-cfg", &published), "other");
+         assert_eq!(model_token_with(zai, "glm-6", &published), "other");
+         assert_eq!(model_token_with(zai, "glm-9-secret", &published), "other");
+@@ -1296,6 +1298,16 @@ mod tests {
+         let p = published_from(&other_url, &trusted_sources(Some(&cfg)));
+         assert_eq!(model_token_with(zai, "glm-9-private", &p), "other");
+         assert_eq!(model_token_with(alibaba, "qwen4-max", &p), "other");
++        // (F62-3) the declared catalog's record read while it was NOT public: withheld, although
++        // the URL is declared public now
++        let read_private: ModelsState = serde_json::from_str(
++            r#"{"sources":[
++                {"source":"web:https://models.example.com:443/v1/models","url":"https://models.example.com:443/v1/models","ids":["z-ai/glm-9-cfg"]}
++            ]}"#,
++        )
++        .unwrap();
++        let p = published_from(&read_private, &trusted_sources(Some(&cfg)));
++        assert_eq!(model_token_with(zai, "glm-9-cfg", &p), "other");
+     }
+ 
+     /// (0.2.5 D3) A new Claude id is known to telemetry without a release: the built-in catalog
+@@ -1309,8 +1321,8 @@ mod tests {
+         use crate::maintain::web::trusted_sources;
+         let state: ModelsState = serde_json::from_str(
+             r#"{"sources":[
+-                {"source":"web:https://openrouter.ai:443/api/v1/models","ids":["anthropic/claude-opus-6.1","anthropic/claude-sonnet-6"]},
+-                {"source":"web:https://models.example.com:443/v1/models","ids":["anthropic/claude-haiku-6.1"]}
++                {"source":"web:https://openrouter.ai:443/api/v1/models","url":"https://openrouter.ai:443/api/v1/models","public":true,"ids":["anthropic/claude-opus-6.1","anthropic/claude-sonnet-6"]},
++                {"source":"web:https://models.example.com:443/v1/models","url":"https://models.example.com:443/v1/models","ids":["anthropic/claude-haiku-6.1"]}
+             ]}"#,
+         )
+         .unwrap();

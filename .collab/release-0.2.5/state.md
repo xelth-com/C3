@@ -1259,3 +1259,24 @@ swap -> xelth.com/C3 page after the tag.
   (the queue waited 35 minutes for memory: another session compiled SurrealDB). No further local
   cargo runs for now: C: was at 8 GB free again and a peer asked for room - `target/debug` removed
   (13 GB free). The remaining c3-cli targets run in CI on three platforms.
+
+## 2026-11-24 21:36 - round 3 in CI and at the cheap reviewers; the operator's word for Astra
+
+- f78901b pushed 21:02; CI run 45476534138 GREEN on all three jobs, first attempt (the Unix
+  assertions of this round ran there: the `..`-after-a-link tests, the exchange tests).
+- Diff reviews of `ea30cce..f78901b` (brief 63): grok :: grok-4.7 (handoff 64, n=44) - ACCEPT,
+  one note: `maintain/version.rs` `read_token` classed a dotted number with a component beyond
+  u64 as "not version-shaped", so the scan went on to a later token although the rule says it
+  stops. Fixed (`Token::Unclear` for two or more dotted components that do not all fit; unit
+  assertions). Its reply's JSON did not parse (the bridge kept the text; no finding id).
+  ZAI-claude :: glm-5.4 (handoff 65, n=45): still running at 21:36.
+- The operator, 21:25 (in Russian): "давай мучай астру" - go on, use Astra: his word for the
+  third acceptance pass, the reserve included. Also 21:29: "xelixir сейчас не собирается можешь
+  им кеш удалить" - xelixir is not being built, its cache may go.
+- Disk: C: fell to 2.7 GB free at 21:19 (a peer's alarm). Removed: xelixir's cargo output
+  (`xelixir-wt-mobile/mobile/target` debug/release/aarch64 and six small crate targets, about
+  1.6 GB; its apk, demo data and screenshots kept) and 7300 leftover C3 test directories in
+  %TEMP% (about 1 GB). 19 GB free at 21:33. No local cargo runs until the peer says so; this
+  commit's parser change is verified by CI only.
+- Flake workflow, second run (45454555632): the sequence of binaries 0 failed of 12. In the
+  loops 0 of 66 in total; in `ci` 2 of 17 Windows runs. Tech-debt entry updated.

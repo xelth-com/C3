@@ -166,17 +166,19 @@ fn read_token(token: &str) -> Token {
         end += 1;
     }
     let head = &token[..end];
-    let Some(parts) = head
-        .split('.')
-        .filter(|s| !s.is_empty())
+    let pieces: Vec<&str> = head.split('.').filter(|s| !s.is_empty()).collect();
+    if pieces.len() < 2 {
+        return Token::Other;
+    }
+    let Some(parts) = pieces
+        .iter()
         .map(|s| s.parse::<u64>().ok())
         .collect::<Option<Vec<u64>>>()
     else {
-        return Token::Other;
+        // (diff review 64) dotted numbers of which one does not fit a u64: version-shaped, but
+        // not a release that can be read exactly - the scan stops, a later number is not taken
+        return Token::Unclear;
     };
-    if parts.len() < 2 {
-        return Token::Other;
-    }
     let numbers = head.trim_end_matches('.');
     // the release identity: the numbers and any tag / build metadata in semver's characters
     let mut run = end;
@@ -412,7 +414,13 @@ mod tests {
         assert_eq!(v("version v12.0.9 here").text(), "12.0.9");
         // no version-like token
         assert!(parse_cli_version("no version here").is_none());
-        assert!(parse_cli_version("build 7").is_none()); // a bare integer is not trusted
+        // a bare integer is not trusted
+        assert!(parse_cli_version("build 7").is_none());
+        // (diff review 64) a dotted number that does not fit a u64 is version-shaped but
+        // unreadable: the scan stops there and the later `1.2.3` is not taken; a bare number
+        // of that size is not version-shaped at all
+        assert!(parse_cli_version("tool 18446744073709551616.1 also 1.2.3").is_none());
+        assert_eq!(v("tool 18446744073709551616 1.2.3").text(), "1.2.3");
     }
 
     #[test]
