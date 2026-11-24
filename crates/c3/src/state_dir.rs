@@ -598,8 +598,47 @@ pub struct MoveLock {
 
 impl Drop for MoveLock {
     fn drop(&mut self) {
+        // under the gate, so a takeover of this very record cannot fall between the compare and
+        // the removal (without the gate the release still happens, as before)
+        let _gate = takeover_gate(&self.path);
         if read_lock(&self.path).is_some_and(|r| r.token == self.token) {
             let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// The name of the gate file of the move lock at `lock`: `<lock>.gate`, next to it.
+fn gate_path(lock: &Path) -> PathBuf {
+    let mut name = lock.as_os_str().to_os_string();
+    name.push(".gate");
+    PathBuf::from(name)
+}
+
+/// (0.2.5, found by the acceptance review) The gate of the move lock's takeover and release: an OS
+/// lock on the file `<lock>.gate`, held only for one compare-and-remove. The takeover read the
+/// record, judged it stale, read it again and removed the file - two separate steps: of two
+/// processes that judged the same stale record, the first could remove it and create its own lock
+/// between the second's compare and its removal, the second then removed THAT lock and created
+/// another, and both held "the" lock - two movers in the section the lock exists to keep single.
+/// Under the gate the compare and the removal are one step among C3 processes. The OS releases the
+/// lock when its holder dies, so the gate has no stale state of its own, and the gate file is
+/// never removed (removing a locked file would bring the same race back). `None` when the gate
+/// cannot be opened or is not free within a second: a taker then removes nothing.
+fn takeover_gate(lock: &Path) -> Option<std::fs::File> {
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(gate_path(lock))
+        .ok()?;
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match f.try_lock() {
+            Ok(()) => return Some(f),
+            Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(_) => return None,
         }
     }
 }
@@ -745,46 +784,106 @@ fn file_age_secs(path: &Path) -> Option<u64> {
 /// whose owner cannot be shown alive (another host's) and is older than [`LOCK_STALE_SECS`], or one
 /// that does not parse and is older than [`LOCK_GARBAGE_SECS`]. (R7b, F48-2) The lock of an owner
 /// that is alive on this machine is NEVER taken over, whatever its age: the caller waits its bounded
-/// wait and goes on without moving. Returns whether the caller should retry at once (taken away, or
-/// already gone).
+/// wait and goes on without moving. The final compare and the removal happen under the
+/// [`takeover_gate`]. Returns whether the caller should retry at once (taken away, or already
+/// gone).
 fn take_over_if_stale(path: &Path) -> bool {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
         Err(_) => return false,
     };
-    let age = file_age_secs(path);
-    let stale = match serde_json::from_slice::<LockRec>(&bytes) {
-        Ok(rec) => {
-            let here = rec.host.is_empty()
-                || rec
-                    .host
-                    .eq_ignore_ascii_case(&c3_core::host::machine_name());
-            if here {
-                // (a pid reused - even by this process - has another start time: gone)
-                !crate::liveness::proc::pid_alive(rec.pid, &rec.start_time)
-            } else {
-                age.is_some_and(|a| a > LOCK_STALE_SECS)
-            }
-        }
-        Err(_) => age.is_none_or(|a| a > LOCK_GARBAGE_SECS),
-    };
-    // only the record that was judged is removed (another taker may have replaced it meanwhile)
-    if stale && std::fs::read(path).ok().as_deref() == Some(&bytes[..]) {
-        return std::fs::remove_file(path).is_ok();
+    if !lock_is_stale(&bytes, file_age_secs(path)) {
+        return false;
     }
-    false
+    // only the record that was judged is removed, and the compare and the removal are one step
+    // among C3 processes ([`takeover_gate`]): another taker may have replaced it meanwhile
+    let Some(_gate) = takeover_gate(path) else {
+        return false;
+    };
+    match std::fs::read(path) {
+        Ok(now) if now == bytes => std::fs::remove_file(path).is_ok(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        _ => false,
+    }
 }
 
-/// Who holds the lock, in words.
+/// The stale rule of [`take_over_if_stale`] on a lock file's bytes and its age, judged only.
+fn lock_is_stale(bytes: &[u8], age: Option<u64>) -> bool {
+    match serde_json::from_slice::<LockRec>(bytes) {
+        Ok(rec) if lock_is_here(&rec) => {
+            // (a pid reused - even by this process - has another start time: gone)
+            !crate::liveness::proc::pid_alive(rec.pid, &rec.start_time)
+        }
+        Ok(_) => age.is_some_and(|a| a > LOCK_STALE_SECS),
+        Err(_) => age.is_none_or(|a| a > LOCK_GARBAGE_SECS),
+    }
+}
+
+/// Whether a lock record is this machine's (an empty host counts as this machine's).
+fn lock_is_here(rec: &LockRec) -> bool {
+    rec.host.is_empty()
+        || rec
+            .host
+            .eq_ignore_ascii_case(&c3_core::host::machine_name())
+}
+
+/// Who holds the lock, in words ([`lock_words`]).
 fn holder_words(path: &Path) -> String {
     match read_lock(path) {
-        Some(r) => format!(
-            "the move lock is held by c3 pid {} on {} ({}) since {}",
-            r.pid, r.host, r.purpose, r.created
-        ),
+        Some(r) => lock_words(&r),
         None => "the move lock is held by another c3 process".to_string(),
     }
+}
+
+/// (0.2.5 D5) A lock record in words the operator can find its process by: the owner's pid, its
+/// host when it is another host's lock, what it holds the lock for and since when (the time the
+/// record was written, in UTC to the second). The record's own text is shown with its control and
+/// format characters replaced by `?`.
+fn lock_words(r: &LockRec) -> String {
+    let plain = |s: &str| -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_control() || crate::unicode::is_format_char(c) {
+                    '?'
+                } else {
+                    c
+                }
+            })
+            .collect()
+    };
+    let host = if lock_is_here(r) {
+        String::new()
+    } else {
+        format!(" on host {}", plain(&r.host))
+    };
+    let since = chrono::DateTime::parse_from_rfc3339(&r.created)
+        .map(|t| {
+            t.with_timezone(&chrono::Utc)
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string()
+        })
+        .unwrap_or_else(|_| plain(&r.created));
+    format!(
+        "the move lock is held by c3 pid {}{host} ({}) since {since}",
+        r.pid,
+        plain(&r.purpose)
+    )
+}
+
+/// (0.2.5 D5) Who holds the move lock of `repo_root` now, in [`lock_words`]' words; `None` when no
+/// lock is there or the one there is stale (the next writing command takes it over). Read only -
+/// `c3 doctor` names the holder in its line for the folder.
+pub fn move_lock_holder(repo_root: &Path) -> Option<String> {
+    let path = lock_path(repo_root);
+    let bytes = std::fs::read(&path).ok()?;
+    if lock_is_stale(&bytes, file_age_secs(&path)) {
+        return None;
+    }
+    Some(match serde_json::from_slice::<LockRec>(&bytes) {
+        Ok(r) => lock_words(&r),
+        Err(_) => "the move lock is held by another c3 process".to_string(),
+    })
 }
 
 // ------------------------------------------------------------------------------ the move
@@ -1885,7 +1984,11 @@ pub type Current = Result<Option<String>, String>;
 /// and a rename relative to that handle ([`contain::publish`]) - it REPLACES the file (a second
 /// hard link of it never sees the write) and a directory swapped for a link meanwhile cannot take
 /// it outside. When the folder was removed between the preparation and the write, the write is
-/// made again at the folder's place now. Returns the file written.
+/// made again at the folder's place now. Returns the file written. (0.2.5 D5) Before it writes, it
+/// sweeps the directory of its own stale temporary files ([`is_write_temp_name`], unchanged for
+/// [`WRITE_TEMP_STALE_SECS`] or more - a writer killed between its write and its rename left them)
+/// through the same handle ([`contain::sweep_stale_temps`]: regular files only, no link followed,
+/// every failure ignored).
 pub fn write_in(
     repo_root: &Path,
     dir: &Path,
@@ -1909,6 +2012,7 @@ pub fn write_in(
             }
         };
         check(contain::Stage::BeforeCreate)?;
+        contain::sweep_stale_temps(&d, is_write_temp_name, WRITE_TEMP_STALE_SECS);
         let current: Current = match contain::read_file_in(&d, leaf) {
             Ok(b) => String::from_utf8(b)
                 .map(Some)
@@ -1929,7 +2033,7 @@ pub fn write_in(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|t| t.as_nanos())
             .unwrap_or(0);
-        let tmp = format!(".{name}.c3-{}-{nanos}.tmp", std::process::id());
+        let tmp = write_temp_name(name, std::process::id(), nanos);
         // (the race tests swap the directory for a link at `state-write-create`)
         let published = contain::publish(&contain::Publish {
             dir: &d,
@@ -1958,6 +2062,34 @@ pub fn write_in(
         return Err(failure.with_cleanup(msg));
     }
     Err(last)
+}
+
+/// (0.2.5 D5) From this age (seconds since its last change) a temporary file of [`write_in`]'s own
+/// pattern ([`is_write_temp_name`]) is the debris of a writer killed between its write and its
+/// rename: the next write into that directory removes it.
+pub const WRITE_TEMP_STALE_SECS: u64 = 24 * 60 * 60;
+
+/// The temporary name [`write_in`] writes `name` under before its rename:
+/// `.<name>.c3-<pid>-<nanos>.tmp`.
+fn write_temp_name(name: &str, pid: u32, nanos: u128) -> String {
+    format!(".{name}.c3-{pid}-{nanos}.tmp")
+}
+
+/// (0.2.5 D5) Whether `name` is a temporary name of [`write_in`]'s own pattern
+/// ([`write_temp_name`]): a dot, a non-empty file name, `.c3-`, the writer's pid and a time in
+/// nanoseconds (ASCII digits both), `.tmp` - nothing else.
+fn is_write_temp_name(name: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let Some(rest) = name.strip_prefix('.').and_then(|r| r.strip_suffix(".tmp")) else {
+        return false;
+    };
+    let Some((file, ids)) = rest.rsplit_once(".c3-") else {
+        return false;
+    };
+    match ids.split_once('-') {
+        Some((pid, nanos)) => !file.is_empty() && digits(pid) && digits(nanos),
+        None => false,
+    }
 }
 
 // ------------------------------------------------------------------------------ the collab cache

@@ -38786,6 +38786,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1795509915
+                    },
+                    {
+                        "n":  39,
+                        "consult_id":  "d6771dda-b00f-40a1-957a-9e6688b7ec49",
+                        "lineage":  "openai :: gpt-6.2-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6.2-astra",
+                        "engine":  "codex",
+                        "purpose":  "acceptance",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-24T12:10:40+01:00",
+                        "useful":  "partly",
+                        "note":  "",
+                        "when":  "2026-11-24T12:36:05+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795520165
                     }
                 ]
 }

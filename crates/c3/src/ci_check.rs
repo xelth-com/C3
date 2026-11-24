@@ -49,6 +49,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::unicode::is_format_char;
+
 /// The one deadline of the check in `c3 finish`: every git and `gh` process it starts.
 pub const FINISH_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -117,25 +119,6 @@ fn branch_text_ok(name: &str) -> bool {
         && !name
             .chars()
             .any(|c| c.is_control() || c.is_whitespace() || is_format_char(c))
-}
-
-/// The Unicode format characters (general category Cf) that can reorder or hide text.
-fn is_format_char(c: char) -> bool {
-    matches!(
-        c as u32,
-        0x00AD
-            | 0x0600..=0x0605
-            | 0x061C
-            | 0x06DD
-            | 0x070F
-            | 0x180E
-            | 0x200B..=0x200F
-            | 0x202A..=0x202E
-            | 0x2060..=0x2064
-            | 0x2066..=0x206F
-            | 0xFEFF
-            | 0xFFF9..=0xFFFB
-    )
 }
 
 /// A run's `databaseId`: a JSON unsigned integer, or a string of 1 to 20 ASCII digits; `None` for

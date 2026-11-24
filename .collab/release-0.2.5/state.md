@@ -846,3 +846,47 @@ swap -> xelth.com/C3 page after the tag.
   worktree isolation never ran against the real CLI; the Cf table is duplicated in reviewed.rs and
   ci_check.rs; --diff-untracked fails on Windows for a name with U+202E (Git for Windows).
 - Next: commit, push, CI; version 0.2.5; TECH_DEBT; the acceptance.
+
+## 2026-11-24 12:09 - e599f27 and adac2ed pushed; the acceptance runs
+
+- e599f27 (waves R7a, R7b, R8 + three corrections) and adac2ed (version 0.2.5, CHANGELOG heading
+  `## [0.2.5] - 2026-11-24`, brief 54) are on origin/main. CI: run 45380754438 for e599f27 was in
+  progress (Linux default green), a second run started for adac2ed.
+- The tech-debt file (.eck/TECH_DEBT.md, ignored) is updated: 11 items closed or decided, a section
+  "State at the 0.2.5 release" with the open observations and what is left to build. The pinned
+  plugin harness for the effort relaxation is DROPPED: its scripts directory is gone and parity
+  with the retired PowerShell bridge is no release gate since the Phase 2 switch.
+- **Parked: the standing partner's acceptance.** Detach id f761a18d
+  (f761a18d-3e56-4fe6-aebf-2cd6fd3713a8), brief
+  .collab/release-0.2.5/handoffs/54-claude-acceptance.md, new thread, purpose acceptance,
+  `--rev HEAD` (adac2ed), run with the build of the merged tree
+  (scratchpad/bin/c3-review4.exe). Come back:
+  `c3 consult --task release-0.2.5 --status --id f761a18d`.
+- After ACCEPT: commit the records, wait for green CI, annotated tag v0.2.5, push the tag; release
+  build and install; `c3 doctor --fix` here (the folder move); .c3/config.json with
+  finish_checks; the skills astra / workers to .c3/collab; the page.
+
+## 2026-11-24 12:36 - CI green for e599f27 and adac2ed; the acceptance was stopped by the quota budget
+
+- CI: runs 45380754438 (e599f27) and 45381568432 (adac2ed) are green on all three jobs.
+- Acceptance run f761a18d (handoff 55) was stopped after 240 s at the bridge's quota budget: the
+  ChatGPT 5-hour window reached 90 % (resets 14:09), week 68 % until Nov 29. 989 406 input tokens
+  in 14 calls, the thread replays 907 KB per tool call. The partial
+  (handoffs/55-codex-acceptance.partial.md) holds two agent messages; the second: "I found two
+  places where the final round still relies on a check before a separate write. I'm tracing their
+  effects on the move lock and on the patch bytes named in the ledger." Rated: partly.
+- I traced both myself:
+  1. **The move lock's takeover is compare-then-remove (real).** Two processes that judged the same
+     stale record: the first removes it and creates its own lock between the second's compare and
+     its removal, the second removes THAT lock - two movers. Fixed: the compare and the removal
+     (takeover and the owner's release) happen under an OS lock on `<lock>.gate`
+     (`takeover_gate`, state_dir.rs); the gate file is never removed. state_dir tests 26 passed.
+  2. **The patch placement without hard links is judge-then-rename (a limit, said now).** A rename
+     replaces: a FOREIGN file with other bytes appearing at the content-addressed name in the
+     window is replaced. With hard links the name is judged again. Said in the CHANGELOG entry and
+     at the code; not changed (the claim protocol was removed on purpose in R8).
+- Wave D5 (worktree-agent-a888c6b15fe9a86ec, opus) runs: one Cf table, write_in temp sweep, the
+  move lock's owner in the message, an untracked file git cannot hash, the telemetry family label.
+- Plan: land D5 + the gate fix in one commit, CI; at 14:10 the acceptance again - a NEW thread, a
+  short brief (pass 2) that names the partial and the changes since adac2ed. One full window must
+  do: no Sol run, nothing else on the ChatGPT account until then.

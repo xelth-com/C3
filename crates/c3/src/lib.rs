@@ -60,4 +60,6 @@ pub mod state_dir;
 
 pub(crate) mod contain;
 
+pub(crate) mod unicode;
+
 pub mod budget;

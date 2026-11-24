@@ -175,6 +175,10 @@ pub fn run(args: DoctorArgs) -> i32 {
     not_checked.dedup();
     // (0.2.5, S2 F36-3) a `.c3` that is a link (or not a directory): every writing command refuses
     let state_link = crate::state_dir::link_problem(&repo_root);
+    // (0.2.5 D5) who holds the move lock while only `.eck/` exists (diagnostic context, no finding)
+    let move_lock = (report.state_layout == Layout::LegacyOnly)
+        .then(|| crate::state_dir::move_lock_holder(&repo_root))
+        .flatten();
     // a repair that could not be made is a finding of its own (an AGENTS.md one has no scan line)
     let clean = report.is_clean()
         && repair.problems.iter().all(|p| p.old == NOT_READ)
@@ -200,6 +204,7 @@ pub fn run(args: DoctorArgs) -> i32 {
                 },
                 "read": report.state_read,
                 "link_problem": state_link,
+                "move_lock": move_lock,
             },
             "state_moves": state_moves,
             "state_move_problem": state_problem,
@@ -336,11 +341,19 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "[i] no {}/ folder - `c3 init` creates it",
                 crate::state_dir::STATE_DIR
             ),
-            Layout::LegacyOnly if crate::state_dir::migration_enabled() => println!(
-                "[i] no {}/ folder yet - {}/ is read until a writing command (c3 init, c3 finish, c3 fail, c3 manifest, c3 doctor --fix) moves it",
-                crate::state_dir::STATE_DIR,
-                crate::state_dir::LEGACY_STATE_DIR
-            ),
+            Layout::LegacyOnly if crate::state_dir::migration_enabled() => match &move_lock {
+                None => println!(
+                    "[i] no {}/ folder yet - {}/ is read until a writing command (c3 init, c3 finish, c3 fail, c3 manifest, c3 doctor --fix) moves it",
+                    crate::state_dir::STATE_DIR,
+                    crate::state_dir::LEGACY_STATE_DIR
+                ),
+                // (0.2.5 D5) a live owner's lock is never taken over: name the process to look at
+                Some(holder) => println!(
+                    "[warn] no {}/ folder yet - {}/ stays in use while {holder}; the move waits until that process ends",
+                    crate::state_dir::STATE_DIR,
+                    crate::state_dir::LEGACY_STATE_DIR
+                ),
+            },
             Layout::LegacyOnly => println!(
                 "[i] no {}/ folder - {}/ is read and left as it is ({}=off or \"state_migrate\": false); a writing command creates a fresh {}/",
                 crate::state_dir::STATE_DIR,

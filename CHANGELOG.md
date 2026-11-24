@@ -252,7 +252,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   nothing overwritten; if it does not exist the patch is published by a hard link, or where there
   are none by ONE atomic rename of the temporary file onto the name (two runs with equal bytes may
   both do it - the result is the same file). An empty file at the name (an earlier build's claim)
-  is replaced by the rename. Nothing ever removes the final name. (F53-4, F43-7) Write-temp files
+  is replaced by the rename. Nothing ever removes the final name. The limit that remains: the
+  comparison and the publication are two steps, so on a file system WITHOUT hard links a foreign
+  file with other bytes that appears at this content-addressed name between them is replaced by
+  the rename (with hard links the publication fails on an existing name and the name is judged
+  again). (F53-4, F43-7) Write-temp files
   of C3's own pattern (`<stem>.<sha8>.<32 hex>.tmp`) older than a day are removed when a patch is
   placed in that directory. Removed: `reuse_patch`, `place_without_link`, `drop_own_claim`, the
   stale-claim age `PATCH_CLAIM_STALE_SECS` and the hooks `CODEX_CONSULT_TEST_PATCH_RENAME_FAIL` and
@@ -483,6 +487,60 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **Two takers of a stale move lock can no longer both hold it (found by the acceptance review).**
+  The lock that keeps the move of `.eck/` to `.c3/` single is taken over when its owner is gone:
+  the taker read the record, judged it stale, read it again and removed the file - two separate
+  steps. Of two processes that judged the same stale record, the first could remove it and create
+  its own lock between the second's compare and its removal; the second then removed THAT lock
+  and created another, and both ran the move. The compare and the removal are now one step among
+  C3 processes: they happen under an OS lock on the gate file `<lock>.gate` next to the lock (in
+  git's directory), and the owner's release goes through the same gate. The OS drops that lock
+  when its holder dies, so the gate has no stale state; the gate file is never removed. A taker
+  that cannot get the gate within a second removes nothing. Test:
+  `the_move_lock_is_exclusive_and_a_dead_owners_lock_is_taken_over` (nothing is taken while the
+  gate is held; a taker that judged the dead record does not remove the lock that replaced it).
+- **One table of the Unicode format characters.** The untracked-file names of a `--diff` patch
+  (`consult/reviewed.rs`) and the branch name of the red-CI line (`ci_check.rs`) each had their own
+  table of the format characters (category Cf) that keep a name from being shown; the CI line's
+  lacked U+0890-0891, U+08E2 and the supplementary-plane ones (U+110BD, U+110CD, U+13430-1343F,
+  U+1BCA0-1BCA3, U+1D173-1D17A, U+E0001, U+E0020-E007F). Both now use one function
+  (`unicode::is_format_char`, the full table), so a branch name holding one of those is no longer
+  printed. Test: `the_format_characters_are_exactly_category_cf`.
+- **The project folder's writer sweeps its own stale temporary files.** `write_in` writes a file as
+  `.NAME.c3-<pid>-<nanos>.tmp` and renames it into place; a writer killed between the two left the
+  temporary file for ever. Every write now first removes the files of exactly that pattern in its
+  directory that have not changed for a day - through the directory's handle, regular files only,
+  never through a link, every failure ignored. The patch placement's sweep of its own temporary
+  files is the same helper (`contain::sweep_stale_temps`), which now also leaves any reparse point
+  alone. Test: `write_in_sweeps_its_own_stale_temp_files`.
+- **"The move lock is held" names the process that holds it.** A live owner's move lock is never
+  taken over, so a hung owner keeps `.eck/` from moving to `.c3/` while every command goes on in
+  `.eck/` and says so. The line now names what the lock records - the owner's pid, its host when it
+  is another host's lock, what it holds the lock for and since when (UTC, to the second) - and `c3
+  doctor`'s line for the folder says the same (`[warn] ... stays in use while the move lock is held
+  by c3 pid N (move) since ...`; `state_folder.move_lock` in `--json`) while the lock is held. Test:
+  `a_live_owners_old_lock_is_not_taken_over`.
+- **An untracked file git cannot read no longer fails a `--diff-untracked` run.** An untracked
+  file that a virus scanner takes away or holds while the patch is made (or that another process
+  holds locked) made `git diff` fail (`open(...): Function not implemented` on Windows) and the
+  whole run with it. It was found through C3's own test: its fixture `<U+202E>txt.exe` has the name
+  shape of a spoofed executable, Windows Defender quarantined it in the middle of the test
+  (`Trojan:Win32/Artoelo.A`, by the name alone), and the failure was first taken for a limit of Git
+  for Windows; the fixture is now `a<U+202E>b.txt`. When the batch of all untracked files fails and the
+  tracked changes alone render, each untracked file is now tried on its own; the ones git cannot
+  read are left out, counted among the left-out untracked files with their reason ("git could not
+  read it") in the notice on stderr before the reviewer starts, the handoff header, the prompt line
+  and the ledger (`untracked_left_out`, `untracked_left_out_count`, `untracked_left_out_reason`) -
+  named only when the name holds no control or format character - and the patch carries the rest.
+  Tests: `a_one_revision_patch_leaves_untracked_files_out_unless_asked` (the file with U+202E in its
+  name is kept),
+  `an_untracked_file_git_cannot_read_is_left_out_and_the_run_goes_on`.
+- **A Claude id spelled with dots is its listed id in telemetry.** OpenRouter spells Claude ids with
+  dots (`anthropic/claude-opus-4.7`); an id the closed list holds in the claude engine's dash
+  spelling (`claude-opus-4-7`) was still sent as `other` unless a catalog had published the dotted
+  form. A dotted Claude id of the published Claude shape is now matched against the closed list and
+  the published set in its dash form and sent as they spell it; nothing outside them is ever sent.
+  Test: `a_claude_id_spelled_with_dots_is_its_listed_dash_id`.
 - **A hung CI step fails with its log, and the steps after it still run (F38-1).** The per-crate
   test steps of the `ci` workflow ran with `if: success() || failure()` under a job-level limit
   only: a step that hung was cancelled with the whole job, its log was lost and the remaining

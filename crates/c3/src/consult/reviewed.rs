@@ -639,7 +639,8 @@ pub struct DiffPlan {
     /// without `--diff-untracked`.
     pub untracked: Vec<String>,
     /// (0.2.5 R8) The untracked (not ignored, not excluded) files a one-revision patch LEFT OUT (the
-    /// default), in git's order. Empty for a range and under `--diff-untracked`.
+    /// default), in git's order. Empty for a range; (0.2.5 D5) under `--diff-untracked` the files
+    /// git could not read ([`render_patch_with`]).
     pub untracked_left_out: Vec<String>,
     /// (0.2.5 D1, F28-3) How many byte sequences of git's output were not valid UTF-8 and were
     /// replaced (U+FFFD) before the redaction: the patch is not byte-exact there.
@@ -865,7 +866,8 @@ fn nul_list(bytes: &[u8]) -> Vec<String> {
 
 /// A rendered `--diff` patch: its bytes (as git wrote them), the untracked files a one-revision
 /// patch carries (only under `--diff-untracked`) and - (0.2.5 R8) by default - the untracked files it
-/// left out. Both lists are empty for a range.
+/// left out ((0.2.5 D5) under `--diff-untracked`: the ones git could not read). Both lists are empty
+/// for a range.
 #[derive(Debug, Clone, Default)]
 pub struct RenderedPatch {
     pub bytes: Vec<u8>,
@@ -895,6 +897,12 @@ pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result
 /// path carries its `base` version (or is absent), so it shows no change; a one-revision diff's
 /// temporary index gives each excluded path the revision's version marked skip-worktree. With
 /// nothing excluded the command is the plain `git diff` it always was.
+///
+/// (0.2.5 D5) Under `--diff-untracked` an untracked file git cannot read (a virus scanner took it
+/// away or holds it, another process holds it locked) does not fail the patch: when the batch of
+/// all untracked files fails
+/// and the tracked changes alone render, the files are tried one by one ([`split_unreadable`]), the
+/// ones git cannot read are returned as left out, and the patch carries the rest.
 pub fn render_patch_with(
     repo: &Path,
     spec: &DiffSpec,
@@ -987,12 +995,51 @@ pub fn render_patch_with(
                     repo.join(p)
                 }
             };
-            let tmp = temp_index_path();
-            if index.is_file() {
-                std::fs::copy(&index, &tmp)
-                    .map_err(|e| format!("the index could not be copied ({e})"))?;
-            }
-            let result = (|| -> Result<RenderedPatch, String> {
+            // a fresh temporary copy of the real index (nothing when the repository has none yet)
+            let fresh_index = || -> Result<PathBuf, String> {
+                let tmp = temp_index_path();
+                if index.is_file() {
+                    std::fs::copy(&index, &tmp)
+                        .map_err(|e| format!("the index could not be copied ({e})"))?;
+                }
+                Ok(tmp)
+            };
+            // the patch against the working tree with the files `carried` marked intent-to-add, in
+            // a temporary index of its own
+            let render = |carried: &[String]| -> Result<Vec<u8>, String> {
+                let tmp = fresh_index()?;
+                let result = (|| -> Result<Vec<u8>, String> {
+                    if !carried.is_empty() {
+                        let mut marked: Vec<u8> = Vec::new();
+                        for p in carried {
+                            marked.extend_from_slice(p.as_bytes());
+                            marked.push(0);
+                        }
+                        git_out(
+                            repo,
+                            &[
+                                "--literal-pathspecs",
+                                "add",
+                                "--intent-to-add",
+                                "--pathspec-from-file=-",
+                                "--pathspec-file-nul",
+                            ],
+                            Some(&tmp),
+                            Some(&marked),
+                        )?;
+                    }
+                    let hidden = hidden_of(&[], rev, Some(&tmp))?;
+                    if !hidden.is_empty() {
+                        let base = worktree::resolve_commit(repo, rev)?;
+                        hide_in_index(repo, &tmp, &base, &hidden, true)?;
+                    }
+                    run(&args_of(&["--no-color", "--no-ext-diff"], rev), Some(&tmp))
+                })();
+                remove_temp_index(&tmp);
+                result
+            };
+            let tmp = fresh_index()?;
+            let listed = (|| -> Result<Vec<String>, String> {
                 let mut ls: Vec<String> = vec![
                     "ls-files".into(),
                     "--others".into(),
@@ -1005,51 +1052,95 @@ pub fn render_patch_with(
                 // (R5, F19-2) an untracked file is a change - unless a `.c3ignore` excludes it
                 // (`--exclude-standard` already left the git-ignored ones out)
                 let hidden = ignore_excluded(repo, &untracked)?;
-                let found: Vec<String> = untracked
+                Ok(untracked
                     .into_iter()
                     .filter(|p| !hidden.contains(p))
-                    .collect();
-                // (0.2.5 R8) carried only when asked; by default left out (and named)
-                let (carried, left_out) = if include_untracked {
-                    (found, Vec::new())
-                } else {
-                    (Vec::new(), found)
-                };
-                if !carried.is_empty() {
-                    let mut marked: Vec<u8> = Vec::new();
-                    for p in &carried {
-                        marked.extend_from_slice(p.as_bytes());
-                        marked.push(0);
-                    }
-                    git_out(
-                        repo,
-                        &[
-                            "--literal-pathspecs",
-                            "add",
-                            "--intent-to-add",
-                            "--pathspec-from-file=-",
-                            "--pathspec-file-nul",
-                        ],
-                        Some(&tmp),
-                        Some(&marked),
-                    )?;
-                }
-                let hidden = hidden_of(&[], rev, Some(&tmp))?;
-                if !hidden.is_empty() {
-                    let base = worktree::resolve_commit(repo, rev)?;
-                    hide_in_index(repo, &tmp, &base, &hidden, true)?;
-                }
-                let bytes = run(&args_of(&["--no-color", "--no-ext-diff"], rev), Some(&tmp))?;
-                Ok(RenderedPatch {
-                    bytes,
-                    untracked: carried,
-                    untracked_left_out: left_out,
-                })
+                    .collect())
             })();
             remove_temp_index(&tmp);
-            result
+            let found = listed?;
+            // (0.2.5 R8) carried only when asked; by default left out (and named)
+            if !include_untracked {
+                return Ok(RenderedPatch {
+                    bytes: render(&[])?,
+                    untracked: Vec::new(),
+                    untracked_left_out: found,
+                });
+            }
+            let failure = match render(&found) {
+                Ok(bytes) => {
+                    return Ok(RenderedPatch {
+                        bytes,
+                        untracked: found,
+                        untracked_left_out: Vec::new(),
+                    })
+                }
+                Err(e) => e,
+            };
+            // (0.2.5 D5) the batch failed: when the tracked changes alone render, an untracked file
+            // git cannot read made it fail - each file is tried on its own, the ones git cannot read
+            // are left out, and the patch is made with the rest
+            if found.is_empty() || render(&[]).is_err() {
+                return Err(failure);
+            }
+            let (readable, unreadable) = split_unreadable(repo, rev, &found, fresh_index()?);
+            Ok(RenderedPatch {
+                bytes: render(&readable)?,
+                untracked: readable,
+                untracked_left_out: unreadable,
+            })
         }
     }
+}
+
+/// (0.2.5 D5) The untracked files `paths` split into the ones git can read and the ones it cannot,
+/// each tried ON ITS OWN in the temporary index `probe` (removed afterwards): marked intent-to-add,
+/// then its own patch against `rev` rendered - a file whose mark or patch fails (a file a virus
+/// scanner took away or holds, a file another process holds locked, a file gone meanwhile) is one
+/// git cannot read. Only called after the batch of all of them failed.
+fn split_unreadable(
+    repo: &Path,
+    rev: &str,
+    paths: &[String],
+    probe: PathBuf,
+) -> (Vec<String>, Vec<String>) {
+    let mut readable = Vec::new();
+    let mut unreadable = Vec::new();
+    for p in paths {
+        let read = git_out(
+            repo,
+            &["--literal-pathspecs", "add", "--intent-to-add", "--", p],
+            Some(&probe),
+            None,
+        )
+        .and_then(|_| {
+            git_out(
+                repo,
+                &[
+                    "--literal-pathspecs",
+                    "-c",
+                    "core.quotepath=false",
+                    "diff",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "--end-of-options",
+                    rev,
+                    "--",
+                    p,
+                ],
+                Some(&probe),
+                None,
+            )
+        })
+        .is_ok();
+        if read {
+            readable.push(p.clone());
+        } else {
+            unreadable.push(p.clone());
+        }
+    }
+    remove_temp_index(&probe);
+    (readable, unreadable)
 }
 
 /// A fresh temporary index file name (nothing created).
@@ -1193,27 +1284,10 @@ fn is_patch_temp_name(name: &str) -> bool {
 /// (0.2.5 R8, F53-4 / F43-7) Remove from the handoffs directory `dir` (through its handle, regular
 /// files only, best effort) every write-temp file of C3's own patch pattern ([`is_patch_temp_name`])
 /// unchanged for [`PATCH_TEMP_STALE_SECS`] or more: a placement killed between its write and its
-/// placement left it, and nothing else ever removes it.
+/// placement left it, and nothing else ever removes it. (0.2.5 D5) The sweep is the one the project
+/// folder's writer uses too ([`crate::contain::sweep_stale_temps`]).
 fn sweep_stale_patch_temps(dir: &cap_std::fs::Dir) {
-    let Ok(entries) = dir.entries() else {
-        return;
-    };
-    for e in entries.flatten() {
-        let name = e.file_name();
-        if !name.to_str().is_some_and(is_patch_temp_name) {
-            continue;
-        }
-        let stale = e
-            .metadata()
-            .ok()
-            .filter(|m| m.is_file())
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.into_std().elapsed().ok())
-            .is_some_and(|age| age.as_secs() >= PATCH_TEMP_STALE_SECS);
-        if stale {
-            let _ = dir.remove_file(&name);
-        }
-    }
+    crate::contain::sweep_stale_temps(dir, is_patch_temp_name, PATCH_TEMP_STALE_SECS);
 }
 
 /// (0.2.5 D1, F43-1) The task's handoffs directory `dir_path`, opened - and what is missing of it
@@ -1363,7 +1437,11 @@ fn place_patch_in(
                         return Ok(());
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                    // no hard links on this file system: one atomic rename of the whole file
+                    // no hard links on this file system: one atomic rename of the whole file.
+                    // The limit: the look above and this rename are two steps, and a rename
+                    // replaces - a foreign file with OTHER bytes that appears at this
+                    // content-addressed name between them is replaced (a sibling's file has the
+                    // same bytes). With hard links the name is judged again instead.
                     Err(_) => dir.rename(tmp, dir, leaf),
                 }
             }
@@ -1431,39 +1509,14 @@ pub fn invalid_utf8_sequences(raw: &[u8]) -> usize {
 /// How many untracked files the operator notice and the ledger name.
 pub const UNTRACKED_NAMED: usize = 10;
 
-/// (0.2.5 R8, F53-5) Whether `c` is a Unicode format character (general category Cf): a bidi
-/// override, a zero-width character, a soft hyphen... - it can reorder or hide what a name shows.
-fn is_format_char(c: char) -> bool {
-    matches!(
-        c as u32,
-        0x00AD
-            | 0x0600..=0x0605
-            | 0x061C
-            | 0x06DD
-            | 0x070F
-            | 0x0890..=0x0891
-            | 0x08E2
-            | 0x180E
-            | 0x200B..=0x200F
-            | 0x202A..=0x202E
-            | 0x2060..=0x2064
-            | 0x2066..=0x206F
-            | 0xFEFF
-            | 0xFFF9..=0xFFFB
-            | 0x110BD
-            | 0x110CD
-            | 0x13430..=0x1343F
-            | 0x1BCA0..=0x1BCA3
-            | 0x1D173..=0x1D17A
-            | 0xE0001
-            | 0xE0020..=0xE007F
-    )
-}
+/// (0.2.5 D5) Why a `--diff-untracked` patch left an untracked file out (the ledger's
+/// `untracked_left_out_reason`).
+pub const UNREADABLE_REASON: &str = "git could not read it";
 
 /// (0.2.5 D1, F18-4 / F19-2 / F20-6) Untracked file names as the operator notice, the handoff and
 /// the ledger name them: at most [`UNTRACKED_NAMED`] names, each as data (in backticks; (0.2.5 R8,
-/// F53-5) a name with a backtick, a control character or a format character - category Cf - is
-/// counted instead), and how many more there are.
+/// F53-5) a name with a backtick, a control character or a format character - category Cf,
+/// [`crate::unicode::is_format_char`] - is counted instead), and how many more there are.
 pub fn named_paths(paths: &[String]) -> (Vec<String>, usize) {
     let mut named: Vec<String> = Vec::new();
     let mut more = 0usize;
@@ -1471,7 +1524,7 @@ pub fn named_paths(paths: &[String]) -> (Vec<String>, usize) {
         if named.len() < UNTRACKED_NAMED
             && !p
                 .chars()
-                .any(|c| c == '`' || c.is_control() || is_format_char(c))
+                .any(|c| c == '`' || c.is_control() || crate::unicode::is_format_char(c))
         {
             named.push(p.clone());
         } else {
@@ -1506,14 +1559,37 @@ fn shown_list(named: &[String], more: usize) -> String {
 /// The notice printed on stderr before the reviewer starts - and (0.2.5 R8) kept as a run warning,
 /// so the handoff header and the ledger carry it too - when a one-revision patch carries untracked
 /// files (`--diff-untracked`) or (0.2.5 R8, the default) left untracked files out: how many, up to
-/// ten names (as data), the rest as a count. `None` when there are none either way.
+/// ten names (as data), the rest as a count. `None` when there are none either way. (0.2.5 D5)
+/// Under `--diff-untracked` it names the files left out because git could not read them too.
 pub fn untracked_notice(plan: &DiffPlan) -> Option<String> {
+    let unreadable = (plan.include_untracked && !plan.untracked_left_out.is_empty()).then(|| {
+        let (named, more) = named_paths(&plan.untracked_left_out);
+        let list = if named.is_empty() {
+            format!("{more} name(s) not shown")
+        } else {
+            shown_list(&named, more)
+        };
+        format!(
+            "{} untracked file(s) were left out - git could not read them: {list}",
+            plan.untracked_left_out.len()
+        )
+    });
     if !plan.untracked.is_empty() {
         let (named, more) = untracked_named(plan);
-        return Some(format!(
+        let mut n = format!(
             "the -Diff patch includes {} untracked file(s) with their content (--diff-untracked; redacted only where a value looks like a secret): {}",
             plan.untracked.len(),
             shown_list(&named, more)
+        );
+        if let Some(u) = unreadable {
+            n.push_str("; ");
+            n.push_str(&u);
+        }
+        return Some(n);
+    }
+    if let Some(u) = unreadable {
+        return Some(format!(
+            "the -Diff patch holds the tracked changes only: {u}"
         ));
     }
     if !plan.untracked_left_out.is_empty() {
@@ -1588,8 +1664,14 @@ pub fn diff_prompt_line(plan: &DiffPlan) -> String {
     } else {
         l.push('.');
     }
-    // (0.2.5 R8) the tracked changes only: say so, so an absent new file is not read as deleted
-    if !plan.untracked_left_out.is_empty() {
+    // (0.2.5 R8) the tracked changes only: say so, so an absent new file is not read as deleted;
+    // (0.2.5 D5) under --diff-untracked the files left out are the ones git could not read
+    if plan.include_untracked && !plan.untracked_left_out.is_empty() {
+        l.push_str(&format!(
+            " {} untracked file(s) of the working tree were left out of it (git could not read them).",
+            plan.untracked_left_out.len()
+        ));
+    } else if !plan.untracked_left_out.is_empty() {
         l.push_str(&format!(
             " {} untracked file(s) of the working tree were left out of it (only tracked changes are in the patch).",
             plan.untracked_left_out.len()
@@ -1610,7 +1692,8 @@ pub fn diff_prompt_line(plan: &DiffPlan) -> String {
 /// output was not valid UTF-8 everywhere (F28-3); `untracked` (up to ten names) and
 /// `untracked_count` when a one-revision patch carries untracked files (`--diff-untracked`);
 /// (0.2.5 R8) `untracked_left_out` (up to ten names) and `untracked_left_out_count` when it left
-/// untracked files out (the default).
+/// untracked files out (the default); (0.2.5 D5) under `--diff-untracked` those are the files git
+/// could not read, and `untracked_left_out_reason` says so ([`UNREADABLE_REASON`]).
 pub fn ledger_diff_value(plan: &DiffPlan) -> serde_json::Value {
     let mut v = serde_json::json!({
         "range": plan.range,
@@ -1633,6 +1716,9 @@ pub fn ledger_diff_value(plan: &DiffPlan) -> serde_json::Value {
         let (named, _) = named_paths(&plan.untracked_left_out);
         v["untracked_left_out"] = serde_json::json!(named);
         v["untracked_left_out_count"] = serde_json::json!(plan.untracked_left_out.len());
+        if plan.include_untracked {
+            v["untracked_left_out_reason"] = serde_json::json!(UNREADABLE_REASON);
+        }
     }
     v
 }
@@ -2666,7 +2752,9 @@ mod tests {
             std::fs::write(r.join(format!("new{i:02}.txt")), format!("NEW-BODY-{i}\n")).unwrap();
         }
         std::fs::write(r.join("odd`name.txt"), "ODD-BODY\n").unwrap();
-        std::fs::write(r.join("\u{202e}txt.exe"), "BIDI-BODY\n").unwrap();
+        // (a format character in a harmless name: `<U+202E>txt.exe`, the name shape of a spoofed
+        // executable, was quarantined by Windows Defender in the middle of this test)
+        std::fs::write(r.join("a\u{202e}b.txt"), "BIDI-BODY\n").unwrap();
         // the default: tracked changes only, the untracked files named as left out
         let mut only = plan_diff(&r, &handoffs, None, 1, "claude", "HEAD");
         write_patch(&mut only, &r, &r.join(".collab")).unwrap();
@@ -2707,22 +2795,32 @@ mod tests {
         assert!(diff_prompt_line(&only).contains(
             "13 untracked file(s) of the working tree were left out of it (only tracked changes are in the patch)."
         ));
-        // --diff-untracked: carried, through the redactor, and the notice says so (Git for Windows
-        // cannot hash the bidi-named file, so it goes first)
-        std::fs::remove_file(r.join("\u{202e}txt.exe")).unwrap();
+        // --diff-untracked: carried, through the redactor, and the notice says so. (0.2.5 D5) The
+        // the bidi-named file stays: where git can read it, it is in the patch like the rest; where
+        // it cannot (a scanner took it away meanwhile) it is left out with its reason, counted,
+        // never named - and the run goes on with the rest
+        let bidi = "a\u{202e}b.txt";
         let mut plan = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
         plan.include_untracked = true;
         write_patch(&mut plan, &r, &r.join(".collab")).unwrap();
-        assert_eq!(plan.untracked.len(), 12, "{:?}", plan.untracked);
-        assert!(plan.untracked_left_out.is_empty());
         let text = std::fs::read_to_string(&plan.path).unwrap();
         assert!(
             text.contains("+NEW-BODY-10") && text.contains("+ODD-BODY"),
             "{text}"
         );
+        let read = plan.untracked.iter().any(|p| p == bidi);
+        let carried = if read { 13 } else { 12 };
+        assert_eq!(plan.untracked.len(), carried, "{:?}", plan.untracked);
+        if read {
+            assert!(plan.untracked_left_out.is_empty());
+            assert!(text.contains("+BIDI-BODY"), "{text}");
+        } else {
+            assert_eq!(plan.untracked_left_out, vec![bidi.to_string()]);
+            assert!(!text.contains("BIDI-BODY"), "{text}");
+        }
         let (named, more) = untracked_named(&plan);
         assert_eq!(named.len(), UNTRACKED_NAMED);
-        assert_eq!(more, 2);
+        assert_eq!(more, carried - UNTRACKED_NAMED);
         assert!(
             !named
                 .iter()
@@ -2731,18 +2829,40 @@ mod tests {
         );
         let notice = untracked_notice(&plan).unwrap();
         assert!(
-            notice.starts_with("the -Diff patch includes 12 untracked file(s) with their content (--diff-untracked;"),
+            notice.starts_with(&format!("the -Diff patch includes {carried} untracked file(s) with their content (--diff-untracked;")),
             "{notice}"
         );
         assert!(
-            notice.contains("`new00.txt`") && notice.contains("and 2 more"),
+            notice.contains("`new00.txt`")
+                && notice.contains(&format!("and {} more", carried - UNTRACKED_NAMED)),
             "{notice}"
         );
+        assert!(!notice.contains('\u{202e}'), "{notice}");
         let v = ledger_diff_value(&plan);
-        assert_eq!(v["untracked_count"], 12, "{v}");
+        assert_eq!(v["untracked_count"], carried, "{v}");
         assert_eq!(v["untracked"].as_array().map(|a| a.len()), Some(10), "{v}");
-        assert!(v.get("untracked_left_out").is_none(), "{v}");
-        assert!(!diff_prompt_line(&plan).contains("left out of it"));
+        assert!(!v.to_string().contains('\u{202e}'), "{v}");
+        let line = diff_prompt_line(&plan);
+        if read {
+            assert!(v.get("untracked_left_out").is_none(), "{v}");
+            assert!(!line.contains("left out of it"), "{line}");
+        } else {
+            assert!(
+                notice.ends_with(
+                    "; 1 untracked file(s) were left out - git could not read them: 1 name(s) not shown"
+                ),
+                "{notice}"
+            );
+            assert_eq!(v["untracked_left_out_count"], 1, "{v}");
+            assert_eq!(v["untracked_left_out"], serde_json::json!([]), "{v}");
+            assert_eq!(v["untracked_left_out_reason"], UNREADABLE_REASON, "{v}");
+            assert!(
+                line.contains(
+                    " 1 untracked file(s) of the working tree were left out of it (git could not read them)."
+                ),
+                "{line}"
+            );
+        }
         // a range carries no untracked file and leaves none out
         git_capture(&r, &["add", "app.txt"]).unwrap();
         git_capture(&r, &["commit", "-q", "-m", "tracked"]).unwrap();
@@ -2750,6 +2870,110 @@ mod tests {
         write_patch(&mut ranged, &r, &r.join(".collab")).unwrap();
         assert!(ranged.untracked.is_empty() && ranged.untracked_left_out.is_empty());
         assert!(untracked_notice(&ranged).is_none());
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5 D5) Under `--diff-untracked` an untracked file git cannot read (held locked by another
+    // process on Windows, unreadable by its mode elsewhere) is left out with its reason - named,
+    // since its name is plain - in the notice, the prompt line and the ledger, and the patch is made
+    // with the files git could add. (A process that reads every file anyway - root - sees it carried.)
+    #[test]
+    fn an_untracked_file_git_cannot_read_is_left_out_and_the_run_goes_on() {
+        let r = repo("unreadable");
+        let handoffs = r.join(".collab/t/handoffs");
+        std::fs::write(r.join("app.txt"), "tracked change\n").unwrap();
+        std::fs::write(r.join("fresh.txt"), "FRESH-BODY\n").unwrap();
+        let locked = r.join("locked.txt");
+        std::fs::write(&locked, "LOCKED-BODY\n").unwrap();
+        #[cfg(windows)]
+        let hold = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&locked)
+                .unwrap()
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = std::fs::read(&locked).is_err();
+        let mut plan = plan_diff(&r, &handoffs, None, 1, "claude", "HEAD");
+        plan.include_untracked = true;
+        let written = write_patch(&mut plan, &r, &r.join(".collab"));
+        #[cfg(windows)]
+        drop(hold);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644));
+        }
+        written.unwrap();
+        let text = std::fs::read_to_string(&plan.path).unwrap();
+        assert!(
+            text.contains("+tracked change") && text.contains("+FRESH-BODY"),
+            "{text}"
+        );
+        if !blocked {
+            assert_eq!(plan.untracked, vec!["fresh.txt", "locked.txt"]);
+            assert!(plan.untracked_left_out.is_empty());
+            let _ = std::fs::remove_dir_all(r.parent().unwrap());
+            return;
+        }
+        assert!(!text.contains("LOCKED-BODY"), "{text}");
+        assert_eq!(plan.untracked, vec!["fresh.txt"]);
+        assert_eq!(plan.untracked_left_out, vec!["locked.txt"]);
+        assert_eq!(
+            untracked_notice(&plan).unwrap(),
+            "the -Diff patch includes 1 untracked file(s) with their content (--diff-untracked; redacted only where a value looks like a secret): `fresh.txt`; 1 untracked file(s) were left out - git could not read them: `locked.txt`"
+        );
+        assert!(diff_prompt_line(&plan).ends_with(
+            " 1 untracked file(s) of the working tree were left out of it (git could not read them)."
+        ));
+        let v = ledger_diff_value(&plan);
+        assert_eq!(v["untracked"], serde_json::json!(["fresh.txt"]), "{v}");
+        assert_eq!(v["untracked_count"], 1, "{v}");
+        assert_eq!(
+            v["untracked_left_out"],
+            serde_json::json!(["locked.txt"]),
+            "{v}"
+        );
+        assert_eq!(v["untracked_left_out_count"], 1, "{v}");
+        assert_eq!(v["untracked_left_out_reason"], UNREADABLE_REASON, "{v}");
+        // the only untracked file unreadable: the tracked changes alone, and the notice says why
+        let mut alone = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        alone.include_untracked = true;
+        std::fs::remove_file(r.join("fresh.txt")).unwrap();
+        #[cfg(windows)]
+        let hold = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&locked)
+                .unwrap()
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let written = write_patch(&mut alone, &r, &r.join(".collab"));
+        #[cfg(windows)]
+        drop(hold);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644));
+        }
+        written.unwrap();
+        assert!(alone.untracked.is_empty());
+        assert_eq!(
+            untracked_notice(&alone).unwrap(),
+            "the -Diff patch holds the tracked changes only: 1 untracked file(s) were left out - git could not read them: `locked.txt`"
+        );
         let _ = std::fs::remove_dir_all(r.parent().unwrap());
     }
 

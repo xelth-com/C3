@@ -274,6 +274,34 @@ pub(crate) fn list(dir: &Dir) -> io::Result<Vec<OsString>> {
     Ok(names)
 }
 
+/// (0.2.5 D5) Remove from `dir`, through its handle, every REGULAR file whose name `is_temp`
+/// accepts and that has not changed for `stale_secs` seconds or more: the write-temp debris a writer
+/// killed between its write and its rename leaves, which nothing else ever removes. Each entry is
+/// judged on metadata read without following it ([`kind_of`]: a link - on Windows any reparse
+/// point - a directory or anything else is never touched) and removed relative to the same handle.
+/// Best effort: every failure is ignored, so the caller's own write never fails for it.
+pub(crate) fn sweep_stale_temps(dir: &Dir, is_temp: impl Fn(&str) -> bool, stale_secs: u64) {
+    let Ok(entries) = dir.entries() else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        if !name.to_str().is_some_and(&is_temp) {
+            continue;
+        }
+        let stale = dir
+            .symlink_metadata(&name)
+            .ok()
+            .filter(|m| kind_of(m) == Kind::File)
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.into_std().elapsed().ok())
+            .is_some_and(|age| age.as_secs() >= stale_secs);
+        if stale {
+            let _ = dir.remove_file(&name);
+        }
+    }
+}
+
 /// Why a root could not be opened.
 #[derive(Debug)]
 pub(crate) enum RootError {

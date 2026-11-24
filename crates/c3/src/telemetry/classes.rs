@@ -358,6 +358,18 @@ pub(crate) fn model_token_with(
     {
         return m.to_string();
     }
+    // (0.2.5 D5) a Claude id spelled with dots (OpenRouter's `claude-opus-4.7`) is the claude
+    // engine's dash id: sent as the table spells it, or as published - never in a third spelling
+    if v.class == "anthropic" {
+        if let Some(dashed) = crate::maintain::models::claude_dash_form(m) {
+            if let Some(known) = v.models.iter().find(|known| known.to_lowercase() == dashed) {
+                return known.to_string();
+            }
+            if published.contains(&(v.class.to_string(), dashed.clone())) {
+                return dashed;
+            }
+        }
+    }
     "other".to_string()
 }
 
@@ -1330,6 +1342,51 @@ mod tests {
         // another Claude-shaped id stays withheld
         assert_eq!(
             model_token_with(anthropic, "claude-opus-6-2", &published),
+            "other"
+        );
+    }
+
+    /// (0.2.5 D5) A Claude id spelled with dots - OpenRouter's spelling - is the listed (or
+    /// published) dash id, sent as the table (or the published set) spells it, on the anthropic
+    /// class and through the OpenRouter route alike; a dotted id neither lists nor publishes stays
+    /// `other`, and so does a dotted id of another vendor.
+    #[test]
+    fn a_claude_id_spelled_with_dots_is_its_listed_dash_id() {
+        use crate::maintain::models::Published;
+        let none = Published::default();
+        let anthropic = vendor_of_class("anthropic");
+        assert_eq!(
+            model_token_with(anthropic, "claude-opus-4.7", &none),
+            "claude-opus-4-7"
+        );
+        assert_eq!(
+            model_token_with(anthropic, "Claude-Haiku-4.5[1m]", &none),
+            "claude-haiku-4-5"
+        );
+        assert_eq!(
+            model_token_with(
+                vendor_of_class("openrouter"),
+                "anthropic/claude-sonnet-4.6",
+                &none
+            ),
+            "anthropic/claude-sonnet-4-6"
+        );
+        assert_eq!(
+            model_token_with(anthropic, "claude-opus-9.7", &none),
+            "other"
+        );
+        assert_eq!(
+            model_token_with(anthropic, "claude-opus-4.7.1", &none),
+            "other"
+        );
+        let mut published = Published::default();
+        published.insert(("anthropic".to_string(), "claude-opus-9-7".to_string()));
+        assert_eq!(
+            model_token_with(anthropic, "claude-opus-9.7", &published),
+            "claude-opus-9-7"
+        );
+        assert_eq!(
+            model_token_with(vendor_of_class("zai"), "glm-5-3", &none),
             "other"
         );
     }

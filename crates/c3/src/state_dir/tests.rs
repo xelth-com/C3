@@ -356,9 +356,37 @@ fn the_move_lock_is_exclusive_and_a_dead_owners_lock_is_taken_over() {
         token: "dead".into(),
     };
     std::fs::write(&p, serde_json::to_vec(&dead).unwrap()).unwrap();
+    // (the acceptance review) the compare-and-remove of a takeover is one step under the gate:
+    // while another taker holds the gate nothing is removed, so a taker can never remove the lock
+    // another one created after the stale record it judged
+    let gate = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(gate_path(&p))
+        .unwrap();
+    gate.lock().unwrap();
+    assert!(
+        !take_over_if_stale(&p),
+        "nothing is taken while the gate is held"
+    );
+    assert_eq!(
+        read_lock(&p).unwrap().token,
+        "dead",
+        "the judged record is still there"
+    );
+    drop(gate);
     let taken = MoveLock::acquire_within(&r, "test", Duration::from_millis(0)).unwrap();
     assert_eq!(read_lock(&p).unwrap().token, taken.token);
+    // a taker that judged the dead record before `taken` replaced it removes nothing now
+    assert!(
+        !take_over_if_stale(&p),
+        "a live owner's lock is not taken over"
+    );
+    assert_eq!(read_lock(&p).unwrap().token, taken.token);
     drop(taken);
+    assert!(!p.exists(), "released on drop, under the gate");
+    assert!(gate_path(&p).exists(), "the gate file is never removed");
 
     // a worktree: `.git` is a file naming its git dir, whose `commondir` names the common one
     let wt = scratch("lock-wt");
@@ -716,11 +744,14 @@ fn a_writer_that_lost_the_lock_ends_in_the_new_folder_and_no_old_folder_returns(
 }
 
 // (R7b, F48-2) The move lock of an owner alive on this machine is not taken over, however old; a
-// dead owner's is, and another host's once it is old.
+// dead owner's is, and another host's once it is old. (0.2.5 D5) The command's line and `c3
+// doctor`'s line for the folder name the owner: its pid, its host when it is another host's lock,
+// and since when it holds the lock.
 #[test]
 fn a_live_owners_old_lock_is_not_taken_over() {
     let r = scratch("live-lock");
     std::fs::create_dir_all(r.join(".git")).unwrap();
+    seed_eck(&r);
     let p = lock_path(&r);
     let me = std::process::id();
     let write_old = |rec: &LockRec| {
@@ -739,16 +770,125 @@ fn a_live_owners_old_lock_is_not_taken_over() {
     };
     write_old(&live);
     let held = MoveLock::acquire_within(&r, "test", Duration::from_millis(150)).unwrap_err();
-    assert!(held.contains("held by c3 pid"), "{held}");
+    assert_eq!(
+        held,
+        format!("the move lock is held by c3 pid {me} (move) since 2026-01-01 00:00:00 UTC")
+    );
     assert_eq!(read_lock(&p).unwrap().token, "live");
+    // the line the command prints, and doctor's
+    let ensured = {
+        let _h = c3_core::test_hooks::set_thread_hook(LOCK_WAIT_HOOK, "100");
+        ensure(&r, None).unwrap()
+    };
+    assert_eq!(ensured.deferred.as_deref(), Some(held.as_str()));
+    assert!(
+        ensured.moved.iter().any(|l| l
+            == &format!(
+                "the project folder could not be moved now ({held}); using {LEGACY_STATE_DIR}/ for this run"
+            )),
+        "{:?}",
+        ensured.moved
+    );
+    assert_eq!(move_lock_holder(&r), Some(held.clone()));
+    assert_eq!(read_lock(&p).unwrap().token, "live");
+    // another host's FRESH lock: waited for, and its host is named (its text shown plain)
+    let foreign = LockRec {
+        host: "some-other-host\u{202e}".into(),
+        created: "2026-11-24T10:20:30.123456789+02:00".into(),
+        token: "foreign".into(),
+        ..live.clone()
+    };
+    std::fs::write(&p, serde_json::to_vec(&foreign).unwrap()).unwrap();
+    let held = MoveLock::acquire_within(&r, "test", Duration::from_millis(0)).unwrap_err();
+    assert_eq!(
+        held,
+        format!(
+            "the move lock is held by c3 pid {me} on host some-other-host? (move) since 2026-11-24 08:20:30 UTC"
+        )
+    );
+    assert_eq!(move_lock_holder(&r), Some(held));
     // another host's old lock: its owner cannot be shown alive
     write_old(&LockRec {
         host: "some-other-host".into(),
         token: "foreign".into(),
         ..live.clone()
     });
+    assert_eq!(move_lock_holder(&r), None, "a stale lock names no holder");
     let taken = MoveLock::acquire_within(&r, "test", Duration::from_millis(0)).unwrap();
     drop(taken);
+    assert_eq!(move_lock_holder(&r), None);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+// (0.2.5 D5) A write into a directory removes `write_in`'s own temporary files there that are older
+// than a day (a writer killed between its write and its rename left them); a fresh one, a foreign
+// file with a similar name and a directory of that name stay.
+#[test]
+fn write_in_sweeps_its_own_stale_temp_files() {
+    let r = scratch("sweep");
+    ensure(&r, None).unwrap();
+    let c3 = path(&r);
+    let old = std::time::SystemTime::now() - Duration::from_secs(WRITE_TEMP_STALE_SECS + 120);
+    let stale = c3.join(write_temp_name(
+        "JOURNAL.md",
+        4242,
+        1_700_000_000_123_456_789,
+    ));
+    let stale_other = c3.join(".ROADMAP.md.c3-7-8.tmp");
+    let fresh = c3.join(".JOURNAL.md.c3-4243-1700000000123456790.tmp");
+    let foreign = [
+        "JOURNAL.md.c3-4242-1.tmp",
+        ".JOURNAL.md.c3-pid-1.tmp",
+        ".JOURNAL.md.c3-4242.tmp",
+        ".JOURNAL.md.c3-4242-1.tmp.bak",
+        "..c3-4242-1.tmp",
+    ];
+    for f in [&stale, &stale_other, &fresh] {
+        std::fs::write(f, "partial").unwrap();
+    }
+    for f in foreign {
+        std::fs::write(c3.join(f), "keep").unwrap();
+    }
+    let dir_named = c3.join(".x.md.c3-1-2.tmp");
+    std::fs::create_dir_all(&dir_named).unwrap();
+    // (a directory is opened for its times with backup semantics on Windows, read-only elsewhere)
+    let age = |p: &Path| {
+        #[cfg(windows)]
+        let f = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .access_mode(0x100) // FILE_WRITE_ATTRIBUTES
+                .custom_flags(0x0200_0000) // FILE_FLAG_BACKUP_SEMANTICS
+                .open(p)
+                .unwrap()
+        };
+        #[cfg(not(windows))]
+        let f = std::fs::File::open(p).unwrap();
+        f.set_modified(old).unwrap();
+    };
+    age(&stale);
+    age(&stale_other);
+    age(&dir_named);
+    for f in foreign {
+        age(&c3.join(f));
+    }
+    assert!(is_write_temp_name(
+        &stale.file_name().unwrap().to_string_lossy()
+    ));
+    for f in foreign {
+        assert!(!is_write_temp_name(f), "{f}");
+    }
+    write_in(&r, &c3, "notes.md", |_, _| Ok(b"note\n".to_vec())).unwrap();
+    assert!(!stale.exists() && !stale_other.exists());
+    assert!(fresh.exists());
+    for f in foreign {
+        assert!(c3.join(f).exists(), "{f}");
+    }
+    assert!(dir_named.is_dir());
+    assert_eq!(
+        std::fs::read_to_string(c3.join("notes.md")).unwrap(),
+        "note\n"
+    );
     let _ = std::fs::remove_dir_all(&r);
 }
 
