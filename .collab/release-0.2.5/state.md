@@ -1163,3 +1163,13 @@ swap -> xelth.com/C3 page after the tag.
   `scratchpad/bin/c3-review9.exe consult --task release-0.2.5 --purpose acceptance --mode new
   --brief .collab/release-0.2.5/handoffs/58-claude-acceptance-delta.md --reply-name
   acceptance-delta --rev HEAD --detach` - never `--spend-reserve`.
+
+## 2026-11-24 19:01 - the head is green; the flake measured: not reproducible in isolation
+
+- CI for 431b610 (the head with brief 58): GREEN on all three jobs, first attempt. The rerun of
+  8087bad's failed Windows job: green (attempt 2).
+- `flake-probe` run 45450590467 (Windows runner): the one test alone 0 failed of 40, its whole
+  binary with one test thread 0 of 8. In `ci` it failed 2 of 13 times since d476520, each time
+  17-19 s into the binary (a green run: 4 s). So what precedes the binary in the job matters;
+  the workflow got a third loop (the binaries before it in ci's order, then it, in one cargo
+  call). Tech-debt entry updated.

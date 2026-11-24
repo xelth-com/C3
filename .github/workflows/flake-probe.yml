@@ -6,7 +6,10 @@
 # `c3 consult`: the fake launcher's `claude --version` "did not finish within 15 s". It never
 # fails on the development machine. Two loops give a rate instead of a guess:
 #   1. the one test alone, N times;
-#   2. the whole test binary with one test thread (the way `ci` runs it), M times.
+#   2. the whole test binary with one test thread (the way `ci` runs it), M times;
+#   3. the binaries that run BEFORE it in `ci`'s c3-cli step, then it, in one cargo call, K times.
+# First numbers (run 45450590467, 2026-11-24): alone 0 failed of 40, whole binary 0 of 8 - so
+# what precedes the binary in the real job matters; loop 3 was added for that.
 # The job always ends green: its log is the result.
 name: flake-probe
 
@@ -24,7 +27,13 @@ on:
         default: "40"
       whole:
         description: "runs of the whole binary, one test thread"
-        default: "8"
+        default: "4"
+      sequence:
+        description: "test binaries in ci's order, the last one is the one watched"
+        default: "branches ci_check claude_engine"
+      sequences:
+        description: "runs of the sequence"
+        default: "10"
 
 permissions:
   contents: read
@@ -110,4 +119,25 @@ jobs:
             }
           }
           "whole binary: $fail failed of $env:RUNS"
+          exit 0
+      - name: The sequence of binaries, one test thread
+        shell: pwsh
+        env:
+          SEQUENCE: ${{ inputs.sequence }}
+          RUNS: ${{ inputs.sequences }}
+        run: |
+          $tests = @(); foreach ($b in ($env:SEQUENCE -split '\s+' | Where-Object { $_ })) { $tests += '--test'; $tests += $b }
+          cargo test -p c3-cli @tests --no-run
+          $fail = 0
+          for ($i = 1; $i -le [int]$env:RUNS; $i++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            cargo test -p c3-cli @tests --no-fail-fast -- --test-threads=1 *> out.txt
+            $ok = $LASTEXITCODE -eq 0
+            "{0,3} {1,6:n1} s {2}" -f $i, $sw.Elapsed.TotalSeconds, $(if ($ok) { 'ok' } else { 'FAILED' })
+            if (-not $ok) {
+              $fail++
+              Get-Content out.txt | Select-String -Pattern '\.\.\. FAILED|panicked|did not finish|left:|right:|is available' | Select-Object -First 12 | ForEach-Object { "      " + $_.Line }
+            }
+          }
+          "sequence: $fail failed of $env:RUNS"
           exit 0
