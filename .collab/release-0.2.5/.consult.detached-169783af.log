@@ -1,0 +1,161 @@
+codex-consult: detached run 169783af (detach id 169783af-acb1-4985-be65-0c86d427665f) - pid 22124 on LAPTOP-9SGIHQ03, started 2026-11-23T11:50:45+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-169783af.status.json
+Panel 557e2f12: 2 of 3 roster entries run, at once (roster C:\Users\Dmytro\AppData\Local\Temp\claude\66aab2698810b170\e97cc6d0-6d1c-45b4-8904-07597e0d378e\scratchpad\rosters\roster-w40.json; panel id 557e2f12-d332-4982-86e7-2a39b2270a27)
+  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)
+  #1 grok :: grok-4.7 [grok] - member, n=30, handoff 44
+  #2 alibaba-claude :: deepseek-v4.1-flash-1017 [claude] - skipped: usage limit hit 2026-11-23T11:19:21+01:00, reset unknown; retry after 2026-11-23T12:19:21+01:00
+  #3 meta :: muse-spark-1.3-contributor [muse] - member, n=29, handoff 43
+Routing: routed by the ratings - size 2 (-PanelAll); seed 394d288e86c2 (nonce 2026-11-23 from date); exploration 0.2 per slot
+  eligible: #1 grok :: grok-4.7 [grok] (lab xai by vendor; score 1.865 purpose of 11), #3 meta :: muse-spark-1.3-contributor [muse] (lab meta by vendor; score 1.825 purpose of 8)
+  picked  : 1. #3 meta :: muse-spark-1.3-contributor [muse] (lab-draw), 2. #1 grok :: grok-4.7 [grok] (lab-draw)
+Concurrency: at once - endpoint groups: meta x1, grok x1; -PanelConcurrency 0 (no cap)
+Timeout: 2400 s per member (the default of purpose diff-review); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 1 of 2 finished: meta :: muse-spark-1.3-contributor [muse] - usable reply (495.1 s)
+  panel member 2 of 2 finished: grok :: grok-4.7 [grok] - usable reply (1261.3 s)
+
+=== panel 557e2f12 member 1 of 2: meta :: muse-spark-1.3-contributor [muse] (roster #3) ===
+codex-consult: usable reply - meta :: muse-spark-1.3-contributor [muse], mode new, thread 01a2080b-dd4d-7240-8876-cde7b1b3835b (source: events), wall 118.7 s
+warning    : muse: warning: rules file at \\?\C:\Users\Dmytro\AppData\Local\Temp\c3-kimi-wt-83f11af140c44475bd400e7b96087258\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules
+warning    : muse: warning: project MCP servers from .mcp.json, if any, are not loaded because the workspace is untrusted; restart with --trust-workspace to load them
+verdict    : HOLD - Handle containment is real but patch placement can strand/delete patches and directory setup still precedes the handles.
+findings   : 0 blocker, 3 major, 3 minor, 2 note -> F43-1..F43-8 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\43-muse-reply-meta.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\43-muse-reply-meta.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\43-muse-reply-meta.events.jsonl
+
+## Q1. Remaining path names
+Converted code still calls `std::fs` for classification, planning, and setup around the handle core: `contain.rs:285` (`classify_root` wording only), `worktree.rs:786-807` (`source_rel` fallback `canonicalize`, `linked_source_words` `canonicalize`), `worktree.rs:577-583` (`unlink_outside_links` `canonicalize` to classify inside/outside), `reviewed.rs:678-680` (`plan_diff` `canonicalize` for stem choice), `reviewed.rs:907,944-945` (temp-index `copy`/`remove_file`), `reviewed.rs:1028` (`create_dir_all` before the anchor open — the one that matters, see finding #1), `repo_models.rs:205,215,234` + `rules.rs:126,148,278,308` (discovery `read_dir`/`read` by path), plus `git` invocations with path args and `record_owner` in the git admin dir (admitted unconverted).
+
+## Q2. `cap-std` per platform
+Not verifiable read-only: no vendored sources, no shell. The proof test covers junctions everywhere and dir symlinks only where creatable (the Windows symlink half was skipped on the dev machine; CI is Linux+Windows, macOS behavior unexercised). The code's own comment admits `cap-std` itself may follow an inside-staying link (`contain.rs:1883-1889`); C3 avoids that call shape, but the claim rests on that discipline, not the crate. Treat junction/symlink/absolute-target refusal on macOS and non-surrogate reparse points as unproven.
+
+## Q3. Legitimate use that changed
+Inside-repo symlinks to the brief/`handoffs` are now skipped/counted (staged set shrinks) or refuse the run — previously followed. Any non-symlink Windows reparse point (cloud placeholders) now counts as a link. The held worktree handle blocking renames of the worktree and ancestors on Windows is the accepted side effect.
+
+## Q4. Error paths
+Half-removed worktree on first removal error; emptied-but-unremoved root on identity refusal; temp left with a message when its cleanup remove fails; stale empty claim after a crash (finding #2); reviewer running inside the tree makes listing/removal fail and the tree stays for `doctor --fix`.
+
+## Q5. Patch placement
+Two same-byte racers converge on one file (good). Different bytes under one name are refused (good). The holes are the stale-claim deadlock and the rename-failure `remove_file(leaf)` deleting a sibling's good file (findings #2–#3). No evidence of a wrong `sha256` in the ledger: `sha256` is computed from the in-memory bytes before placement.
+
+## Q6. Test hooks
+Thread hooks never come from the environment (only `set_thread_hook`), and env hooks need the mode gate — no inherited-env takeover read. Residual: hook shims ship in the release binary (`debug_assert` only), and with the mode variable set an inherited environment can still steer `PATCH_NO_HARDLINK`/`WRITE_FAIL`/`RACE` paths (availability/integrity of the run, not an escape).
+
+## Q7. Claims
+`CHANGELOG.md:9-30` and `contain.rs` header claim more than the code: 'never partial/temp left' ignores stale claims and reported-but-left temps; 'a root that is a link is refused' omits that `open_anchor` (repo/handoffs roots) follows by design; `publish` 'replacing only a regular file' is really 'replacing whatever entry survived the last check'.
+
+## Q8. What is untested
+Roster writer and git-admin owner record (admitted); macOS `cap-std` behavior; Windows dir-symlink half (skipped); crash-between-claim-and-rename and stale-claim recovery; read-only-directory removal; non-symlink reparse points as staging sources; permission-bit preservation; racers with differing bytes on the no-hardlink path.
+
+## Requested checks
+RC1 (read-only): inspect vendored `cap-std`/`cap-fs-ext` 4.0.3 sources for `open_nofollow`, `create_dir`, `rename`, `hard_link` semantics on Linux/macOS/Windows. RC2 (workspace-write): race two `place_without_link` on one name with one forced rename failure; observe survivor. RC3 (workspace-write): kill at `patch-claim`, rerun same-name placement; observe stale-claim error. RC4 (workspace-write): link `.claude/agents` outside and run repair scan; observe which bytes are read vs edited. RC5 (workspace-write): inject mid-removal unlink failure; list the half-removed remainder.
+
+### Findings
+
+- **F43-1** [major] `crates/c3/src/consult/reviewed.rs:1028` - place_patch creates directories by path before containment, so a link above the handoffs dir can redirect the create and the anchor open. Trigger: handoffs parent (or a component above it) is or becomes a symlink/junction when the patch is planned or placed. Evidence: read-code: place_patch calls std::fs::create_dir_all(dir_path) then Root::open_anchor(dir_path); the create follows links. Verify: Point the patch dir under a swapped link parent and show where the temp/claim file lands. Remedy: Open/create the parent through handles first (or refuse when any component above the leaf is a link) instead of create_dir_all by path; document the trust boundary for the handoffs parent.
+- **F43-2** [major] `crates/c3/src/consult/reviewed.rs:995` - A crash between claim-create and rename (no-hardlink filesystem) leaves a permanent empty claim file that blocks every later patch with a misleading 'never overwritten' error; there is no reaper or expiry. Trigger: Process crash/kill between exclusive claim create and rename, then a later --diff run with the same patch name. Evidence: read-code: place_without_link creates empty leaf then renames tmp onto it; reuse_patch waits 2s on empty leaf then errors 'already holds other bytes'. No cleanup path for a dead owner. Verify: Kill a run at race point patch-claim, then rerun place_patch with the same name and read the error and directory listing. Remedy: Make claims self-identifying (pid/time in content, not empty) with stale-claim takeover, or always clean orphan claims older than N minutes.
+- **F43-3** [major] `crates/c3/src/consult/reviewed.rs:1004` - place_without_link's rename-failure cleanup can delete a sibling's just-completed patch. Trigger: Two concurrent no-hardlink placements racing on the same patch name where one rename fails after the other completed. Evidence: read-code: On rename error it unconditionally removes leaf (the claimed name), even though leaf may now be another run's complete non-empty patch.; inferred: On Windows rename does not atomically replace, so a sibling completing between claim and rename makes the failing path remove a good file. Verify: Race two place_without_link calls on one name with injected rename failure and check the survivor file. Remedy: Only remove the claim when it is still empty/ours (check size/content through the handle first); never remove a non-empty leaf on failure.
+- **F43-4** [note] `crates/c3/src/engines/worktree.rs:786`, `crates/c3/src/engines/worktree.rs:804`, `crates/c3/src/consult/reviewed.rs:678`, `crates/c3/src/engines/worktree.rs:577` - Several converted paths still resolve names after validation for classification or setup: canonicalize/symlink_metadata on live brief, handoffs plan, sweep classification, and repo-relative fallback. Trigger: A link swap between the classification canonicalize and the handle-based read/walk. Evidence: read-code: source_rel canonicalizes p and repo as fallback; linked_source_words canonicalizes for wording; plan_diff canonicalizes brief parent and handoffs dir.; read-code: unlink_outside_links canonicalizes each walked path to classify inside/outside; reviewed.rs plan_diff canonicalizes to decide stem. Verify: Swap a brief parent to a link between source_rel fallback and Root::read and confirm which bytes are staged. Remedy: State explicitly that these canonicalize calls only word messages or plan names and never select the bytes read/written/removed, or move them behind handles too.
+- **F43-5** [minor] `crates/c3/src/setup/repo_models.rs:205`, `crates/c3/src/setup/rules.rs:126` - Repository repair discovery still enumerates and reads by path, so a linked .claude/agents supplies the snapshot bytes (edit later refused, but content is ingested). Trigger: .claude or .claude/agents replaced by a link to an outside directory before doctor/hook repair scans. Evidence: read-code: refresh_repo_models_at uses repo_root.join read_dir/read by path; refusal happens only in open_edit_dir/open_edit_file afterwards.; read-code: rules.rs scan/repair_state_sentences read by repo_root.join path. Verify: Link .claude/agents outside with a pinned-looking file and check whether its bytes enter the rewrite computation. Remedy: Enumerate and read the repair candidates through the repository handle, or document that discovery reads may cross a link while edits never do.
+- **F43-6** [minor] `crates/c3/src/contain.rs:1646` - A failed worktree removal stops at the first error and leaves a half-emptied tree; remove_root's identity refusal likewise leaves an emptied directory in place with only prune run. Trigger: Read-only/locked file, denied unlink, or reviewer still inside the worktree during removal. Evidence: read-code: remove_contents returns on first error with remainder left; remove_worktree_dir propagates it and only doctor reports it later. Verify: Inject an unlink failure mid-tree and list what remains after the error. Remedy: Document the half-removed state as expected and ensure doctor --fix reliably finishes it; consider continuing the sweep to remove all it can before returning.
+- **F43-7** [minor] `CHANGELOG.md:9`, `crates/c3/src/contain.rs:1339` - CHANGELOG overstates 'never' guarantees: stale claim files and failed-cleanup temp files do remain, and Root::open_anchor deliberately follows the repo root. Trigger: Reading the CHANGELOG as a security contract for patch and removal cleanup. Evidence: read-code: Temp/claim cleanup failures are appended to the message but the file stays; anchor open follows its path by design.; read-code: CHANGELOG claims 'never overwritten, never through a link, never partial, no temp left' without the crash/stale-claim and anchor exceptions. Verify: Compare each 'never' sentence against the crash/cleanup-failure code paths. Remedy: Qualify the entry: anchor roots are followed by design; temp/claim files can survive a crash or failed cleanup and are reported, not eliminated.
+- **F43-8** [note] `crates/c3/src/consult/reviewed.rs:376`, `crates/c3/src/contain.rs:916` - Legitimate setups changed behavior: inside-repo symlinks to the brief/handoffs are now skipped/refused, and non-symlink reparse points (cloud placeholders) count as links; the held worktree handle blocks renames on Windows by design. Trigger: Repository with a checked-in or user-made inside symlink on the brief/handoffs path, or OneDrive-style placeholder files. Evidence: read-code: source_step counts Step::Link as skipped even when it stays inside; kind_of treats every Windows reparse point as Link.; read-code: contain.rs documents the held-handle rename block as the Windows protection. Verify: Stage a tree whose brief arrives via an inside symlink and record the new skip/refusal. Remedy: Call out the intentional break in release notes with a workaround (materialize the brief, avoid placeholder files in staged trees).
+
+### Prior findings
+
+_(none)_
+
+## Verdict: HOLD
+
+Handle containment is real but patch placement can strand/delete patches and directory setup still precedes the handles.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- cap-std/cap-fs-ext 4.0.3 no-follow, junction, absolute-target and root-link behavior on each of Linux, macOS, Windows (no sources or shell in this consultation).
+- Whether Windows rename/replace semantics make the place_without_link cleanup delete a sibling's completed patch in practice.
+- Whether a stale empty claim or half-removed worktree is reachable often enough to matter in production.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 557e2f12 member 2 of 2: grok :: grok-4.7 [grok] (roster #1) ===
+codex-consult: usable reply - grok :: grok-4.7 [grok], mode new, thread 01a2080b-da23-7d90-bd02-ced10594bbb9 (source: events), wall 915.1 s
+verdict    : HOLD - The handle walk closes the directory-swap window, but a no-hard-link patch claim whose writer dies stays under the final name and blocks every later write of that patch.
+findings   : 0 blocker, 1 major, 2 minor, 0 note -> F44-1..F44-3 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\44-grok-reply-grok.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\44-grok-reply-grok.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\44-grok-reply-grok.events.jsonl
+
+## Q1
+Still path-based after the handle work:
+
+- `contain.rs:284` and `:346` use `std::fs` only to classify an open that already failed. `Root::open_anchor` (`:343`) follows the anchor (repo root or handoffs directory).
+- `worktree.rs:577` `canonicalize`s each link to decide inside vs outside, then unlinks on the handle. `:658`, `:787` and `:804` canonicalize to compare paths or word a refusal. `:466` uses `symlink_metadata` only when doctor has no handle, then `Root::open`. `git -C` (`:34`) still runs `worktree add` and, after removal, `worktree prune`.
+- `reviewed.rs:1028` `create_dir_all` plus `open_anchor`: a symlink `handoffs/` is followed and the patch is written in the target. `:907` copies the git index to a temp file by path (`:944` deletes it).
+- `repo_models.rs:205`–`:234` and `rules.rs:126`, `:148`, `:278`, `:308` still `read`/`read_dir` the snapshot (those follow). The replace is `replace_file` on a handle and refuses a link. `record_throwaway_owner` (`worktree.rs:162`, `setup/branches.rs:900`) still `std::fs::write`s `c3-owner` at the `gitdir:` path.
+- On Windows, cap-std `rename` / `remove_file` / `remove_dir` / `create_dir` rebuild a path from the handle (`concatenate` + `std::fs`) and depend on no `FILE_SHARE_DELETE`.
+
+## Q2
+Linux and macOS: cap-std 4.0.3 uses `openat` + `O_NOFOLLOW`. A symlink component (file or directory, absolute or relative, inside or outside) fails that open. C3 maps it to `Step::Link` and does not follow. If cap-std is asked to follow, an absolute target is `PrefixOrRootDir` ("a path led outside of the filesystem"). C3 does not ask that for a component.
+
+Windows: `FollowSymlinks::No` sets `FILE_FLAG_OPEN_REPARSE_POINT`, then cap-std returns `ERROR_STOPPED_ON_SYMLINK` when `is_symlink` is true. Junctions and directory symlinks are name-surrogate reparse points, so the no-follow open fails; a junction target is absolute, so a follow is also an escape. C3 adds `kind_of`: every `FILE_ATTRIBUTE_REPARSE_POINT` is a link, including tags Rust does not call symlinks. `Root::open` is no-follow, so a link root is `RootError::Link`. `open_anchor` does not set the reparse flag and follows. Directories are opened without `FILE_SHARE_DELETE`; the held directory and its parent cannot be renamed (the proof test). The changelog's "every ancestor" is wider than that test.
+
+## Q3
+An in-repo directory symlink on the way to the brief now refuses the run (`worktree.rs:859`). The same link for `handoffs/` or `state.md` is skipped and counted (`reviewed.rs:410`), with a warning (`orchestrate/mod.rs:4327`). Those inside links used to be followed. A read-only worktree file is cleared and removed on Windows (`contain.rs:622`); a file another process holds stops removal there and leaves the rest. The worktree root handle stays open for the run, so on Windows that directory and at least its parent cannot be renamed.
+
+## Q4
+`publish` deletes its temp on a returned error and reports a failed delete (`contain.rs:541`). A crash after create and before `rename` leaves `.c3-stage-*.tmp` or `.c3-repair-*.tmp`, not the final name. `remove_contents` stops at the first error, so a locked file or a reviewer still inside leaves a half-deleted worktree and does not `git worktree prune` (`worktree.rs:479`). `remove_root` drops the worktree handle, then `remove_dir` (`contain.rs:836`). The test shows a link swapped in then is removed on Windows and refused on Unix, not followed. The empty patch claim is the final-name leftover (Q5).
+
+## Q5
+Two live runs of the same bytes finish as one file. `write_patch` stores sha256 only after `place_patch` is `Ok`, and `reuse_patch` requires the same bytes, so the ledger hash matches. A crash or killed owner between the exclusive empty claim and `rename` (`reviewed.rs:1002`) leaves that empty file under the patch name. `reuse_patch` (`:970`) waits 2s, then errors "already holds other bytes" and does not delete it. Later runs do the same, including one that still has the bytes. No wrong sha256 is committed. The empty name is a false patch in `handoffs/`.
+
+## Q6
+The three new variables go through `test_hooks::hook`. An inherited value is ignored unless `CODEX_CONSULT_TEST_MODE` is `1`/`true`/`yes`/`on`, and the run warns. No repository file is read. `set_thread_hook` skips the mode gate; only an in-process caller can set it.
+
+## Q7
+`CHANGELOG.md:371` says nothing user-visible changes except the races. Inside symlinks on the way to the brief and handoffs do change (`:379`; `:380` "as before" understates the new brief refusal). `:387` says no partial patch is left under its name; the empty claim is that name, and a dead owner leaves it. `contain.rs:23` matches the cap-std mechanisms and does not claim the anchor is no-follow.
+
+## Q8
+Untested: a dead owner's claim; Windows directory symlinks where the proof skips for lack of privilege; reparse points that are not name surrogates; macOS firmlinks; `MoveFileEx` when the destination is swapped for a symlink after `dest_replaceable`; the roster writer and `c3-owner`. The two-thread test only covers live racers that both finish. Not read: `maintain/models.rs`, most test bodies, `Cargo.lock` past cap-std 4.0.3, `branches.rs` except the owner write.
+
+## Requested checks
+RC1: From the repo root (workspace-write), a harness that calls the no-hard-link claim (`create_new` of the patch name) and exits before `rename`, then calls `place_patch` with the same bytes. Observation: the name is still an empty file and the second call errors with `already holds other bytes` (finding #1). Budget: one cargo test, under 2 minutes.
+
+### Findings
+
+- **F44-1** [major] `crates/c3/src/consult/reviewed.rs:1002`, `crates/c3/src/consult/reviewed.rs:970`, `CHANGELOG.md:387` - On a filesystem without hard links, place_without_link claims the final patch name with an empty exclusive file and only then renames the full temp onto it. If that process dies between the claim and the rename, the empty file stays under the content-addressed name. reuse_patch treats an empty file as in-progress for two seconds, then fails with 'already holds other bytes' and does not remove it, so every later write of that same patch fails and the handoffs directory keeps a patch file whose bytes are not the hash in its name. Trigger: No hard links (or CODEX_CONSULT_TEST_PATCH_NO_HARDLINK with test mode), place_patch has created the empty claim, and the process is killed before Dir::rename. A sibling or a later run calls place_patch with the same bytes. Evidence: read-code: place_without_link create_new's the final name, then rename's the temp onto it. remove_file(leaf) runs only if that rename returns an error.; read-code: reuse_patch returns Ok only when the bytes match. An empty file is slept on for 2s; after the deadline it hits the 'already holds other bytes' error. Nothing deletes the empty file.; read-code: plan.sha256 is assigned only after place_patch returns Ok, so a failed reuse does not record a hash. The empty file remains on disk.; read-code: The no-hard-link test covers a failed write, a live sibling, and two live racers. It does not kill the claimant between create_new and rename. Verify: Kill the process after the empty create_new and before rename, then call place_patch again with the same bytes. The name is still empty and the call errors with 'already holds other bytes'. Remedy: Do not treat a stale empty claim as foreign content. If the file is still empty after the wait, or its writer is gone, remove it and retry the claim once. Put the claim beside the final name (a lock file with pid and start time) so a crash never publishes an empty patch under the hash name.
+- **F44-2** [minor] `CHANGELOG.md:371`, `crates/c3/src/engines/worktree.rs:859`, `crates/c3/src/consult/reviewed.rs:397` - A symlink directory that stays inside the repository on the way to the brief now refuses the run, and the same link for handoffs/ or state.md is skipped. Those paths were followed before. CHANGELOG.md:371 says nothing changes for a user except the race windows; line 380's 'refuses the run as before' understates the new brief refusal. Trigger: The brief, handoffs/, or state.md is reached through a directory symlink whose target is still inside the repository. Evidence: read-code: link_source_problem and read_live_source use Root::kind / Root::read, which return Step::Link for any component that is a link, including one that stays inside.; read-code: open_dir or read of handoffs/ and state.md maps Step::Link to links_skipped and does not copy the entry.; read-code: The entry says nothing changes for a user, then says an inside link was followed before and a linked brief refuses as before. Verify: Point a brief at docs/brief.md where docs is a symlink to another directory inside the same repo and run a worktree review. The run is refused. Repeat with handoffs as that symlink and confirm the files are not staged. Remedy: Either follow an inside directory symlink once while opening the anchor and then contain only below that handle, or change the changelog so the new refusal and skip are the user-visible exception.
+- **F44-3** [minor] `crates/c3/src/contain.rs:223` - open_file_in decides the name is a regular file with symlink_metadata, then opens it. A local swap of that name for a FIFO between the two calls opens the FIFO and can block the consultation forever. The comment says a FIFO is never opened. Trigger: Between entry() and open_with, the name is replaced by a FIFO and the open is for reading. Evidence: read-code: The kind check returns before open only for the kind seen by symlink_metadata. The handle metadata check runs after open_with, so a FIFO swapped in is opened first. Verify: Race a FIFO onto a file name that open_file_in has already classified as a regular file and observe the read blocks until a writer opens the FIFO. Remedy: Open with a non-blocking flag, or open first with no-follow and reject from the handle metadata before any blocking read.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: HOLD
+
+The handle walk closes the directory-swap window, but a no-hard-link patch claim whose writer dies stays under the final name and blocks every later write of that patch.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether Windows MoveFileEx with MOVEFILE_REPLACE_EXISTING follows a destination symlink swapped in after dest_replaceable (cap-std rename rebuilds a path; not executed).
+- Rename lock on ancestors above the held directory's parent (the proof only renames the held directory and its parent).
+- Non-name-surrogate reparse points (cloud placeholders) when the open still hydrates despite FILE_OPEN_REPARSE_POINT.
+- macOS firmlinks and the Windows directory-symlink half of the proof on a machine that cannot create them.
+- A dead-owner patch claim was not executed; the conclusion is from the control flow.
+
+### First-run checklist (observable)
+
+_(none)_
+
+Panel 557e2f12: 2 of 3 entries ran (asked 2, started 2, usable 2; wall clock 1261.9 s; at once)
+  grok :: grok-4.7 [grok]                              HOLD     0 blocker, 1 major, 2 minor          prior: none  915.1 s  handoffs/44-grok-reply-grok.md
+  alibaba-claude :: deepseek-v4.1-flash-1017 [claude]  skipped  usage limit hit 2026-11-23T11:19:21+01:00, reset unknown; retry after 2026-11-23T12:19:21+01:00
+  meta :: muse-spark-1.3-contributor [muse]            HOLD     0 blocker, 3 major, 3 minor, 2 note  prior: none  118.7 s  handoffs/43-muse-reply-meta.md

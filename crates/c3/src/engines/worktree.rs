@@ -922,6 +922,26 @@ pub fn brief_bytes(
     ))
 }
 
+/// (0.2.5 D1, F10-3 / F11-4) Where the staging takes a brief from when the live tree does not hold
+/// it: the revision whose regular file at `brief_ref` it materialises - `HEAD` first, else `rev`
+/// (the worktree's own revision), in [`brief_bytes`]'s order - with those bytes. `None` when the
+/// reference is empty, absolute or leaves the repository, or neither revision commits a regular
+/// file there.
+pub fn committed_brief(repo: &Path, brief_ref: &str, rev: &str) -> Option<(String, Vec<u8>)> {
+    if brief_ref.is_empty() || Path::new(brief_ref).is_absolute() || !stageable_rel(brief_ref) {
+        return None;
+    }
+    if let Some(b) = committed_blob(repo, "HEAD", brief_ref) {
+        return Some(("HEAD".to_string(), b));
+    }
+    if rev != "HEAD" {
+        if let Some(b) = committed_blob(repo, rev, brief_ref) {
+            return Some((rev.to_string(), b));
+        }
+    }
+    None
+}
+
 /// (A1) The preflight of a seat whose reviewer runs in a throwaway worktree of `rev` (`HEAD`, or
 /// the full sha of `--rev`): the prompt tells the reviewer to read the brief at `brief_ref`,
 /// relative to its working directory - the worktree. The brief is staged there at that path
@@ -1011,6 +1031,29 @@ impl Uncommitted {
 /// (A1, F11-5) The live tree's uncommitted state at launch (`git status --porcelain=v1 -z`):
 /// [`Uncommitted`]. Empty when the tree is clean or git cannot be run.
 pub fn uncommitted_paths(repo: &Path) -> Uncommitted {
+    uncommitted_paths_outside(repo, None)
+}
+
+/// (0.2.5 D1) Whether the repo-relative path `p` (`/`) is `dir` or lies under it (a directory git
+/// shows with a trailing `/` included), compared case-insensitively on Windows and macOS.
+fn path_under(p: &str, dir: &str) -> bool {
+    let dir = dir.trim_end_matches('/');
+    if dir.is_empty() {
+        return false;
+    }
+    let ci = cfg!(any(windows, target_os = "macos"));
+    let (p, d) = if ci {
+        (p.to_lowercase(), dir.to_lowercase())
+    } else {
+        (p.to_string(), dir.to_string())
+    };
+    p == d || p.starts_with(&format!("{d}/"))
+}
+
+/// (0.2.5 D1) [`uncommitted_paths`] without every path under `skip_dir` (repo-relative, `/`):
+/// left out of the tracked list AND of the count of new paths.
+pub fn uncommitted_paths_outside(repo: &Path, skip_dir: Option<&str>) -> Uncommitted {
+    let skipped = |p: &str| skip_dir.is_some_and(|d| path_under(p, d));
     let out = match git_cmd(repo)
         .args(["--no-optional-locks", "status", "--porcelain=v1", "-z"])
         .output()
@@ -1034,8 +1077,13 @@ pub fn uncommitted_paths(repo: &Path) -> Uncommitted {
         if xy.iter().any(|c| matches!(c, 'R' | 'C')) {
             if let Some(orig) = tokens.get(i) {
                 i += 1;
-                u.tracked.push(orig.to_string());
+                if !skipped(orig) {
+                    u.tracked.push(orig.to_string());
+                }
             }
+            continue;
+        }
+        if skipped(&path) {
             continue;
         }
         if xy[0] == '?' || xy[0] == '!' || xy[0] == 'A' {
@@ -1113,9 +1161,11 @@ pub fn isolation_prompt_line(
 }
 
 /// (A1) [`isolation_prompt_line`] for the live tree at `repo` now (its uncommitted paths and short
-/// HEAD). `""` when the tree is clean.
-pub fn isolation_prompt(repo: &Path, brief_ref: &str) -> String {
-    let paths = uncommitted_paths(repo);
+/// HEAD). `""` when the tree is clean. (0.2.5 D1) Every path under the collab directory
+/// (`collab_rel`, repo-relative; the task's handoffs are staged into the worktree) is left out of
+/// the list and out of its count.
+pub fn isolation_prompt(repo: &Path, brief_ref: &str, collab_rel: Option<&str>) -> String {
+    let paths = uncommitted_paths_outside(repo, collab_rel);
     if paths.is_empty() {
         return String::new();
     }
@@ -1462,7 +1512,7 @@ mod tests {
         let wt = ThrowawayWorktree::create(&repo, "HEAD").unwrap();
         wt.stage_bytes(b"brief\n", "docs/brief.md").unwrap();
         let _ = uncommitted_paths(&repo);
-        let _ = isolation_prompt(&repo, "docs/brief.md");
+        let _ = isolation_prompt(&repo, "docs/brief.md", None);
         let _ = rev_destination_problem(&repo, wt.sha(), "docs/brief.md");
         let _ = committed_blob(&repo, "HEAD", "committed.md");
         assert_eq!(
@@ -2305,7 +2355,7 @@ mod tests {
         // from a live repo (the reviewer's Verify): a modified tracked file is named, a
         // confidential untracked file is only counted.
         let repo = brief_repo("iso");
-        assert_eq!(isolation_prompt(&repo, ""), "");
+        assert_eq!(isolation_prompt(&repo, "", None), "");
         std::fs::write(repo.join("committed.md"), "# changed\n").unwrap();
         std::fs::write(repo.join("secret-acquisition-plan.txt"), "n\n").unwrap();
         assert_eq!(
@@ -2315,10 +2365,47 @@ mod tests {
                 new_paths: 1
             }
         );
-        let live = isolation_prompt(&repo, "");
+        let live = isolation_prompt(&repo, "", None);
         assert!(live.contains(": `committed.md`."), "{live}");
         assert!(live.contains(" 1 path(s) that are not in HEAD"), "{live}");
         assert!(!live.contains("secret-acquisition-plan"), "{live}");
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+    }
+
+    // (0.2.5 D1) The paragraph leaves every path under the collab directory out of the list and out
+    // of its counts: a tracked handoff changed in the live tree and an untracked collab directory
+    // are not named and not counted (the task's handoffs are staged into the worktree).
+    #[test]
+    fn the_isolation_prompt_leaves_the_collab_directory_out() {
+        let repo = brief_repo("iso-collab");
+        std::fs::create_dir_all(repo.join(".collab/t/handoffs")).unwrap();
+        std::fs::write(repo.join(".collab/t/handoffs/01-brief.md"), "v1\n").unwrap();
+        git_capture(&repo, &["add", "-f", ".collab"]).unwrap();
+        git_capture(&repo, &["commit", "-q", "-m", "a tracked handoff"]).unwrap();
+        std::fs::write(repo.join(".collab/t/handoffs/01-brief.md"), "v2\n").unwrap();
+        std::fs::write(repo.join(".collab/t/handoffs/02-new.md"), "new\n").unwrap();
+        std::fs::create_dir_all(repo.join("collab-elsewhere")).unwrap();
+        std::fs::write(repo.join("collab-elsewhere/x.md"), "x\n").unwrap();
+        std::fs::write(repo.join("committed.md"), "# changed\n").unwrap();
+        let all = uncommitted_paths(&repo);
+        assert!(
+            all.tracked
+                .contains(&".collab/t/handoffs/01-brief.md".to_string()),
+            "{all:?}"
+        );
+        let u = uncommitted_paths_outside(&repo, Some(".collab"));
+        assert_eq!(u.tracked, vec!["committed.md".to_string()], "{u:?}");
+        // only `collab-elsewhere/` is new outside the collab directory
+        assert_eq!(u.new_paths, 1, "{u:?}");
+        let l = isolation_prompt(&repo, "", Some(".collab/"));
+        assert!(
+            l.contains("1 tracked path(s) had uncommitted changes") && l.contains("`committed.md`"),
+            "{l}"
+        );
+        assert!(!l.contains(".collab"), "{l}");
+        assert!(l.contains(" 1 path(s) that are not in HEAD"), "{l}");
+        assert!(path_under(".collab", ".collab") && path_under(".collab/t/x", ".collab/"));
+        assert!(!path_under(".collabx/t", ".collab") && !path_under("a/.collab/x", ".collab"));
         let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 

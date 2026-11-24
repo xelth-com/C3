@@ -45,6 +45,25 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `an_old_git_is_a_doctor_problem_and_refuses_consult_rev_and_diff` (the installed version from a
   test hook).
 
+- **The operator sees which untracked files a one-revision `--diff` patch carries, and can leave
+  them out (F18-4 / F19-2 / F20-6).** `--diff <rev>` diffs one revision against the working tree
+  and puts the content of every untracked, not ignored file into the patch; the redactor removes
+  only what looks like a secret. Before the reviewer starts, stderr now says how many untracked
+  files the patch includes and names up to ten of them (as data: a name with a backtick or a
+  control character is counted, never shown), the ledger's `diff` record keeps the same list
+  (`untracked`, `untracked_count`), and the new `--diff-tracked-only` leaves the untracked files
+  out (the prompt line says so; the ledger records `tracked_only: true`; a panel and a detached
+  run carry it to their members). The README and the consult skill's reference say how to bound
+  it: commit first, a `base..head` range, or the flag. Test:
+  `a_one_revision_patch_names_its_untracked_files_and_tracked_only_leaves_them_out`.
+- **Panel integration tests for `--rev` and for the re-seat after a staging refusal.** A real panel
+  of two fake reviewers of different labs under `--rev` proves each member runs in its OWN
+  throwaway worktree of the same sha (two working directories, neither the live checkout), both
+  ledger entries and handoffs name that sha, both worktrees are gone afterwards and the task lock
+  is released; a real panel whose optional kimi member cannot stage its brief (HEAD commits a link
+  at the brief's path) replaces it from the reserve and finishes with the reserve's reply. Tests:
+  `a_rev_panel_runs_each_member_in_its_own_worktree_of_the_same_sha`,
+  `a_staging_refusal_is_reseated_from_the_reserve`.
 - **A roster id spelled differently from the catalog is still matched.** A plan may write a model
   with a leading token the public catalog leaves out (`kimi-code/k3.1-pro` or `kimi-k3.1-pro` on
   the roster, `moonshotai/k3.1-pro` in OpenRouter's list), so the entry never matched and got an
@@ -210,6 +229,24 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `hook_lines_are_capped_at_400_characters_on_a_character_boundary` and `hook_scripts.rs` extended
   by a long non-ASCII line and a line longer than the cap (both forwarded unchanged by both
   scripts).
+- **`c3 router explain` starts nothing and judges the seats in the panel's order (F31-6, F30-1).**
+  Since 0.2.5 R4 the display command ran the panel's member election with the full credential
+  preflight, so it could spawn `codex login status` or another auth probe for every roster entry,
+  with no deadline, read the budget windows over the network, and it always judged the seats as a
+  routed panel. It now starts no process and makes no network call: availability comes from the
+  recorded health only (an entry the records show unavailable - an auth failure, a usage limit, a
+  model the login does not offer, a plan cap - is "not eligible" with the panel's own reason; an
+  entry the records say nothing about stays eligible and is marked `[availability not checked]`),
+  the budget columns use the cached windows, and the seats are judged in the order the real panel
+  would use - routed by default with the panel's "no ratings" fallback to the roster order, or the
+  new `--panel-order roster|routed` - and a `seats:` line says which. Tests:
+  `explain_takes_availability_from_the_recorded_health_only`,
+  `explain_says_in_which_order_it_judged_the_seats`.
+- **The normaliser's timing test measures linearity, not wall time.**
+  `normalise_is_linear_on_a_large_reply` asserted a 4 MB reply normalises in under 5 s and failed at
+  9.7 s while other builds ran. It now compares the fastest of three runs at N and at 8N strings
+  and asserts the ratio stays far below the quadratic 64x (under 24x), with a three-minute ceiling
+  only as a backstop.
 - **C3's project folder is `.c3/`, and `c3 finish` writes no snapshot by default.** C3 inherited its
   per-project folder `.eck/` from another tool; it now keeps everything in a lowercase `.c3/` at the
   repository root, git-ignored as a whole: the manifests (same names) and `profiles.json`,
@@ -391,6 +428,122 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **A file name is data, not a command, for an allow-listed agy reader (F32-3).** Since 0.2.5 R1 the
+  step classifier looked for command-shaped strings at every depth, so a `read_file` of a file named
+  `notes&&draft.md` was classified as writing and a complete review was thrown away. A reader's
+  parameters are now read by their role: a value under a path / file / directory / uri key
+  (`Path`, `AbsolutePath`, `DirectoryPath`, `SearchDirectory`, `Url`, `paths` - a key that ENDS in
+  such a word) is a file name and never scanned, a search term stays data, a key that names a
+  command or written content is a write whatever its value, and only a value under any other key -
+  one the reader's schema does not have - is scanned. A tool not on the reader allow-list stays
+  writing. Test (one table with item F24-4):
+  `agy_steps_merge_at_every_depth_and_read_reader_parameters_by_their_role`.
+- **An agy step's parameters merge into nested objects (F24-4).** The events of one step were united
+  key by key at the top only: a later event's command under a key whose object already had other
+  keys (`{"config":{"cwd":"."}}` then `{"config":{"action":"rm -rf x"}}`) was dropped, so an
+  allow-listed reader that wrote was classified as not writing. The merge is now recursive (an
+  empty value gives way to a non-empty one at any depth, objects and arrays are united), and two
+  different non-empty values that cannot be united are both kept, as an array under that key - a
+  command-shaped value from any event is never dropped. Test: the same table.
+- **A changed bound input withholds the reply of every engine that reads the live tree.** Wave R1
+  did it for agy only: a brief or a bound artifact that changes during the run is not ambient drift
+  - the reply may answer other bytes than the review is bound to - so it is kept (the raw reply as
+  `.reply.json`, a codex run's salvage as `.partial.md`) and the outcome is the failed read-only
+  check naming the input, class `permission`. The same rule now applies to muse, grok, claude, kimi
+  and codex runs on the live tree (codex had no tree check: the brief and the artifacts are
+  re-hashed after its last turn). A run in a throwaway worktree read staged copies and stays
+  unaffected; the http reviewer reads only its pack. Tests:
+  `a_changed_bound_input_withholds_the_reply_of_every_live_tree_engine`,
+  `a_codex_run_whose_brief_changed_is_not_recorded_as_usable` (and its `--rev` counterpart in the
+  same test).
+- **A single run is judged against the findings it was shown.** A panel member carried the
+  immutable records of the prior findings it was listed; a single run read the findings store again
+  at its finish for the prior-blocker lines, the prior-blocker semantics and the validation of its
+  prior report. A single run now takes the same snapshot once at its start, and one code path
+  judges both: a blocker resolved meanwhile stays the open blocker it was shown, a finding filed
+  meanwhile is not reportable. Test: `a_single_run_is_judged_against_the_findings_it_was_shown`.
+- **One HEAD value decides what a `--rev` run is compared with (F29-3).** Whether the reviewed
+  revision is the live HEAD (and the task's open findings are withheld) and the `live_head` the
+  records name came from two resolutions of HEAD taken at different moments. Both now come from ONE
+  resolution at the start of the run; a HEAD that cannot be resolved withholds the findings (the
+  safe side) and says so - a run warning, `live_head_unresolved: true` in the ledger, "Live HEAD at
+  launch: could not be resolved" in the handoff. Test:
+  `one_head_value_decides_what_a_rev_run_is_compared_with`.
+- **The death record prefers the newest stream of its own run (F24-2, F10-7, F11-11).** A death record
+  took the events path of the run's own pending record and used the stream the run noted in its
+  status record only when that field was empty, so a pending record that still named the main
+  stream (its rewrite failed, or a later rewrite kept its old `events`) hid a later continuation
+  stream. When the two name different streams, the one written last now wins (the newer events
+  file; the note on a tie or an unknown time, as it carries the turn transitions). Test:
+  `the_death_record_prefers_the_newest_stream_of_its_own_run`.
+- **The uncommitted-paths paragraph leaves the collab directory out.** The prompt of a reviewer in
+  a throwaway worktree of HEAD named, among the tracked paths that differ from the revision, paths
+  under the collab directory - whose task handoffs are staged into the worktree - and counted the
+  untracked collab directory among the paths HEAD does not hold. Every path under the collab root
+  is now left out of the list and out of both counts. Test:
+  `the_isolation_prompt_leaves_the_collab_directory_out`.
+- **Only the run's own patch is exempt from the collab comparison (F27-3).** Every collab path that
+  started with `<task>/handoffs/<stem>.` was ignored, so a reviewer could write
+  `handoffs/<stem>.notes.md` and the run still looked clean. Exactly the patch file the run wrote
+  and its write-temp name (`<stem>.<sha8>.<32 hex>.tmp`) are exempt now, nothing else with that
+  prefix. Test: `the_runs_own_patch_is_the_only_exempt_file`.
+- **The `--diff` patch placement is contained from the start, survives an abandoned claim and
+  removes only its own (F43-1, F43-2, F43-3).** The handoffs directory was created by path name
+  (`create_dir_all`) before the anchor was opened on it, so a link above it redirected the create;
+  it is now opened - and what is missing of it created - through handles from a root on the
+  repository (or on the collab directory when that lies outside it), and a link anywhere above
+  `handoffs/` refuses the placement. Where hard links are unavailable a run killed between the
+  empty claim and the rename left an empty file that blocked every later run with that patch name
+  ("already holds other bytes"); an EMPTY file at the name unchanged for 60 seconds is now an
+  abandoned claim - taken over (removed while it is still that empty file, then claimed again
+  under the same exclusive create) with one stderr line - while a fresh claim is waited for and
+  then named as what it is. A failed rename removed the claimed name unconditionally, even when a
+  sibling had completed it meanwhile; the name is now removed only while it is still this call's
+  own empty claim (size zero and the identity it was created with, read on a handle right before
+  the removal), a sibling's finished patch with the same bytes is reused and one with other bytes
+  left alone and reported. Tests: `a_link_above_the_handoffs_directory_refuses_the_patch`,
+  `an_abandoned_empty_claim_is_taken_over`, `a_failed_rename_removes_only_its_own_claim`.
+- **Many excluded paths no longer refuse a review (F28-2).** A diff with more than 500 changed paths
+  excluded by the ignore rules or `.c3ignore` / `.eckignore` was refused outright, because each
+  became an `:(exclude)` pathspec on git's command line (`git diff` takes no pathspec file). The
+  excluded paths now go through a temporary index fed on stdin: a range is diffed as
+  `git diff --cached <base>` against an index of its `to` side where every excluded path carries
+  its `base` version (or is absent), and a one-revision diff's temporary index gives each excluded
+  path the revision's version marked skip-worktree; with nothing excluded the command is the plain
+  `git diff` it was. The count no longer matters; only a real git failure refuses. Test:
+  `many_excluded_paths_do_not_refuse_a_review` (501 excluded paths, modified, deleted and added,
+  in a `..` and a `...` range and the working tree; the rest of the patch byte for byte the plain
+  `git diff`).
+- **A patch that is not valid UTF-8 is said to be altered (F28-3).** The patch text goes through a
+  lossy UTF-8 conversion before redaction (the redactor works on text), which silently replaced
+  invalid byte sequences. The conversion stays and is recorded: the ledger's `diff` record gains
+  `lossy_utf8: true` (and `lossy_utf8_sequences`), and the prompt line says that N byte sequences
+  were not valid UTF-8 and were replaced, so the reviewer knows the patch is not byte-exact there.
+  Test: `a_patch_that_is_not_utf8_is_said_to_be_altered`.
+- **A missed upper-tier seat is warned about when the pins fill the panel (F30-2).**
+  `tier_missed_warning` stayed silent when the required entries took every seat while an eligible
+  weighty entry of another lab existed. It now warns "upper tier missed: the required entries fill
+  all N seats", naming the purpose and the weighty entries kept out. Test:
+  `a_missed_upper_tier_is_warned_about_when_the_pins_fill_the_panel`.
+- **A replay never mixes precise and rounded values (F30-4).** A recorded `ext.c3.draw` block with an
+  invalid row was filtered row by row, so the replay weighed precise values for some candidates and
+  rounded ones for others without saying so. A block with any invalid row (no position or score, a
+  multiplier that is not a positive finite number, or a block that is not a list) is now treated as
+  absent: the rounded values for every candidate, and the "values are rounded" note with the
+  reason. Test: `a_replay_never_mixes_precise_and_rounded_values`.
+- **A brief committed at the reviewed revision need not exist in the live tree (F10-3, F11-4).** Wave
+  R1 materialised such a brief during the staging, but the entry check still refused the run because
+  the file was not on disk. When the run reads a throwaway worktree, the entry check now accepts a
+  brief path that the staging can take from a committed revision (HEAD, else the worktree's own),
+  hashes those committed bytes, and the handoff's `Brief:` line says "Taken from the committed
+  revision ..."; without a throwaway worktree, or committed nowhere, it is refused as before. Test:
+  `a_brief_committed_at_head_but_not_in_the_live_tree_is_taken_from_the_revision`.
+- **`c3 providers` counts a kept reply only while it is still there (F11-12).** The reply-outcome
+  breakdown counted a failed run by the kind of reply its entry recorded, so a sidecar or a partial
+  deleted since still counted as kept. Such a run is now counted in a new column, "failed, kept
+  reply recorded but its file gone" (`failed_reply_gone` in `--json`), found through each
+  consultation's task directory; an older entry without a consult id counts as before. Test:
+  `a_kept_reply_counts_only_while_its_file_is_still_there`.
 - **A public catalog source is no longer read from an IPv6 address that embeds or tunnels an IPv4
   (F39-1, F38-2).** Only IPv4-mapped and NAT64 addresses were judged by the IPv4 they carry, so
   `::10.0.0.1` (IPv4-compatible), `2002:a00:1::1` (6to4) and Teredo `2001::/32` passed the lookup

@@ -215,6 +215,9 @@ struct DetachArgs {
     /// (B1) the run's `--diff` (empty: no patch).
     #[serde(default)]
     diff: String,
+    /// (0.2.5 D1) the run's `--diff-tracked-only`.
+    #[serde(default)]
+    diff_tracked_only: bool,
     #[serde(default)]
     reply_name: String,
     #[serde(default)]
@@ -337,6 +340,7 @@ impl DetachArgs {
             range: o.range.clone(),
             rev: o.rev.clone(),
             diff: o.diff.clone(),
+            diff_tracked_only: o.diff_tracked_only,
             reply_name: o.reply_name.clone(),
             artifacts: artifacts_abs,
             raw: o.raw,
@@ -404,6 +408,7 @@ impl DetachArgs {
             range: self.range,
             rev: self.rev,
             diff: self.diff,
+            diff_tracked_only: self.diff_tracked_only,
             reply_name: self.reply_name,
             artifacts: self.artifacts,
             raw: self.raw,
@@ -1342,7 +1347,7 @@ fn engine_evidence(
     }
     ev.engine_alive = any.then_some(alive);
     if let Some(n) = noted {
-        if ev.events_file.is_empty() {
+        if ev.events_file.is_empty() || noted_stream_wins(&ev.events_file, &n.events_file, bases) {
             ev.events_file = n.events_file.clone();
         }
         if ev.partial_hint.is_empty() {
@@ -1365,6 +1370,40 @@ fn engine_evidence(
         }
     }
     ev
+}
+
+/// (0.2.5 D1, F24-2 / F10-7 / F11-11) Whether the stream the run NOTED (`noted`, persisted in its
+/// status record on every turn transition) replaces the one its own pending record names
+/// (`pending`): when the two name different streams (by file name), the stream written LAST wins -
+/// the events file with the newer modification time (paths resolved against `bases`) - and the
+/// note on a tie or when either time is unknown, since the note carries the turn transitions. A
+/// pending record that still names the main stream (its rewrite failed, or a later rewrite of the
+/// record kept its old `events`) therefore never hides a later continuation stream.
+fn noted_stream_wins(pending: &str, noted: &str, bases: &[PathBuf]) -> bool {
+    if noted.is_empty() {
+        return false;
+    }
+    let name = |p: &str| {
+        Path::new(p)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    if name(pending) == name(noted) {
+        return false;
+    }
+    let mtime = |p: &str| {
+        bases
+            .iter()
+            .map(|b| b.join(p))
+            .find(|c| c.is_file())
+            .and_then(|c| std::fs::metadata(c).and_then(|m| m.modified()).ok())
+    };
+    match (mtime(pending), mtime(noted)) {
+        (Some(p), Some(n)) => n >= p,
+        (Some(_), None) => false,
+        _ => true,
+    }
 }
 
 /// The last `max_lines` lines of a console log (`""` when it cannot be read).
@@ -2344,6 +2383,63 @@ mod tests {
         assert_eq!(d.last_event, "2026-11-15T10:09:58Z");
         assert!(!d.events_mtime.is_empty());
         assert_eq!(d.partial_hint, noted.partial_hint);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (0.2.5 D1, F24-2, the reviewer's Verify) the run's own pending record still names the MAIN
+    // stream while its status note names the continuation written after it: the death record takes
+    // the stream written last - the continuation; and when the pending record names the newer
+    // stream, it keeps it. The same file named both ways is no conflict.
+    #[test]
+    fn the_death_record_prefers_the_newest_stream_of_its_own_run() {
+        let dir = std::env::temp_dir().join(format!("c3-newest-{}", uuid::Uuid::new_v4().simple()));
+        let h = dir.join("handoffs");
+        std::fs::create_dir_all(&h).unwrap();
+        let bases = vec![dir.clone()];
+        std::fs::write(
+            h.join("03-codex-me.events.jsonl"),
+            "{\"ts\":\"2026-11-15T10:00:00Z\"}\n",
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let cont = h.join("03-codex-me.continue.events.jsonl");
+        std::fs::write(&cont, "{\"ts\":\"2026-11-15T10:05:00Z\"}\n").unwrap();
+        std::fs::write(
+            dir.join(".consult.pending-03.json"),
+            r#"{"state":"running","nn":"03","events":"handoffs/03-codex-me.events.jsonl"}"#,
+        )
+        .unwrap();
+        let noted = NotedStream {
+            handoff: "03".into(),
+            turn: "continuation".into(),
+            events_file: cont.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        let ev = engine_evidence(&dir, &bases, Some(&noted), &["03".to_string()]);
+        assert_eq!(ev.events_file, noted.events_file);
+        assert_eq!(ev.last_event, "2026-11-15T10:05:00Z");
+        // the reverse: the pending record names the newer stream, the note the older one
+        std::fs::write(
+            dir.join(".consult.pending-03.json"),
+            r#"{"state":"running","nn":"03","events":"handoffs/03-codex-me.continue.events.jsonl"}"#,
+        )
+        .unwrap();
+        let old_note = NotedStream {
+            events_file: h
+                .join("03-codex-me.events.jsonl")
+                .to_string_lossy()
+                .to_string(),
+            ..noted.clone()
+        };
+        let ev = engine_evidence(&dir, &bases, Some(&old_note), &["03".to_string()]);
+        assert_eq!(ev.events_file, "handoffs/03-codex-me.continue.events.jsonl");
+        // one file named both ways (relative and absolute): the pending record's form stays
+        let same = NotedStream {
+            events_file: cont.to_string_lossy().to_string(),
+            ..noted
+        };
+        let ev = engine_evidence(&dir, &bases, Some(&same), &["03".to_string()]);
+        assert_eq!(ev.events_file, "handoffs/03-codex-me.continue.events.jsonl");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -78,6 +78,10 @@ pub struct ConsultArgs {
     /// pack); the ledger records the range, the patch's sha256 and the redaction count.
     #[arg(long, default_value = "")]
     pub diff: String,
+    /// With a one-revision `--diff`: leave the untracked files out of the patch (tracked changes
+    /// only). Without it such a patch carries every untracked, not ignored file with its content.
+    #[arg(long)]
+    pub diff_tracked_only: bool,
     /// The handoff base name (a slug); default `reply`.
     #[arg(long, default_value = "")]
     pub reply_name: String,
@@ -284,6 +288,7 @@ pub fn run(args: ConsultArgs) -> i32 {
         range: args.range,
         rev: args.rev,
         diff: args.diff,
+        diff_tracked_only: args.diff_tracked_only,
         reply_name: args.reply_name,
         artifacts: args.artifact,
         raw: args.raw,

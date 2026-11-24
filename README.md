@@ -747,6 +747,12 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
   Windows and macOS). The
   project's "never put in AI context" list is `.c3ignore` (gitignore syntax, per directory); a
   directory without one still has its `.eckignore` read.
+- **What a one-revision `--diff` sends.** `c3 consult --diff <rev>` (one revision, diffed against
+  the working tree) puts the content of every untracked, not ignored file into the patch; the
+  redactor only replaces values that look like secrets. Before the reviewer starts, stderr says how
+  many untracked files the patch carries and names up to ten (the ledger's `diff` record keeps the
+  same `untracked` list and `untracked_count`). To bound it: commit first, diff a `base..head`
+  range, or pass `--diff-tracked-only`, which leaves the untracked files out.
 - **Old rule text.** `c3 doctor` reports a C3-written rules file that still has an old template
   sentence naming `.eck/`, and `c3 doctor --fix` replaces exactly that line with the current one;
   a sentence the user rewrote is reported and left alone.

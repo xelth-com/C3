@@ -618,6 +618,16 @@ pub struct DiffPlan {
     pub bytes: u64,
     /// (R5, F19-2) How many secret-shaped values the redactor replaced in the patch.
     pub redactions: usize,
+    /// (0.2.5 D1, F18-4 / F19-2 / F20-6) `--diff-tracked-only`: a one-revision patch leaves the
+    /// untracked files out (only tracked changes are diffed against the working tree).
+    pub tracked_only: bool,
+    /// (0.2.5 D1) The untracked (not ignored, not excluded) files a one-revision patch carries, in
+    /// git's order - every one of them, its content included in the patch. Empty for a range and
+    /// under `--diff-tracked-only`.
+    pub untracked: Vec<String>,
+    /// (0.2.5 D1, F28-3) How many byte sequences of git's output were not valid UTF-8 and were
+    /// replaced (U+FFFD) before the redaction: the patch is not byte-exact there.
+    pub lossy: usize,
 }
 
 impl DiffPlan {
@@ -767,10 +777,6 @@ fn git_out(
     Ok(out.stdout)
 }
 
-/// The most changed paths an ignore rule may hide from one patch (each becomes an `:(exclude)`
-/// pathspec on the command line).
-const PATCH_HIDDEN_MAX: usize = 500;
-
 /// (R5, F19-2) The paths of `paths` (repo-relative, `/`) the repository excludes from what may leave
 /// the machine: matched by its ignore rules (`git check-ignore --no-index`: `.gitignore` files,
 /// `.git/info/exclude` and the global excludes - a TRACKED file included) or by a `.c3ignore` file
@@ -841,17 +847,44 @@ fn nul_list(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// The patch bytes of `spec` in `repo`, the `excludes` left out. A range is `git diff <range>`; one
+/// A rendered `--diff` patch: its bytes (as git wrote them) and the untracked files a one-revision
+/// patch carries (empty for a range and under `--diff-tracked-only`).
+#[derive(Debug, Clone, Default)]
+pub struct RenderedPatch {
+    pub bytes: Vec<u8>,
+    pub untracked: Vec<String>,
+}
+
+/// [`render_patch_with`] with the untracked files included, its bytes only.
+pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result<Vec<u8>, String> {
+    render_patch_with(repo, spec, excludes, false).map(|p| p.bytes)
+}
+
+/// The patch of `spec` in `repo`, the `excludes` left out. A range is `git diff <range>`; one
 /// revision is diffed against the working tree with the untracked (not ignored) files marked
 /// intent-to-add in a TEMPORARY copy of the index, so new files are in the patch and the real index
-/// is never touched. (R5, F19-2) A file the repository's ignore rules or a `.c3ignore` exclude
-/// ([`ignore_excluded`]) never enters the patch - an untracked one is not marked, a tracked one is
-/// left out by an `:(exclude,literal)` pathspec. (R5, F19-5) The revision or range is passed after
-/// `--end-of-options`, so git never reads it as an option.
-pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result<Vec<u8>, String> {
+/// is never touched - (0.2.5 D1) unless `tracked_only` (`--diff-tracked-only`): then no untracked
+/// file is marked, and the patch holds the tracked changes only. The untracked files the patch
+/// carries are returned beside it. (R5, F19-2) A file the repository's ignore rules or a
+/// `.c3ignore` exclude ([`ignore_excluded`]) never enters the patch - an untracked one is not
+/// marked, a tracked one is hidden ([`hide_in_index`]). (R5, F19-5) The revision or range is passed
+/// after `--end-of-options`, so git never reads it as an option.
+///
+/// (0.2.5 D1, F28-2) However many changed paths are excluded, the review is not refused: they never
+/// reach git's command line. They go through a temporary index instead (fed on stdin): a range is
+/// diffed as `git diff --cached <base>` against an index of its `to` side in which every excluded
+/// path carries its `base` version (or is absent), so it shows no change; a one-revision diff's
+/// temporary index gives each excluded path the revision's version marked skip-worktree. With
+/// nothing excluded the command is the plain `git diff` it always was.
+pub fn render_patch_with(
+    repo: &Path,
+    spec: &DiffSpec,
+    excludes: &[String],
+    tracked_only: bool,
+) -> Result<RenderedPatch, String> {
     let mut pathspec: Vec<String> = vec!["--".into(), ".".into()];
     pathspec.extend(excludes.iter().cloned());
-    let args_of = |head: &[&str], what: &str, hidden: &[String]| -> Vec<String> {
+    let args_of = |head: &[&str], what: &str| -> Vec<String> {
         let mut v: Vec<String> = ["-c", "core.quotepath=false", "diff"]
             .iter()
             .chain(head.iter())
@@ -860,30 +893,63 @@ pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result
         v.push("--end-of-options".into());
         v.push(what.to_string());
         v.extend(pathspec.iter().cloned());
-        v.extend(hidden.iter().map(|p| format!(":(exclude,literal){p}")));
         v
     };
-    // the changed paths the repository excludes, then the patch without them
-    let diff_without_ignored = |what: &str, index: Option<&Path>| -> Result<Vec<u8>, String> {
-        let names = args_of(&["--name-only", "-z", "--no-ext-diff"], what, &[]);
-        let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-        let changed = nul_list(&git_out(repo, &refs, index, None)?);
-        let mut hidden: Vec<String> = ignore_excluded(repo, &changed)?.into_iter().collect();
-        hidden.sort();
-        if hidden.len() > PATCH_HIDDEN_MAX {
-            return Err(format!(
-                "the range changes {} files the repository's ignore rules or .c3ignore exclude (at most {PATCH_HIDDEN_MAX} can be left out of one patch); narrow the range",
-                hidden.len()
-            ));
-        }
-        let args = args_of(&["--no-color", "--no-ext-diff"], what, &hidden);
+    let run = |args: &[String], index: Option<&Path>| -> Result<Vec<u8>, String> {
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         git_out(repo, &refs, index, None)
     };
+    // the changed paths of `what` (diffed with `head`) the repository excludes, sorted
+    let hidden_of =
+        |head: &[&str], what: &str, index: Option<&Path>| -> Result<Vec<String>, String> {
+            let mut h: Vec<&str> = head.to_vec();
+            h.extend(["--name-only", "-z", "--no-ext-diff"]);
+            let changed = nul_list(&run(&args_of(&h, what), index)?);
+            let mut hidden: Vec<String> = ignore_excluded(repo, &changed)?.into_iter().collect();
+            hidden.sort();
+            Ok(hidden)
+        };
     match spec {
         DiffSpec::Range { from, sep, to } => {
             let range = format!("{from}{sep}{to}");
-            diff_without_ignored(&range, None)
+            let hidden = hidden_of(&[], &range, None)?;
+            if hidden.is_empty() {
+                let bytes = run(&args_of(&["--no-color", "--no-ext-diff"], &range), None)?;
+                return Ok(RenderedPatch {
+                    bytes,
+                    untracked: Vec::new(),
+                });
+            }
+            // (F28-2) `from..to` is `base` (from, or the merge base for `...`) against `to`: the
+            // index of `to` with every excluded path put back to its `base` version
+            let to_sha = worktree::resolve_commit(repo, to)?;
+            let from_sha = worktree::resolve_commit(repo, from)?;
+            let base = if *sep == "..." {
+                String::from_utf8_lossy(&git_out(
+                    repo,
+                    &["merge-base", &from_sha, &to_sha],
+                    None,
+                    None,
+                )?)
+                .trim()
+                .to_string()
+            } else {
+                from_sha
+            };
+            let tmp = temp_index_path();
+            let result = (|| -> Result<Vec<u8>, String> {
+                git_out(repo, &["read-tree", &to_sha], Some(&tmp), None)?;
+                hide_in_index(repo, &tmp, &base, &hidden, false)?;
+                run(
+                    &args_of(&["--cached", "--no-color", "--no-ext-diff"], &base),
+                    Some(&tmp),
+                )
+            })();
+            remove_temp_index(&tmp);
+            Ok(RenderedPatch {
+                bytes: result?,
+                untracked: Vec::new(),
+            })
         }
         DiffSpec::WorkingTree { rev } => {
             let index_rel = String::from_utf8_lossy(&git_out(
@@ -902,31 +968,37 @@ pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result
                     repo.join(p)
                 }
             };
-            let tmp = std::env::temp_dir()
-                .join(format!("c3-diff-index-{}", uuid::Uuid::new_v4().simple()));
+            let tmp = temp_index_path();
             if index.is_file() {
                 std::fs::copy(&index, &tmp)
                     .map_err(|e| format!("the index could not be copied ({e})"))?;
             }
-            let result = (|| -> Result<Vec<u8>, String> {
-                let mut ls: Vec<String> = vec![
-                    "ls-files".into(),
-                    "--others".into(),
-                    "--exclude-standard".into(),
-                    "-z".into(),
-                ];
-                ls.extend(pathspec.iter().cloned());
-                let ls_refs: Vec<&str> = ls.iter().map(|s| s.as_str()).collect();
-                let untracked = nul_list(&git_out(repo, &ls_refs, Some(&tmp), None)?);
-                // (R5, F19-2) an untracked file is the change - unless a `.c3ignore` excludes it
-                // (`--exclude-standard` already left the git-ignored ones out)
-                let hidden = ignore_excluded(repo, &untracked)?;
-                let mut marked: Vec<u8> = Vec::new();
-                for p in untracked.iter().filter(|p| !hidden.contains(*p)) {
-                    marked.extend_from_slice(p.as_bytes());
-                    marked.push(0);
+            let result = (|| -> Result<RenderedPatch, String> {
+                let mut carried: Vec<String> = Vec::new();
+                if !tracked_only {
+                    let mut ls: Vec<String> = vec![
+                        "ls-files".into(),
+                        "--others".into(),
+                        "--exclude-standard".into(),
+                        "-z".into(),
+                    ];
+                    ls.extend(pathspec.iter().cloned());
+                    let ls_refs: Vec<&str> = ls.iter().map(|s| s.as_str()).collect();
+                    let untracked = nul_list(&git_out(repo, &ls_refs, Some(&tmp), None)?);
+                    // (R5, F19-2) an untracked file is the change - unless a `.c3ignore` excludes
+                    // it (`--exclude-standard` already left the git-ignored ones out)
+                    let hidden = ignore_excluded(repo, &untracked)?;
+                    carried = untracked
+                        .into_iter()
+                        .filter(|p| !hidden.contains(p))
+                        .collect();
                 }
-                if !marked.is_empty() {
+                if !carried.is_empty() {
+                    let mut marked: Vec<u8> = Vec::new();
+                    for p in &carried {
+                        marked.extend_from_slice(p.as_bytes());
+                        marked.push(0);
+                    }
                     git_out(
                         repo,
                         &[
@@ -940,35 +1012,192 @@ pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result
                         Some(&marked),
                     )?;
                 }
-                diff_without_ignored(rev, Some(&tmp))
+                let hidden = hidden_of(&[], rev, Some(&tmp))?;
+                if !hidden.is_empty() {
+                    let base = worktree::resolve_commit(repo, rev)?;
+                    hide_in_index(repo, &tmp, &base, &hidden, true)?;
+                }
+                let bytes = run(&args_of(&["--no-color", "--no-ext-diff"], rev), Some(&tmp))?;
+                Ok(RenderedPatch {
+                    bytes,
+                    untracked: carried,
+                })
             })();
-            let _ = std::fs::remove_file(&tmp);
-            let _ = std::fs::remove_file(tmp.with_extension("lock"));
+            remove_temp_index(&tmp);
             result
         }
     }
+}
+
+/// A fresh temporary index file name (nothing created).
+fn temp_index_path() -> PathBuf {
+    std::env::temp_dir().join(format!("c3-diff-index-{}", uuid::Uuid::new_v4().simple()))
+}
+
+/// Remove a temporary index and its lock file (best effort).
+fn remove_temp_index(tmp: &Path) {
+    let _ = std::fs::remove_file(tmp);
+    let _ = std::fs::remove_file(tmp.with_extension("lock"));
+}
+
+/// (0.2.5 D1, F28-2) Hide the `hidden` paths of a patch in the temporary `index`, bounded however
+/// many there are (every list goes to git on stdin, never on the command line): each one present
+/// in the commit `base` gets `base`'s version (mode and object, from `git ls-tree -r -z`), each one
+/// absent there is removed (`git update-index -z --index-info`), so the index shows no change for
+/// it against `base`. `skip_worktree` (a diff against the working tree) also marks the kept ones
+/// skip-worktree, so their working-tree content is not read either.
+fn hide_in_index(
+    repo: &Path,
+    index: &Path,
+    base: &str,
+    hidden: &[String],
+    skip_worktree: bool,
+) -> Result<(), String> {
+    let want: std::collections::HashSet<&str> = hidden.iter().map(|s| s.as_str()).collect();
+    let listing = git_out(
+        repo,
+        &["ls-tree", "-r", "-z", "--full-tree", base],
+        None,
+        None,
+    )?;
+    let mut present: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+    for rec in listing.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let rec = String::from_utf8_lossy(rec);
+        // `<mode> SP <type> SP <object> TAB <path>`
+        let Some((meta, path)) = rec.split_once('\t') else {
+            continue;
+        };
+        if !want.contains(path) {
+            continue;
+        }
+        let mut parts = meta.split(' ');
+        if let (Some(mode), Some(_), Some(object)) = (parts.next(), parts.next(), parts.next()) {
+            present.insert(path.to_string(), (mode.to_string(), object.to_string()));
+        }
+    }
+    let zero = "0".repeat(base.len().max(40));
+    let mut info: Vec<u8> = Vec::new();
+    let mut kept: Vec<u8> = Vec::new();
+    for p in hidden {
+        match present.get(p) {
+            Some((mode, object)) => {
+                info.extend_from_slice(format!("{mode} {object}\t{p}").as_bytes());
+                kept.extend_from_slice(p.as_bytes());
+                kept.push(0);
+            }
+            None => info.extend_from_slice(format!("0 {zero}\t{p}").as_bytes()),
+        }
+        info.push(0);
+    }
+    git_out(
+        repo,
+        &["update-index", "-z", "--index-info"],
+        Some(index),
+        Some(&info),
+    )?;
+    if skip_worktree && !kept.is_empty() {
+        git_out(
+            repo,
+            &["update-index", "-z", "--skip-worktree", "--stdin"],
+            Some(index),
+            Some(&kept),
+        )?;
+    }
+    Ok(())
 }
 
 /// (0.2.5 D4) The test hook that makes the patch placement behave as on a file system without hard
 /// links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`, any value): the fallback placement is then proved.
 pub(crate) const PATCH_NO_HARDLINK_HOOK: &str = "CODEX_CONSULT_TEST_PATCH_NO_HARDLINK";
 
+/// (0.2.5 D1, F43-3) The test hook that makes the rename of a placement without hard links fail
+/// (`CODEX_CONSULT_TEST_PATCH_RENAME_FAIL`). Its value, when not empty, names a file whose bytes a
+/// SIBLING puts under the patch name first (a complete patch replacing this call's claim), so the
+/// cleanup of the failed rename meets a finished patch it must not remove.
+pub(crate) const PATCH_RENAME_FAIL_HOOK: &str = "CODEX_CONSULT_TEST_PATCH_RENAME_FAIL";
+
+/// (0.2.5 D1, F43-2) The test hook that sets the age (whole seconds) from which an EMPTY file at a
+/// patch name is an abandoned claim (`CODEX_CONSULT_TEST_PATCH_CLAIM_STALE_SEC`); default
+/// [`PATCH_CLAIM_STALE_SECS`].
+pub(crate) const PATCH_CLAIM_STALE_HOOK: &str = "CODEX_CONSULT_TEST_PATCH_CLAIM_STALE_SEC";
+
+/// (0.2.5 D1, F43-2) From this age (seconds since its last change) an EMPTY file at a patch name is
+/// a claim its owner abandoned (killed between the claim and the rename): it is taken over.
+pub const PATCH_CLAIM_STALE_SECS: u64 = 60;
+
+/// The age from which an empty claim is abandoned ([`PATCH_CLAIM_STALE_HOOK`] or the default).
+fn claim_stale_after() -> std::time::Duration {
+    let secs = c3_core::test_hooks::hook(PATCH_CLAIM_STALE_HOOK)
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(PATCH_CLAIM_STALE_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
+/// A regular file's identity (volume, file index) and size, read on a handle opened without
+/// following it; `None` when the name is not a regular file that can be opened.
+fn file_state(dir: &cap_std::fs::Dir, leaf: &std::ffi::OsStr) -> Option<(FileIdentity, u64)> {
+    let f = crate::contain::open_file_in(dir, leaf).ok()?;
+    let m = f.metadata().ok()?;
+    Some((
+        (
+            cap_fs_ext::MetadataExt::dev(&m),
+            cap_fs_ext::MetadataExt::ino(&m),
+        ),
+        m.len(),
+    ))
+}
+
+/// A file's identity on its volume (see [`file_state`]).
+type FileIdentity = (u64, u64);
+
+/// What an existing file at the patch name gives the placement.
+enum Existing {
+    /// It holds exactly this patch's bytes: reused.
+    Same,
+    /// It vanished while it was being waited for: place again.
+    Gone,
+    /// (F43-2) An EMPTY claim older than [`claim_stale_after`], with its identity: abandoned.
+    Abandoned(FileIdentity),
+}
+
 /// The existing patch file `leaf` of `dir` reused when it holds exactly `bytes` (read through a
 /// handle opened without following it); anything else is an `Err`. A name another placement is
 /// still putting in place - an EMPTY claim on a file system without hard links
-/// ([`place_without_link`]) - is waited for up to two seconds.
+/// ([`place_without_link`]) - is waited for up to two seconds; one that vanishes meanwhile is
+/// [`Existing::Gone`]. (0.2.5 D1, F43-2) An empty claim that has not changed for
+/// [`PATCH_CLAIM_STALE_SECS`] is [`Existing::Abandoned`] (its owner died between the claim and the
+/// rename), never "other bytes".
 fn reuse_patch(
     dir: &cap_std::fs::Dir,
     leaf: &std::ffi::OsStr,
     bytes: &[u8],
     shown: &str,
-) -> Result<(), String> {
+) -> Result<Existing, String> {
     use crate::contain::Step;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
         match crate::contain::read_file_in(dir, leaf) {
-            Ok(b) if b == bytes => return Ok(()),
-            Ok(b) if b.is_empty() && std::time::Instant::now() < deadline => {
+            Ok(b) if b == bytes => return Ok(Existing::Same),
+            Ok(b) if b.is_empty() => {
+                let stale = crate::contain::open_file_in(dir, leaf)
+                    .ok()
+                    .and_then(|f| f.metadata().ok())
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.into_std().elapsed().ok())
+                    .is_some_and(|age| age >= claim_stale_after());
+                if stale {
+                    if let Some((id, 0)) = file_state(dir, leaf) {
+                        return Ok(Existing::Abandoned(id));
+                    }
+                    continue;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "{shown} is an empty claim of another placement that has not finished (it is taken over once unchanged for {} s); a patch file is never overwritten",
+                        claim_stale_after().as_secs()
+                    ));
+                }
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
             Ok(_) => {
@@ -976,6 +1205,7 @@ fn reuse_patch(
                     "{shown} already holds other bytes; a patch file is never overwritten"
                 ))
             }
+            Err(Step::Missing) => return Ok(Existing::Gone),
             Err(Step::Link { .. }) | Err(Step::NotFile) => {
                 return Err(format!(
                     "{shown} exists and is not a regular file; it is never reused or overwritten"
@@ -986,30 +1216,129 @@ fn reuse_patch(
     }
 }
 
+/// (0.2.5 D1, F43-3) Remove the patch name only while it is still THIS call's own empty claim (the
+/// identity `claim` it was created with, size zero - read on a handle immediately before the
+/// removal). A non-empty file there is a sibling's finished patch: `Ok(true)` when its bytes are
+/// this patch's (it is reused), an `Err` naming the conflict when they are not (it is left alone).
+/// `Ok(false)` when the own claim was removed or nothing is there; an `Err` when the removal fails.
+fn drop_own_claim(
+    dir: &cap_std::fs::Dir,
+    leaf: &std::ffi::OsStr,
+    claim: FileIdentity,
+    bytes: &[u8],
+    shown: &str,
+) -> Result<bool, String> {
+    match file_state(dir, leaf) {
+        Some((id, 0)) if id == claim => dir
+            .remove_file(leaf)
+            .map(|()| false)
+            .map_err(|e| format!("the claimed name could not be removed again ({e})")),
+        Some((_, 0)) => Err(format!(
+            "{shown} is now another placement's claim; it is left alone"
+        )),
+        Some(_) => match crate::contain::read_file_in(dir, leaf) {
+            Ok(b) if b == bytes => Ok(true),
+            _ => Err(format!(
+                "{shown} now holds a sibling's patch with other bytes; it is left alone"
+            )),
+        },
+        None => Ok(false),
+    }
+}
+
 /// (0.2.5 D4, F28-1) Place the complete temporary file `tmp` of `dir` under `leaf` WITHOUT a hard
 /// link and without replacing anything that is not this call's own, relative to the directory's
 /// handle: the name is CLAIMED by an exclusive create of an empty file (`AlreadyExists` when it is
 /// taken), then the temporary file is renamed onto the claim. A sibling that meets the empty claim
-/// waits for it ([`reuse_patch`]); when the rename fails the claim is removed again (a removal that
-/// fails is named in the error). (A rename that refuses to replace exists on Windows only as a
-/// rename of a path the process's current directory would complete - not used.)
+/// waits for it ([`reuse_patch`]). (0.2.5 D1, F43-3) When the rename fails, the claim is removed
+/// only while it is still this call's own empty claim ([`drop_own_claim`]): a sibling's finished
+/// patch there is reused when it holds the same bytes (`Ok`) and left alone otherwise. (A rename
+/// that refuses to replace exists on Windows only as a rename of a path the process's current
+/// directory would complete - not used.)
 fn place_without_link(
     dir: &cap_std::fs::Dir,
     tmp: &std::ffi::OsStr,
     leaf: &std::ffi::OsStr,
+    bytes: &[u8],
+    shown: &str,
 ) -> std::io::Result<()> {
     let mut o = cap_std::fs::OpenOptions::new();
     o.write(true).create_new(true);
-    drop(dir.open_with(leaf, &o)?);
+    let claim = {
+        let f = dir.open_with(leaf, &o)?;
+        let m = f.metadata()?;
+        (
+            cap_fs_ext::MetadataExt::dev(&m),
+            cap_fs_ext::MetadataExt::ino(&m),
+        )
+    };
     crate::contain::race_point("patch-claim");
-    dir.rename(tmp, dir, leaf)
-        .map_err(|e| match dir.remove_file(leaf) {
-            Ok(()) => e,
-            Err(e2) => std::io::Error::new(
-                e.kind(),
-                format!("{e}; the claimed name could not be removed again ({e2})"),
-            ),
-        })
+    let renamed = match c3_core::test_hooks::hook(PATCH_RENAME_FAIL_HOOK) {
+        Some(sibling) => {
+            // (test) a sibling finishes the name first, then this rename fails
+            let from = sibling.trim();
+            if let Some(b) = (!from.is_empty())
+                .then(|| std::fs::read(from).ok())
+                .flatten()
+            {
+                let side = std::ffi::OsString::from(format!("{}.sibling", tmp.to_string_lossy()));
+                if dir.write(&side, &b).is_ok() {
+                    let _ = dir.rename(&side, dir, leaf);
+                }
+            }
+            Err(std::io::Error::other("injected rename failure"))
+        }
+        None => dir.rename(tmp, dir, leaf),
+    };
+    renamed.or_else(|e| match drop_own_claim(dir, leaf, claim, bytes, shown) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(e),
+        Err(why) => Err(std::io::Error::new(e.kind(), format!("{e}; {why}"))),
+    })
+}
+
+/// (0.2.5 D1, F43-1) The task's handoffs directory `dir_path`, opened - and what is missing of it
+/// created - through handles ([`crate::contain`]): from a root on the repository when it lies inside
+/// it (as the collab directory does by default), else from a root on the collab directory. Every
+/// component below that root is opened without following it, so a link anywhere above the handoffs
+/// directory refuses the placement; nothing is created by path name (only an outside collab root
+/// itself, the anchor, is created when it is missing).
+fn open_patch_dir(
+    dir_path: &Path,
+    repo_root: &Path,
+    collab_root: &Path,
+) -> Result<cap_std::fs::Dir, String> {
+    let shown = dir_path.display();
+    let (anchor, rel) =
+        match c3_core::paths::repo_relative(repo_root, dir_path).filter(|r| !r.is_empty()) {
+            Some(rel) => (repo_root, rel),
+            None => match c3_core::paths::repo_relative(collab_root, dir_path)
+                .filter(|r| !r.is_empty())
+            {
+                Some(rel) => {
+                    if !collab_root.exists() {
+                        let _ = std::fs::create_dir_all(collab_root);
+                    }
+                    (collab_root, rel)
+                }
+                None => {
+                    return Err(format!(
+                        "{shown} lies neither in the repository nor in the collab directory"
+                    ))
+                }
+            },
+        };
+    let root = crate::contain::Root::open_anchor(anchor)
+        .map_err(|e| format!("{} {}", anchor.display(), e.words()))?;
+    crate::contain::race_point("patch-dir");
+    root.open_dir(Path::new(&rel), true).map_err(|e| {
+        format!(
+            "{shown} cannot be reached through {}: `{}` {}",
+            anchor.display(),
+            e.at.display(),
+            e.why
+        )
+    })
 }
 
 /// (R5, F19-3) Put `bytes` at `dir/name` without ever overwriting a file: an existing regular file
@@ -1023,24 +1352,33 @@ fn place_without_link(
 /// links, [`place_without_link`]. The final name never holds partial bytes: on every error path
 /// what this call created is removed again, and a removal that fails is named in the `Err` (or, when
 /// the patch itself is in place, said on stderr).
-fn place_patch(dir_path: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+///
+/// (0.2.5 D1) The handoffs directory is reached through handles from the start ([`open_patch_dir`],
+/// F43-1); an empty claim abandoned for [`PATCH_CLAIM_STALE_SECS`] is taken over - removed while it
+/// is still that empty file, then claimed again under the same exclusive create - and one stderr
+/// line says so (F43-2); a name that vanishes while it is waited for is placed again.
+fn place_patch(
+    dir_path: &Path,
+    repo_root: &Path,
+    collab_root: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let dir = open_patch_dir(dir_path, repo_root, collab_root)?;
+    place_patch_in(&dir, dir_path, name, bytes)
+}
+
+/// [`place_patch`] in the open handoffs directory `dir` (`dir_path` names it in messages).
+fn place_patch_in(
+    dir: &cap_std::fs::Dir,
+    dir_path: &Path,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
     use std::ffi::OsStr;
     let shown = dir_path.join(name).display().to_string();
-    let _ = std::fs::create_dir_all(dir_path);
-    let root = crate::contain::Root::open_anchor(dir_path)
-        .map_err(|e| format!("{} {}", dir_path.display(), e.words()))?;
-    let dir = root.dir();
     let leaf = OsStr::new(name);
-    match crate::contain::entry(dir, leaf) {
-        Ok(Some(_)) => return reuse_patch(dir, leaf, bytes, &shown),
-        Ok(None) => {}
-        Err(e) => return Err(format!("{shown} cannot be checked ({e})")),
-    }
-    let tmp_name = format!(
-        "{}.{}.tmp",
-        name.trim_end_matches(".patch"),
-        uuid::Uuid::new_v4().simple()
-    );
+    let tmp_name = patch_temp_name(name, &uuid::Uuid::new_v4().simple().to_string());
     let tmp = OsStr::new(&tmp_name);
     let remove_tmp = || match dir.remove_file(tmp) {
         Ok(()) => None,
@@ -1051,34 +1389,6 @@ fn place_patch(dir_path: &Path, name: &str, bytes: &[u8]) -> Result<(), String> 
         None => msg,
         Some(e) => format!("{msg}; its temporary file {tmp_name} could not be removed ({e})"),
     };
-    let mut o = cap_std::fs::OpenOptions::new();
-    o.write(true).create_new(true);
-    let mut f = dir
-        .open_with(tmp, &o)
-        .map_err(|e| format!("{shown} could not be written ({e})"))?;
-    let written = crate::contain::write_hook(&mut f, bytes).and_then(|()| f.sync_all());
-    drop(f);
-    if let Err(e) = written {
-        return Err(noted(
-            format!("{shown} could not be written ({e})"),
-            remove_tmp(),
-        ));
-    }
-    crate::contain::race_point("patch-place");
-    let linked = if c3_core::test_hooks::hook(PATCH_NO_HARDLINK_HOOK).is_some() {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "hard links refused (test hook)",
-        ))
-    } else {
-        dir.hard_link(tmp, dir, leaf)
-    };
-    let placed = match linked {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
-        // no hard links on this file system: place it without one
-        Err(_) => place_without_link(dir, tmp, leaf),
-    };
     let warn_left = |cleanup: Option<std::io::Error>| {
         if let Some(e) = cleanup {
             eprintln!(
@@ -1086,26 +1396,183 @@ fn place_patch(dir_path: &Path, name: &str, bytes: &[u8]) -> Result<(), String> 
             );
         }
     };
-    match placed {
-        Ok(()) => {
-            warn_left(remove_tmp());
-            Ok(())
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let cleanup = remove_tmp();
-            match reuse_patch(dir, leaf, bytes, &shown) {
-                Ok(()) => {
-                    warn_left(cleanup);
-                    Ok(())
+    let mut written = false;
+    // a name that vanishes while waited for, or an abandoned claim taken over, is placed again
+    for _ in 0..4 {
+        match crate::contain::entry(dir, leaf) {
+            Ok(Some(_)) => match reuse_patch(dir, leaf, bytes, &shown) {
+                Ok(Existing::Same) => {
+                    warn_left(remove_tmp());
+                    return Ok(());
                 }
-                Err(m) => Err(noted(m, cleanup)),
+                Ok(Existing::Gone) => continue,
+                Ok(Existing::Abandoned(id)) => {
+                    // (F43-2) removed only while it is still that empty claim
+                    match file_state(dir, leaf) {
+                        Some((now, 0)) if now == id => match dir.remove_file(leaf) {
+                            Ok(()) => eprintln!(
+                                "codex-consult: {shown} was an empty claim unchanged for {} s or more (its placement was abandoned); taken over",
+                                claim_stale_after().as_secs()
+                            ),
+                            // a sibling took it over first
+                            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(e) => {
+                                return Err(noted(
+                                    format!("{shown} is an abandoned empty claim that could not be removed ({e})"),
+                                    remove_tmp(),
+                                ))
+                            }
+                        },
+                        _ => {}
+                    }
+                    continue;
+                }
+                Err(m) => return Err(noted(m, remove_tmp())),
+            },
+            Ok(None) => {}
+            Err(e) => {
+                return Err(noted(
+                    format!("{shown} cannot be checked ({e})"),
+                    remove_tmp(),
+                ))
             }
         }
-        Err(e) => Err(noted(
-            format!("{shown} could not be placed ({e})"),
-            remove_tmp(),
-        )),
+        if !written {
+            let mut o = cap_std::fs::OpenOptions::new();
+            o.write(true).create_new(true);
+            let mut f = dir
+                .open_with(tmp, &o)
+                .map_err(|e| format!("{shown} could not be written ({e})"))?;
+            let w = crate::contain::write_hook(&mut f, bytes).and_then(|()| f.sync_all());
+            drop(f);
+            if let Err(e) = w {
+                return Err(noted(
+                    format!("{shown} could not be written ({e})"),
+                    remove_tmp(),
+                ));
+            }
+            written = true;
+        }
+        crate::contain::race_point("patch-place");
+        let linked = if c3_core::test_hooks::hook(PATCH_NO_HARDLINK_HOOK).is_some() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "hard links refused (test hook)",
+            ))
+        } else {
+            dir.hard_link(tmp, dir, leaf)
+        };
+        let placed = match linked {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
+            // no hard links on this file system: place it without one
+            Err(_) => place_without_link(dir, tmp, leaf, bytes, &shown),
+        };
+        match placed {
+            Ok(()) => {
+                warn_left(remove_tmp());
+                return Ok(());
+            }
+            // the name was taken meanwhile: judge what is there now
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(noted(
+                    format!("{shown} could not be placed ({e})"),
+                    remove_tmp(),
+                ))
+            }
+        }
     }
+    Err(noted(
+        format!("{shown} could not be placed: the name kept changing while it was placed"),
+        remove_tmp(),
+    ))
+}
+
+/// (0.2.5 D4) The write-temp name of the patch file `name` (`<stem>.<sha8>.patch`):
+/// `<stem>.<sha8>.<uuid>.tmp`, `uuid` 32 lowercase hex digits.
+fn patch_temp_name(name: &str, uuid: &str) -> String {
+    format!("{}.{uuid}.tmp", name.trim_end_matches(".patch"))
+}
+
+/// (0.2.5 D1, F27-3) Whether the collab-relative path `key` (`<task>/handoffs/<file>`, `/`) is
+/// the run's OWN patch: exactly the file [`write_patch`] wrote, or its write-temp name
+/// ([`patch_temp_name`]: the written name without `.patch`, a dot, 32 hex digits, `.tmp`) - nothing
+/// else that shares the patch's stem. Compared case-insensitively (the collab compare's way).
+/// `false` before the patch was written.
+pub fn is_run_patch_file(plan: &DiffPlan, task: &str, key: &str) -> bool {
+    let Some(name) = plan.path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    if !plan.written() {
+        return false;
+    }
+    let key = key.to_ascii_lowercase();
+    let dir = format!("{}/handoffs/", task.to_ascii_lowercase());
+    let Some(file) = key.strip_prefix(&dir) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    if file == name {
+        return true;
+    }
+    let stem = format!("{}.", name.trim_end_matches(".patch"));
+    file.strip_prefix(&stem)
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+        .is_some_and(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// (0.2.5 D1, F28-3) How many byte sequences of `raw` are not valid UTF-8 - each becomes one U+FFFD
+/// in [`String::from_utf8_lossy`].
+pub fn invalid_utf8_sequences(raw: &[u8]) -> usize {
+    raw.utf8_chunks()
+        .filter(|c| !c.invalid().is_empty())
+        .count()
+}
+
+/// How many untracked files the operator notice and the ledger name.
+pub const UNTRACKED_NAMED: usize = 10;
+
+/// (0.2.5 D1, F18-4 / F19-2 / F20-6) The untracked files a one-revision patch carries, as the
+/// operator notice and the ledger name them: at most [`UNTRACKED_NAMED`] names, each as data (in
+/// backticks; a name with a backtick or a control character is counted instead), and how many
+/// more there are.
+pub fn untracked_named(plan: &DiffPlan) -> (Vec<String>, usize) {
+    let mut named: Vec<String> = Vec::new();
+    let mut more = 0usize;
+    for p in &plan.untracked {
+        if named.len() < UNTRACKED_NAMED && !p.chars().any(|c| c == '`' || c.is_control()) {
+            named.push(p.clone());
+        } else {
+            more += 1;
+        }
+    }
+    (named, more)
+}
+
+/// (0.2.5 D1, F18-4 / F19-2 / F20-6) The stderr notice printed before the reviewer starts when a
+/// one-revision patch carries untracked files: how many, up to ten names (as data), the rest as a
+/// count, and how to bound it. `None` when it carries none.
+pub fn untracked_notice(plan: &DiffPlan) -> Option<String> {
+    if plan.untracked.is_empty() {
+        return None;
+    }
+    let (named, more) = untracked_named(plan);
+    let mut list = named
+        .iter()
+        .map(|n| format!("`{n}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if more > 0 {
+        if !list.is_empty() {
+            list.push_str(", ");
+        }
+        list.push_str(&format!("and {more} more"));
+    }
+    Some(format!(
+        "the -Diff patch includes {} untracked file(s) with their content (redacted only where a value looks like a secret): {list} - commit first, diff a base..head range, or pass --diff-tracked-only to leave them out",
+        plan.untracked.len()
+    ))
 }
 
 /// Write the `--diff` patch, filling in its name, sha256, file count, size and redaction count.
@@ -1121,19 +1588,29 @@ pub fn write_patch(
     collab_root: &Path,
 ) -> Result<(), String> {
     let spec = parse_diff_spec(&plan.range)?;
-    let raw = render_patch(repo_root, &spec, &diff_excludes(repo_root, collab_root))
-        .map_err(|e| format!("the -Diff patch could not be made: {e}"))?;
+    let rendered = render_patch_with(
+        repo_root,
+        &spec,
+        &diff_excludes(repo_root, collab_root),
+        plan.tracked_only,
+    )
+    .map_err(|e| format!("the -Diff patch could not be made: {e}"))?;
+    let raw = rendered.bytes;
+    // (0.2.5 D1, F28-3) the redactor works on text: the conversion stays, and is recorded
+    let lossy = invalid_utf8_sequences(&raw);
     let (safe, redactions) = crate::pack::redact::redact(&String::from_utf8_lossy(&raw));
     let bytes = safe.into_bytes();
     let sha = c3_core::sha256_hex(&bytes);
     let name = format!("{}.{}.patch", plan.stem, &sha[..8]);
     let path = plan.dir.join(&name);
-    place_patch(&plan.dir, &name, &bytes)
+    place_patch(&plan.dir, repo_root, collab_root, &name, &bytes)
         .map_err(|e| format!("the -Diff patch could not be written: {e}"))?;
     plan.rel = shown_path(repo_root, &path);
     plan.path = path;
     plan.sha256 = sha;
     plan.redactions = redactions;
+    plan.lossy = lossy;
+    plan.untracked = rendered.untracked;
     plan.bytes = bytes.len() as u64;
     plan.files = String::from_utf8_lossy(&bytes)
         .lines()
@@ -1158,20 +1635,47 @@ pub fn diff_prompt_line(plan: &DiffPlan) -> String {
     } else {
         l.push('.');
     }
+    // (0.2.5 D1) the tracked changes only: say so, so an absent new file is not read as deleted
+    if plan.tracked_only {
+        l.push_str(" Untracked files were left out of it (--diff-tracked-only).");
+    }
+    // (0.2.5 D1, F28-3) git's output was not valid UTF-8 everywhere: the patch is not byte-exact
+    if plan.lossy > 0 {
+        l.push_str(&format!(
+            " {} byte sequence(s) in git's output were not valid UTF-8 and were replaced by U+FFFD, so the patch is not byte-exact there.",
+            plan.lossy
+        ));
+    }
     l
 }
 
 /// The ledger's `diff` record: `{range, patch, sha256, files, bytes, redactions}` (the sha256 of the
-/// file as written).
+/// file as written). (0.2.5 D1) Plus `lossy_utf8: true` (and `lossy_utf8_sequences`) when git's
+/// output was not valid UTF-8 everywhere (F28-3); `untracked` (up to ten names) and
+/// `untracked_count` when a one-revision patch carries untracked files; `tracked_only: true` under
+/// `--diff-tracked-only`.
 pub fn ledger_diff_value(plan: &DiffPlan) -> serde_json::Value {
-    serde_json::json!({
+    let mut v = serde_json::json!({
         "range": plan.range,
         "patch": plan.rel,
         "sha256": plan.sha256,
         "files": plan.files,
         "bytes": plan.bytes,
         "redactions": plan.redactions,
-    })
+    });
+    if plan.lossy > 0 {
+        v["lossy_utf8"] = serde_json::json!(true);
+        v["lossy_utf8_sequences"] = serde_json::json!(plan.lossy);
+    }
+    if !plan.untracked.is_empty() {
+        let (named, _) = untracked_named(plan);
+        v["untracked"] = serde_json::json!(named);
+        v["untracked_count"] = serde_json::json!(plan.untracked.len());
+    }
+    if plan.tracked_only {
+        v["tracked_only"] = serde_json::json!(true);
+    }
+    v
 }
 
 #[cfg(test)]
@@ -1947,10 +2451,16 @@ mod tests {
         std::fs::remove_file(&p.path).unwrap();
         let racers: Vec<_> = (0..2)
             .map(|_| {
-                let (dir, name, bytes) = (handoffs.clone(), name.clone(), bytes.clone());
+                let (dir, rr, cc, name, bytes) = (
+                    handoffs.clone(),
+                    r.clone(),
+                    collab.clone(),
+                    name.clone(),
+                    bytes.clone(),
+                );
                 std::thread::spawn(move || {
                     let _h = c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1");
-                    place_patch(&dir, &name, &bytes)
+                    place_patch(&dir, &rr, &cc, &name, &bytes)
                 })
             })
             .collect();
@@ -1962,7 +2472,7 @@ mod tests {
         // other bytes under the name are never overwritten
         std::fs::remove_file(&p.path).unwrap();
         std::fs::write(&p.path, "somebody else's bytes\n").unwrap();
-        let err = place_patch(&handoffs, &name, &bytes).unwrap_err();
+        let err = place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap_err();
         assert!(err.contains("never overwritten"), "{err}");
         assert_eq!(
             std::fs::read_to_string(&p.path).unwrap(),
@@ -2043,5 +2553,394 @@ mod tests {
             serde_json::json!({"reason": "rev", "rev": "topic", "sha": other}),
         );
         assert!(resume_revision_warning("fork", "t-1", Some(&e), other, "topic").is_none());
+    }
+
+    // (0.2.5 D1, F27-3) The collab comparison exempts exactly the patch the run wrote and its
+    // write-temp name - nothing else that shares the patch's stem (a reviewer's `<stem>.notes.md`
+    // stays a change).
+    #[test]
+    fn the_runs_own_patch_is_the_only_exempt_file() {
+        let sha = format!("{}{}", "ab12cd34", "0".repeat(56));
+        let mut plan = DiffPlan {
+            stem: "04-claude-diff".into(),
+            dir: PathBuf::from("c/t/handoffs"),
+            ..Default::default()
+        };
+        // nothing is exempt before the patch was written
+        assert!(!is_run_patch_file(
+            &plan,
+            "t",
+            "t/handoffs/04-claude-diff.ab12cd34.patch"
+        ));
+        plan.sha256 = sha;
+        plan.path = PathBuf::from("c/t/handoffs/04-claude-diff.ab12cd34.patch");
+        let uuid = uuid::Uuid::new_v4().simple().to_string();
+        assert_eq!(
+            patch_temp_name("04-claude-diff.ab12cd34.patch", &uuid),
+            format!("04-claude-diff.ab12cd34.{uuid}.tmp")
+        );
+        for exempt in [
+            "t/handoffs/04-claude-diff.ab12cd34.patch".to_string(),
+            "T/Handoffs/04-CLAUDE-DIFF.AB12CD34.PATCH".to_string(),
+            format!("t/handoffs/04-claude-diff.ab12cd34.{uuid}.tmp"),
+        ] {
+            assert!(is_run_patch_file(&plan, "t", &exempt), "{exempt}");
+        }
+        for watched in [
+            "t/handoffs/04-claude-diff.notes.md",
+            "t/handoffs/04-claude-diff.ab12cd34.notes.md",
+            "t/handoffs/04-claude-diff.ffffffff.patch",
+            "t/handoffs/04-claude-diff.ab12cd34.patch.bak",
+            "t/handoffs/04-claude-diff.ab12cd34.not-a-uuid.tmp",
+            "t/handoffs/04-claude-diff.ab12cd34.0123456789abcdef0123456789abcdeg.tmp",
+            "t/04-claude-diff.ab12cd34.patch",
+            "other/handoffs/04-claude-diff.ab12cd34.patch",
+        ] {
+            assert!(!is_run_patch_file(&plan, "t", watched), "{watched}");
+        }
+    }
+
+    // (0.2.5 D1, F28-2) More than 500 changed paths excluded by the ignore rules no longer refuse a
+    // review: a range (`..` and `...`) and a one-revision diff leave every one of them out - a
+    // modified, a deleted and a newly added excluded path included - and the patch of the rest is
+    // byte for byte the plain `git diff` of it.
+    #[test]
+    fn many_excluded_paths_do_not_refuse_a_review() {
+        let r = repo("hidden-many");
+        std::fs::write(r.join(".gitignore"), "ign/\n").unwrap();
+        std::fs::create_dir_all(r.join("ign")).unwrap();
+        for i in 0..501 {
+            std::fs::write(r.join("ign").join(format!("f{i}.txt")), "old\n").unwrap();
+        }
+        git_capture(&r, &["add", "-A"]).unwrap();
+        git_capture(&r, &["add", "-f", "ign"]).unwrap();
+        git_capture(&r, &["commit", "-q", "-m", "ignored files"]).unwrap();
+        for i in 0..501 {
+            std::fs::write(r.join("ign").join(format!("f{i}.txt")), "HIDDEN-CHANGE\n").unwrap();
+        }
+        std::fs::write(r.join("ign").join("added.txt"), "HIDDEN-ADDED\n").unwrap();
+        std::fs::write(r.join("app.txt"), "two\n").unwrap();
+        git_capture(&r, &["add", "-A"]).unwrap();
+        git_capture(&r, &["add", "-f", "ign"]).unwrap();
+        git_capture(&r, &["commit", "-q", "-m", "change"]).unwrap();
+        let ex = diff_excludes(&r, &r.join(".collab"));
+        let plain = git_capture(&r, &["diff", "--no-color", "HEAD~1..HEAD", "--", "app.txt"])
+            .unwrap_or_default();
+        for range in ["HEAD~1..HEAD", "HEAD~1...HEAD"] {
+            let p = render_patch(&r, &parse_diff_spec(range).unwrap(), &ex)
+                .unwrap_or_else(|e| panic!("{range}: {e}"));
+            let p = String::from_utf8(p).unwrap();
+            assert!(p.contains("+two"), "{range}: {p}");
+            assert!(!p.contains("HIDDEN") && !p.contains("ign/"), "{range}: {p}");
+            assert_eq!(p.trim_end(), plain.trim_end(), "{range}");
+        }
+        // the working tree: 501 modified excluded files, one deleted, one staged as new
+        for i in 1..501 {
+            std::fs::write(r.join("ign").join(format!("f{i}.txt")), "LIVE-HIDDEN\n").unwrap();
+        }
+        std::fs::remove_file(r.join("ign").join("f0.txt")).unwrap();
+        std::fs::write(r.join("ign").join("staged.txt"), "STAGED-HIDDEN\n").unwrap();
+        git_capture(&r, &["add", "-f", "ign/staged.txt"]).unwrap();
+        std::fs::write(r.join("app.txt"), "three\n").unwrap();
+        let p = render_patch(&r, &parse_diff_spec("HEAD").unwrap(), &ex).unwrap();
+        let p = String::from_utf8(p).unwrap();
+        assert!(p.contains("+three"), "{p}");
+        assert!(!p.contains("HIDDEN") && !p.contains("ign/"), "{p}");
+        // the real index is untouched: the staged file is still staged, nothing marked skip-worktree
+        let staged = git_capture(&r, &["diff", "--cached", "--name-only"]).unwrap_or_default();
+        assert_eq!(staged.trim(), "ign/staged.txt", "{staged}");
+        let flags = git_capture(&r, &["ls-files", "-v", "ign/f1.txt"]).unwrap_or_default();
+        assert!(flags.starts_with("H "), "{flags}");
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5 D1, F28-3) A patch whose git output is not valid UTF-8 keeps the lossy conversion the
+    // redactor needs, and says so: the plan counts the replaced sequences, the ledger record carries
+    // `lossy_utf8: true` and the prompt line names the count; a valid patch says nothing.
+    #[test]
+    fn a_patch_that_is_not_utf8_is_said_to_be_altered() {
+        for raw in [&b"plain"[..], b"a\xffb", b"caf\xe9 \xfe\xfd ok \xe2\x82"] {
+            assert_eq!(
+                invalid_utf8_sequences(raw),
+                String::from_utf8_lossy(raw).matches('\u{FFFD}').count(),
+                "{raw:?}"
+            );
+        }
+        let r = repo("lossy");
+        let handoffs = r.join(".collab/t/handoffs");
+        std::fs::write(r.join("app.txt"), "valid change\n").unwrap();
+        let mut ok = plan_diff(&r, &handoffs, None, 1, "claude", "HEAD");
+        write_patch(&mut ok, &r, &r.join(".collab")).unwrap();
+        assert_eq!(ok.lossy, 0);
+        assert!(ledger_diff_value(&ok).get("lossy_utf8").is_none());
+        assert!(!diff_prompt_line(&ok).contains("UTF-8"));
+        std::fs::write(r.join("app.txt"), b"caf\xe9 au lait\n").unwrap();
+        let mut plan = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        write_patch(&mut plan, &r, &r.join(".collab")).unwrap();
+        assert_eq!(plan.lossy, 1, "{}", plan.rel);
+        let v = ledger_diff_value(&plan);
+        assert_eq!(v["lossy_utf8"], true, "{v}");
+        assert_eq!(v["lossy_utf8_sequences"], 1, "{v}");
+        let line = diff_prompt_line(&plan);
+        assert!(
+            line.ends_with(
+                "1 byte sequence(s) in git's output were not valid UTF-8 and were replaced by U+FFFD, so the patch is not byte-exact there."
+            ),
+            "{line}"
+        );
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5 D1, F18-4 / F19-2 / F20-6) A one-revision patch carries the untracked files: the plan
+    // lists them, the operator notice names up to ten (a name with a backtick is counted, never
+    // shown) and counts the rest, the ledger keeps the same list; `--diff-tracked-only` leaves them
+    // out and the prompt line says so.
+    #[test]
+    fn a_one_revision_patch_names_its_untracked_files_and_tracked_only_leaves_them_out() {
+        let r = repo("untracked");
+        let handoffs = r.join(".collab/t/handoffs");
+        std::fs::write(r.join("app.txt"), "tracked change\n").unwrap();
+        for i in 0..12 {
+            std::fs::write(r.join(format!("new{i:02}.txt")), format!("NEW-BODY-{i}\n")).unwrap();
+        }
+        std::fs::write(r.join("odd`name.txt"), "ODD-BODY\n").unwrap();
+        let mut plan = plan_diff(&r, &handoffs, None, 1, "claude", "HEAD");
+        write_patch(&mut plan, &r, &r.join(".collab")).unwrap();
+        assert_eq!(plan.untracked.len(), 13, "{:?}", plan.untracked);
+        let text = std::fs::read_to_string(&plan.path).unwrap();
+        assert!(
+            text.contains("+NEW-BODY-11") && text.contains("+ODD-BODY"),
+            "{text}"
+        );
+        let (named, more) = untracked_named(&plan);
+        assert_eq!(named.len(), UNTRACKED_NAMED);
+        assert_eq!(more, 3);
+        assert!(!named.iter().any(|n| n.contains('`')), "{named:?}");
+        let notice = untracked_notice(&plan).unwrap();
+        assert!(
+            notice.starts_with("the -Diff patch includes 13 untracked file(s) with their content"),
+            "{notice}"
+        );
+        assert!(
+            notice.contains("`new00.txt`") && notice.contains("and 3 more"),
+            "{notice}"
+        );
+        assert!(notice.contains("--diff-tracked-only"), "{notice}");
+        let v = ledger_diff_value(&plan);
+        assert_eq!(v["untracked_count"], 13, "{v}");
+        assert_eq!(v["untracked"].as_array().map(|a| a.len()), Some(10), "{v}");
+        assert!(v.get("tracked_only").is_none(), "{v}");
+        // --diff-tracked-only: the tracked change only
+        let mut only = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        only.tracked_only = true;
+        write_patch(&mut only, &r, &r.join(".collab")).unwrap();
+        let text = std::fs::read_to_string(&only.path).unwrap();
+        assert!(text.contains("+tracked change"), "{text}");
+        assert!(
+            !text.contains("NEW-BODY") && !text.contains("ODD-BODY"),
+            "{text}"
+        );
+        assert!(only.untracked.is_empty());
+        assert!(untracked_notice(&only).is_none());
+        assert_eq!(ledger_diff_value(&only)["tracked_only"], true);
+        assert!(diff_prompt_line(&only)
+            .contains("Untracked files were left out of it (--diff-tracked-only)."));
+        // a range carries no untracked file
+        git_capture(&r, &["add", "app.txt"]).unwrap();
+        git_capture(&r, &["commit", "-q", "-m", "tracked"]).unwrap();
+        let mut ranged = plan_diff(&r, &handoffs, None, 3, "claude", "HEAD~1..HEAD");
+        write_patch(&mut ranged, &r, &r.join(".collab")).unwrap();
+        assert!(ranged.untracked.is_empty());
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    /// The sorted names in `d` (nothing when it is not there).
+    fn dir_names(d: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(d)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
+
+    // (0.2.5 D1, F43-1) The handoffs directory is reached through handles from the repository: a
+    // link above `handoffs/` - the collab directory, or the task directory swapped for one while
+    // the placement runs (the race hook) - refuses the patch, and nothing lands outside.
+    #[test]
+    fn a_link_above_the_handoffs_directory_refuses_the_patch() {
+        let r = repo("patchdir-link");
+        std::fs::write(r.join("app.txt"), "two\n").unwrap();
+        let outside = r.parent().unwrap().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        // the collab directory is a link to a directory outside the repository
+        crate::contain::tests::junction_or_symlink(&r.join(".collab"), &outside);
+        let handoffs = r.join(".collab/t/handoffs");
+        let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        let err = write_patch(&mut p, &r, &r.join(".collab")).unwrap_err();
+        assert!(err.contains("is a link"), "{err}");
+        assert!(dir_names(&outside).is_empty(), "{:?}", dir_names(&outside));
+        crate::contain::remove_link(
+            &cap_std::fs::Dir::open_ambient_dir(&r, cap_std::ambient_authority()).unwrap(),
+            std::ffi::OsStr::new(".collab"),
+            true,
+        )
+        .unwrap();
+        // the task directory is swapped for a link after the anchor is open, before the walk
+        std::fs::create_dir_all(r.join(".collab/t")).unwrap();
+        let spec = format!(
+            "patch-dir|{}|{}",
+            r.join(".collab/t").display(),
+            outside.display()
+        );
+        let _race = c3_core::test_hooks::set_thread_hook(crate::contain::RACE_HOOK, &spec);
+        let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        let err = write_patch(&mut p, &r, &r.join(".collab")).unwrap_err();
+        assert!(err.contains("is a link"), "{err}");
+        assert!(dir_names(&outside).is_empty(), "{:?}", dir_names(&outside));
+        drop(_race);
+        // an ordinary collab directory: the directories are created through the handles
+        let r2 = repo("patchdir-plain");
+        std::fs::write(r2.join("app.txt"), "two\n").unwrap();
+        let h2 = r2.join(".collab/t/handoffs");
+        let mut p = plan_diff(&r2, &h2, None, 2, "claude", "HEAD");
+        write_patch(&mut p, &r2, &r2.join(".collab")).unwrap();
+        assert!(p.path.is_file());
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+        let _ = std::fs::remove_dir_all(r2.parent().unwrap());
+    }
+
+    // (0.2.5 D1, F43-2) An EMPTY file at the patch name that has not changed for the stale age (set
+    // by the test hook instead of waiting a minute) is a claim its owner abandoned: it is taken over
+    // and the patch placed whole. A fresh empty claim is waited for and then refused with words that
+    // say what it is - never "other bytes".
+    #[test]
+    fn an_abandoned_empty_claim_is_taken_over() {
+        let r = repo("stale-claim");
+        std::fs::write(r.join("app.txt"), "two\n").unwrap();
+        let handoffs = r.join(".collab/t/handoffs");
+        let collab = r.join(".collab");
+        let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        write_patch(&mut p, &r, &collab).unwrap();
+        let bytes = std::fs::read(&p.path).unwrap();
+        let name = p.path.file_name().unwrap().to_string_lossy().to_string();
+        // a fresh empty claim (the default stale age is a minute): refused after the wait
+        std::fs::write(&p.path, b"").unwrap();
+        let err = place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap_err();
+        assert!(
+            err.contains("is an empty claim of another placement"),
+            "{err}"
+        );
+        assert!(!err.contains("other bytes"), "{err}");
+        // the same claim once it counts as abandoned: taken over, the patch placed whole
+        let _stale = c3_core::test_hooks::set_thread_hook(PATCH_CLAIM_STALE_HOOK, "0");
+        for nolink in [false, true] {
+            std::fs::write(&p.path, b"").unwrap();
+            let _h =
+                nolink.then(|| c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1"));
+            place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap();
+            assert_eq!(std::fs::read(&p.path).unwrap(), bytes, "nolink {nolink}");
+            assert_eq!(dir_names(&handoffs), vec![name.clone()]);
+        }
+        // a non-empty file with other bytes is still never overwritten
+        std::fs::write(&p.path, "somebody else's bytes\n").unwrap();
+        let err = place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap_err();
+        assert!(err.contains("never overwritten"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&p.path).unwrap(),
+            "somebody else's bytes\n"
+        );
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
+    }
+
+    // (0.2.5 D1, F43-3) A placement without hard links whose rename fails removes the name only
+    // while it is still its own empty claim: alone, it leaves nothing; when a sibling finished the
+    // name meanwhile (the hook puts the sibling's bytes there first) the sibling's patch stays whole
+    // - reused when it is the same patch, left alone and reported when it is not; and two placements
+    // racing with one rename failing leave the winner's patch whole.
+    #[test]
+    fn a_failed_rename_removes_only_its_own_claim() {
+        let r = repo("rename-fail");
+        std::fs::write(r.join("app.txt"), "two\n").unwrap();
+        let handoffs = r.join(".collab/t/handoffs");
+        let collab = r.join(".collab");
+        let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
+        write_patch(&mut p, &r, &collab).unwrap();
+        let bytes = std::fs::read(&p.path).unwrap();
+        let name = p.path.file_name().unwrap().to_string_lossy().to_string();
+        std::fs::remove_file(&p.path).unwrap();
+        let _nolink = c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1");
+        // alone: the own claim and the temporary file are removed
+        {
+            let _f = c3_core::test_hooks::set_thread_hook(PATCH_RENAME_FAIL_HOOK, "");
+            let err = place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap_err();
+            assert!(err.contains("injected rename failure"), "{err}");
+            assert!(
+                dir_names(&handoffs).is_empty(),
+                "{:?}",
+                dir_names(&handoffs)
+            );
+        }
+        // a sibling finished the same patch meanwhile: it stays, and is reused
+        let same = r.parent().unwrap().join("same.patch");
+        std::fs::write(&same, &bytes).unwrap();
+        {
+            let _f = c3_core::test_hooks::set_thread_hook(
+                PATCH_RENAME_FAIL_HOOK,
+                &same.to_string_lossy(),
+            );
+            place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap();
+            assert_eq!(std::fs::read(&p.path).unwrap(), bytes);
+            assert_eq!(dir_names(&handoffs), vec![name.clone()]);
+        }
+        // a sibling put other bytes there: left alone, the conflict reported
+        std::fs::remove_file(&p.path).unwrap();
+        let other = r.parent().unwrap().join("other.patch");
+        std::fs::write(&other, "a sibling's other patch\n").unwrap();
+        {
+            let _f = c3_core::test_hooks::set_thread_hook(
+                PATCH_RENAME_FAIL_HOOK,
+                &other.to_string_lossy(),
+            );
+            let err = place_patch(&handoffs, &r, &collab, &name, &bytes).unwrap_err();
+            assert!(
+                err.contains("a sibling's patch with other bytes; it is left alone"),
+                "{err}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&p.path).unwrap(),
+                "a sibling's other patch\n"
+            );
+            assert_eq!(dir_names(&handoffs), vec![name.clone()]);
+        }
+        // two placements racing on a fresh name, the rename of one failing
+        std::fs::remove_file(&p.path).unwrap();
+        let racers: Vec<_> = [false, true]
+            .into_iter()
+            .map(|fails| {
+                let (dir, r, collab, name, bytes) = (
+                    handoffs.clone(),
+                    r.clone(),
+                    collab.clone(),
+                    name.clone(),
+                    bytes.clone(),
+                );
+                std::thread::spawn(move || {
+                    let _h = c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1");
+                    let _f = fails
+                        .then(|| c3_core::test_hooks::set_thread_hook(PATCH_RENAME_FAIL_HOOK, ""));
+                    place_patch(&dir, &r, &collab, &name, &bytes)
+                })
+            })
+            .collect();
+        let results: Vec<Result<(), String>> =
+            racers.into_iter().map(|t| t.join().unwrap()).collect();
+        assert_eq!(results[0], Ok(()), "the winner: {results:?}");
+        assert_eq!(std::fs::read(&p.path).unwrap(), bytes, "{results:?}");
+        assert_eq!(dir_names(&handoffs), vec![name]);
+        let _ = std::fs::remove_dir_all(r.parent().unwrap());
     }
 }

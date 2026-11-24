@@ -81,7 +81,8 @@ fifteen items, closed in one commit. One bullet per item:
 
 - On the development branch: fmt clean, `cargo clippy --workspace --all-targets -- -D warnings`
   clean. The tests of the combination of this commit with the previous one were left to CI.
-- CI: see the launch note.
+- CI: the next commit (`ac26f5a`), which contains this one, is green on Linux and Windows - the Linux-only
+  paths of this wave ran there for the first time.
 - Tests are named in the CHANGELOG entries for this commit, for example
   `the_deadline_reaps_what_an_exited_shim_left_behind` in `bounded.rs`.
 - NOT exercised live: the Linux-only paths (process groups in the deadline stop, `/proc` liveness)

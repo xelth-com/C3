@@ -1,6 +1,6 @@
 # Handoff 42 - Claude: diff-review of 0.2.5 - verification of the folder-move fixes
 
-Date: 2026-11-23. Range: `0eea5f1..S2_COMMIT` (base `0eea5f1`, head `S2_COMMIT`; one commit). The
+Date: 2026-11-23. Range: `0eea5f1..ac26f5a` (base `0eea5f1`, head `ac26f5a`; one commit). The
 commit holds only this piece of work; its files are `crates/c3/src/state_dir.rs` and
 `state_dir/tests.rs`, `crates/c3/src/{providers,work/mod}.rs`,
 `crates/c3/src/consult/{orchestrate/mod,detach,reviewed}.rs`, `crates/c3/src/panel/run.rs`,
@@ -59,7 +59,9 @@ and says why.
 
 ## Evidence
 
-- Local checks and CI: see the launch note.
+- Local: fmt clean, workspace clippy clean; the author ran the c3 library tests of the touched modules
+  (169) and the c3-cli targets finish (25), init_doctor (20), snapshot_partb (7), work (29),
+  claude_engine (18), mcp_integration (2). CI for `ac26f5a`: green on Linux and Windows.
 - Tests are named in the CHANGELOG entry for F36-1 .. F36-8: units in `state_dir/tests.rs` and
   `finish.rs` / `init_doctor.rs` (two writers at once, a kill before the rename, links inside
   `.eck/`, every read-only command with `--collab-dir .c3/collab`, every collab spelling).

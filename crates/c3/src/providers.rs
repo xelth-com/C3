@@ -315,7 +315,12 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
     .map(|c| c.line());
     // (A1) the same ledger window, per reviewer: how many replies were usable, how many failed with
     // a reply preserved (a bridge false negative is visible here) and how many produced none.
-    let reply_outcomes = reply_outcomes(&ctx.consults[..repo_consult_count], utc_now);
+    let kept = KeptReplyFiles::read(&collab_root);
+    let reply_outcomes = reply_outcomes(
+        &ctx.consults[..repo_consult_count],
+        utc_now,
+        &|c: &Value, rel: &str| kept.present(c, rel),
+    );
 
     Ok(Prepared {
         ctx,
@@ -2672,6 +2677,9 @@ pub struct ReplyOutcomes {
     pub failed_partial: usize,
     /// Failed, no reply kept.
     pub failed_no_reply: usize,
+    /// (0.2.5 D1, F11-12) Failed, a kept reply (sidecar or partial) recorded, but its file is gone
+    /// (deleted since): not counted as kept.
+    pub failed_gone: usize,
 }
 
 impl ReplyOutcomes {
@@ -2692,6 +2700,7 @@ impl ReplyOutcomes {
             "failed_partial": self.failed_partial,
             "failed_with_reply": self.failed_sidecar + self.failed_partial,
             "failed_no_reply": self.failed_no_reply,
+            "failed_reply_gone": self.failed_gone,
         })
     }
 }
@@ -2701,8 +2710,14 @@ impl ReplyOutcomes {
 /// is_usable_outcome`]) is usable; (F11-12) a `failed...` one is counted by the kind of reply its
 /// entry records it preserved (`reply_kept`: `sidecar` / `partial` / `none`) - an older entry
 /// without that record by its `reply_json` (a sidecar) or `partial_reply` (a partial), else none;
-/// anything else (no outcome) is not counted. Sorted by reviewer. Pure: no clock, no I/O.
-fn reply_outcomes(consults: &[Value], now: DateTime<Utc>) -> Vec<ReplyOutcomes> {
+/// anything else (no outcome) is not counted. (0.2.5 D1, F11-12) A kept reply whose recorded file
+/// `present` says is no longer there (`present(entry, recorded path)`) is counted as "recorded, file
+/// gone", not as kept. Sorted by reviewer. Pure: no clock, no I/O of its own.
+fn reply_outcomes(
+    consults: &[Value],
+    now: DateTime<Utc>,
+    present: &dyn Fn(&Value, &str) -> bool,
+) -> Vec<ReplyOutcomes> {
     let cutoff = now - chrono::Duration::days(CONCENTRATION_WINDOW_DAYS);
     let mut by: std::collections::BTreeMap<(String, String), ReplyOutcomes> =
         std::collections::BTreeMap::new();
@@ -2756,7 +2771,16 @@ fn reply_outcomes(consults: &[Value], now: DateTime<Utc>) -> Vec<ReplyOutcomes> 
         if usable {
             e.usable += 1;
         } else {
+            // (0.2.5 D1) a kept reply counts only while its recorded file is still there
+            let file = match kept.as_str() {
+                "sidecar" => text("reply_json"),
+                "partial" => text("partial_reply"),
+                _ => String::new(),
+            };
             match kept.as_str() {
+                "sidecar" | "partial" if !file.is_empty() && !present(c, &file) => {
+                    e.failed_gone += 1
+                }
                 "sidecar" => e.failed_sidecar += 1,
                 "partial" => e.failed_partial += 1,
                 _ => e.failed_no_reply += 1,
@@ -2764,6 +2788,56 @@ fn reply_outcomes(consults: &[Value], now: DateTime<Utc>) -> Vec<ReplyOutcomes> 
         }
     }
     by.into_values().collect()
+}
+
+/// (0.2.5 D1, F11-12) Where each recorded consultation's task directory is, so a kept reply's
+/// recorded path (relative to its task directory: `handoffs/NN-...reply.json`) can be checked:
+/// every task ledger of the collab directory, by consult id.
+struct KeptReplyFiles {
+    task_dirs: HashMap<String, PathBuf>,
+}
+
+impl KeptReplyFiles {
+    /// Read the consult ids of every task ledger under `collab_root` (nothing when unreadable).
+    fn read(collab_root: &Path) -> KeptReplyFiles {
+        let mut task_dirs: HashMap<String, PathBuf> = HashMap::new();
+        if let Ok(rd) = std::fs::read_dir(collab_root) {
+            for dir in rd.filter_map(|e| e.ok()).map(|e| e.path()) {
+                let Ok(text) = std::fs::read_to_string(dir.join("sessions.json")) else {
+                    continue;
+                };
+                let Ok(data) = serde_json::from_str::<Value>(&text) else {
+                    continue;
+                };
+                for c in data
+                    .pointer("/codex/consults")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(id) = c.get("consult_id").and_then(|v| v.as_str()) {
+                        if !id.is_empty() {
+                            task_dirs.insert(id.to_string(), dir.clone());
+                        }
+                    }
+                }
+            }
+        }
+        KeptReplyFiles { task_dirs }
+    }
+
+    /// Whether the recorded file `rel` of the consultation `c` is still there. A consultation whose
+    /// task directory is not known (no consult id - an older entry) counts as present, as before.
+    fn present(&self, c: &Value, rel: &str) -> bool {
+        let Some(dir) = c
+            .get("consult_id")
+            .and_then(|v| v.as_str())
+            .and_then(|id| self.task_dirs.get(id))
+        else {
+            return true;
+        };
+        dir.join(rel).is_file()
+    }
 }
 
 /// (A1) The long view's reply-outcome block: a header and one line per reviewer (only `provider`'s
@@ -2777,16 +2851,17 @@ fn reply_outcome_lines(outcomes: &[ReplyOutcomes], provider: &str) -> Vec<String
         return Vec::new();
     }
     let mut out = vec![format!(
-        "reply outcomes in {CONCENTRATION_WINDOW_DAYS} days (usable / failed, raw reply kept as .reply.json / failed, only a Markdown partial kept / failed, no reply kept):"
+        "reply outcomes in {CONCENTRATION_WINDOW_DAYS} days (usable / failed, raw reply kept as .reply.json / failed, only a Markdown partial kept / failed, no reply kept / failed, kept reply recorded but its file gone):"
     )];
     for o in shown {
         out.push(format!(
-            "  {}: {} / {} / {} / {}",
+            "  {}: {} / {} / {} / {} / {}",
             o.reviewer(),
             o.usable,
             o.failed_sidecar,
             o.failed_partial,
-            o.failed_no_reply
+            o.failed_no_reply,
+            o.failed_gone
         ));
     }
     out
@@ -3875,7 +3950,7 @@ mod concentration_tests {
             // no reviewer: skipped
             json!({"when": at(1), "bridge_outcome": "usable reply"}),
         ];
-        let got = reply_outcomes(&consults, now);
+        let got = reply_outcomes(&consults, now, &|_, _| true);
         assert_eq!(got.len(), 2, "{got:?}");
         assert_eq!(
             got[0],
@@ -3886,6 +3961,7 @@ mod concentration_tests {
                 failed_sidecar: 2,
                 failed_partial: 2,
                 failed_no_reply: 2,
+                failed_gone: 0,
             }
         );
         assert_eq!(got[1].reviewer(), "openai :: a");
@@ -3893,9 +3969,9 @@ mod concentration_tests {
         let lines = reply_outcome_lines(&got, "");
         assert_eq!(
             lines[0],
-            "reply outcomes in 14 days (usable / failed, raw reply kept as .reply.json / failed, only a Markdown partial kept / failed, no reply kept):"
+            "reply outcomes in 14 days (usable / failed, raw reply kept as .reply.json / failed, only a Markdown partial kept / failed, no reply kept / failed, kept reply recorded but its file gone):"
         );
-        assert_eq!(lines[1], "  gemini :: g: 1 / 2 / 2 / 2");
+        assert_eq!(lines[1], "  gemini :: g: 1 / 2 / 2 / 2 / 0");
         assert_eq!(reply_outcome_lines(&got, "openai").len(), 2);
         assert!(reply_outcome_lines(&got, "nobody").is_empty());
         let j = got[0].json();
@@ -3918,6 +3994,63 @@ mod concentration_tests {
             "partial"
         );
         assert_eq!(crate::consult::orchestrate::reply_kept_kind("", ""), "none");
+    }
+
+    // (0.2.5 D1, F11-12) A kept reply counts as kept only while its file is still there: a sidecar
+    // or a partial deleted since is counted as "recorded, file gone"; the task directory of each
+    // consultation is found by its consult id in the collab directory's ledgers, and an entry whose
+    // directory is not known (no consult id) counts as present.
+    #[test]
+    fn a_kept_reply_counts_only_while_its_file_is_still_there() {
+        let now = Utc::now();
+        let when = (now - chrono::Duration::days(1)).to_rfc3339();
+        let collab =
+            std::env::temp_dir().join(format!("c3-kept-{}", uuid::Uuid::new_v4().simple()));
+        let task = collab.join("t");
+        std::fs::create_dir_all(task.join("handoffs")).unwrap();
+        let entry = |id: &str, kept: &str, file: &str| {
+            json!({"consult_id": id, "reviewer": {"provider": "gemini", "model": "g"},
+                   "when": when, "bridge_outcome": "failed: x", "reply_kept": kept,
+                   "reply_json": if kept == "sidecar" { file } else { "" },
+                   "partial_reply": if kept == "partial" { file } else { "" }})
+        };
+        let consults = vec![
+            entry("c-1", "sidecar", "handoffs/01-agy-reply.reply.json"),
+            entry("c-2", "sidecar", "handoffs/02-agy-reply.reply.json"),
+            entry("c-3", "partial", "handoffs/03-agy-reply.partial.md"),
+            entry("c-4", "partial", "handoffs/04-agy-reply.partial.md"),
+            // no consult id: its directory is not known - counted as before
+            json!({"reviewer": {"provider": "gemini", "model": "g"}, "when": when,
+                   "bridge_outcome": "failed: x", "reply_kept": "sidecar",
+                   "reply_json": "handoffs/05-agy-reply.reply.json"}),
+        ];
+        std::fs::write(
+            task.join("sessions.json"),
+            json!({"codex": {"consults": consults}}).to_string(),
+        )
+        .unwrap();
+        // 01 and 03 are still there; 02 and 04 were deleted
+        std::fs::write(task.join("handoffs/01-agy-reply.reply.json"), "{}").unwrap();
+        std::fs::write(task.join("handoffs/03-agy-reply.partial.md"), "p").unwrap();
+        let kept = KeptReplyFiles::read(&collab);
+        let got = reply_outcomes(&consults, now, &|c: &Value, rel: &str| kept.present(c, rel));
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(
+            (
+                got[0].failed_sidecar,
+                got[0].failed_partial,
+                got[0].failed_gone
+            ),
+            (2, 1, 2),
+            "{got:?}"
+        );
+        assert_eq!(got[0].json()["failed_reply_gone"], 2);
+        assert_eq!(got[0].json()["failed_with_reply"], 3);
+        assert_eq!(
+            reply_outcome_lines(&got, "")[1],
+            "  gemini :: g: 0 / 2 / 1 / 0 / 2"
+        );
+        let _ = std::fs::remove_dir_all(&collab);
     }
 }
 

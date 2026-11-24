@@ -1083,7 +1083,8 @@ pub fn select_panel_routing_with(
     // (0.2.5 R4, F16-8 / F17-3) the upper-tier guarantee missed because every eligible weighty
     // entry shares a lab with a seat already taken (a required one): said out loud - the one-lab
     // rule is not relaxed.
-    if let Some(w) = tier_missed_warning(purpose, &tier, &cands, &seats, &seated) {
+    if let Some(w) = tier_missed_warning(purpose, &tier, &cands, &seats, &seated, k.max(0) as usize)
+    {
         warnings.push(w);
     }
     if mode == "routed" || lab_rule {
@@ -1222,19 +1223,42 @@ pub fn select_panel_routing_with(
 /// (0.2.5 R4, F16-8 / F17-3) The warning for an upper-tier guarantee the one-lab rule could not
 /// keep: the seat was owed (`tier` names the eligible weighty positions and no pin is one of them),
 /// no seat went to the tier, and every tier entry's lab already holds a seat. Names the purpose,
-/// each lab and the entries it kept out.
+/// each lab and the entries it kept out. (0.2.5 D1, F30-2) Also when the required entries fill
+/// every seat of the panel (no tier seat could be drawn, whatever lab a weighty entry is of): "the
+/// required entries fill all N seats", with the weighty entries kept out.
 fn tier_missed_warning(
     purpose: &str,
     tier: &[i64],
     cands: &[Candidate],
     seats: &[(usize, i32, String)],
     seated: &[SeatedMember],
+    k: usize,
 ) -> Option<String> {
     if tier.is_empty()
         || cands.iter().any(|c| c.pinned && tier.contains(&c.position))
         || seats.iter().any(|(_, _, r)| r.starts_with("tier"))
     {
         return None;
+    }
+    let shown_at = |position: i64| -> String {
+        seated
+            .iter()
+            .find(|m| m.position == position)
+            .map(|m| format!("#{} {}", m.position, m.lineage))
+            .unwrap_or_else(|| format!("#{position}"))
+    };
+    // (F30-2) the required entries take every seat: no tier seat could be drawn at all
+    if !seats.is_empty() && seats.len() >= k && seats.iter().all(|(_, _, r)| r == "required") {
+        let kept: Vec<String> = cands
+            .iter()
+            .filter(|c| tier.contains(&c.position))
+            .map(|c| shown_at(c.position))
+            .collect();
+        return Some(format!(
+            "upper tier missed: the required entries fill all {} seats - purpose {purpose} owes a seat to a weighty entry, keeping out {}",
+            seats.len(),
+            kept.join(", ")
+        ));
     }
     let seated_at = |lab: &str| -> Option<i64> {
         seats
@@ -1279,9 +1303,16 @@ fn tier_missed_warning(
 /// upper-tier entry (certain, or when the routed upper-tier draw falls to that lab), else the lab's
 /// representative in the draw. Judged by [`select_panel_routing_with`]'s own preparation and the
 /// draw's own pools ([`routing::lab_stands`]), for the inputs a panel of this purpose would get.
-pub fn lab_seat_marks(ctx: &RouterContext, input: &PanelRoutingInput) -> Vec<(i64, String)> {
+/// (0.2.5 D1, F31-6) The marks come with the order the seats were judged in - the one the real
+/// panel would use: `routed`, or `roster` (asked for, or the "no ratings" fallback).
+pub fn lab_seat_marks(ctx: &RouterContext, input: &PanelRoutingInput) -> SeatMarks {
     let p = prepare(ctx, input);
-    let mut marks: Vec<(i64, String)> = Vec::new();
+    let mut out = SeatMarks {
+        marks: Vec::new(),
+        mode: p.mode.clone(),
+        fallback: p.fallback.clone(),
+    };
+    let marks = &mut out.marks;
     for (i, m) in p.seated.iter().enumerate() {
         let kind = input
             .members
@@ -1293,7 +1324,7 @@ pub fn lab_seat_marks(ctx: &RouterContext, input: &PanelRoutingInput) -> Vec<(i6
         }
     }
     if !p.lab_rule {
-        return marks;
+        return out;
     }
     let stands = routing::lab_stands(&p.cands, p.k.max(0) as usize, &p.tier, p.mode != "routed");
     for c in p.cands.iter().filter(|c| !c.pinned) {
@@ -1328,7 +1359,17 @@ pub fn lab_seat_marks(ctx: &RouterContext, input: &PanelRoutingInput) -> Vec<(i6
             marks.push((me, t));
         }
     }
-    marks
+    out
+}
+
+/// (0.2.5 D1, F31-6) What [`lab_seat_marks`] returns: the marks by position and the order the
+/// seats were judged in (`routed` | `roster`, with the fallback's reason - `no ratings` - when the
+/// routed order fell back).
+#[derive(Debug, Clone, Default)]
+pub struct SeatMarks {
+    pub marks: Vec<(i64, String)>,
+    pub mode: String,
+    pub fallback: String,
 }
 
 // re-export the neutral/explore constants used by callers/tests.
@@ -2319,6 +2360,46 @@ mod tests {
             .any(|w| w.starts_with("upper tier missed:")));
     }
 
+    // (0.2.5 D1, F30-2) The required entries fill every seat of a weighty purpose's panel while an
+    // eligible weighty entry of another lab exists: no tier seat could be drawn, and the plan says
+    // so ("the required entries fill all N seats"), naming the weighty entry kept out - in either
+    // order.
+    #[test]
+    fn a_missed_upper_tier_is_warned_about_when_the_pins_fill_the_panel() {
+        let members = vec![
+            member(1, "kimi", "kimi-for-coding", "run"),
+            member(2, "gemini", "gemini-3", "run"),
+            weighty(member(3, "ZAI", "glm-5.3", "run")),
+        ];
+        for order in ["roster", "routed"] {
+            let mut inp = input(&members, 2, "purpose", "acceptance", "n", &[1, 2]);
+            inp.order = order;
+            let res = select_panel_routing(&inp);
+            let picked: Vec<i64> = res.picked.iter().map(|p| p.position).collect();
+            assert_eq!(picked, vec![1, 2], "{order}");
+            let w: Vec<&String> = res
+                .warnings
+                .iter()
+                .filter(|w| w.starts_with("upper tier missed:"))
+                .collect();
+            assert_eq!(w.len(), 1, "{order}: {:?}", res.warnings);
+            assert!(
+                w[0].starts_with("upper tier missed: the required entries fill all 2 seats"),
+                "{}",
+                w[0]
+            );
+            assert!(w[0].contains("purpose acceptance"), "{}", w[0]);
+            assert!(w[0].contains("#3 ZAI :: glm-5.3"), "{}", w[0]);
+        }
+        // room beside the pins: the weighty entry takes the tier seat, no warning
+        let res = select_panel_routing(&input(&members, 3, "purpose", "acceptance", "n", &[1, 2]));
+        assert!(res.picked.iter().any(|p| p.position == 3));
+        assert!(!res
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("upper tier missed:")));
+    }
+
     fn marks_of(members: &[MemberInput], purpose: &str, required: &[i64]) -> Vec<(i64, String)> {
         lab_seat_marks(
             &RouterContext::default(),
@@ -2331,6 +2412,7 @@ mod tests {
                 required,
             ),
         )
+        .marks
     }
 
     fn mark(marks: &[(i64, String)], position: i64) -> Option<String> {
@@ -2377,7 +2459,7 @@ mod tests {
         let ratings = ratings_for("ZAI", "glm-5.3", "diff-review");
         let mut inp = input(&members, 2, "purpose", "diff-review", "", &[1]);
         inp.ratings = &ratings;
-        let marks = lab_seat_marks(&RouterContext::default(), &inp);
+        let marks = lab_seat_marks(&RouterContext::default(), &inp).marks;
         assert_eq!(
             mark(&marks, 2).as_deref(),
             Some("lab zhipu: #1 takes its seat (required) - one seat per lab")
@@ -2402,7 +2484,7 @@ mod tests {
         let ratings = ratings_for("ZAI", "glm-5.3-flash", "framing");
         let mut inp = input(&members, 3, "purpose", "framing", "", &[]);
         inp.ratings = &ratings;
-        let marks = lab_seat_marks(&RouterContext::default(), &inp);
+        let marks = lab_seat_marks(&RouterContext::default(), &inp).marks;
         assert_eq!(
             mark(&marks, 1).as_deref(),
             Some("lab zhipu: #2 takes its seat (upper tier) - one seat per lab")
@@ -2427,7 +2509,7 @@ mod tests {
         let ratings = ratings_for("ZAI", "glm-5.3-flash", "framing");
         let mut inp = input(&members, 3, "purpose", "framing", "", &[]);
         inp.ratings = &ratings;
-        let marks = lab_seat_marks(&RouterContext::default(), &inp);
+        let marks = lab_seat_marks(&RouterContext::default(), &inp).marks;
         assert_eq!(
             mark(&marks, 1).as_deref(),
             Some(

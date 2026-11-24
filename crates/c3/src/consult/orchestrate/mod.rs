@@ -417,7 +417,7 @@ struct Secondary {
 }
 
 /// The after-run drift (`Compare-TreeContent`, the brief/artifact re-hash).
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Drift {
     tree_sha256_after: String,
     tree_changed: bool,
@@ -439,12 +439,16 @@ struct Drift {
 /// primary snapshot AND the authoritative post-last-turn re-take, so a write during a secondary
 /// turn is caught the same way the first computation catches a primary-turn write.
 fn brief_artifact_drift(ctx: &Context) -> (String, bool, Vec<serde_json::Value>, Vec<String>) {
-    let brief_sha_after = ctx
-        .brief_path
-        .as_ref()
-        .and_then(|p| std::fs::read(p).ok())
-        .map(|b| c3_core::sha256_hex(&b))
-        .unwrap_or_default();
+    // (0.2.5 D1) a brief taken from a committed revision cannot change during the run
+    let brief_sha_after = if ctx.brief_from_revision.is_some() {
+        ctx.brief_sha.clone()
+    } else {
+        ctx.brief_path
+            .as_ref()
+            .and_then(|p| std::fs::read(p).ok())
+            .map(|b| c3_core::sha256_hex(&b))
+            .unwrap_or_default()
+    };
     let brief_changed = !ctx.brief_sha.is_empty() && ctx.brief_sha != brief_sha_after;
     let mut artifact_records: Vec<serde_json::Value> = Vec::new();
     let mut artifacts_changed_paths: Vec<String> = Vec::new();
@@ -1029,6 +1033,19 @@ pub(crate) struct Context {
     /// (`--rev`): the task's `n` open findings are not offered for re-checking, the reply's prior
     /// findings are ignored for the store and the prior-blocker semantics do not apply.
     pub(crate) priors_withheld: Option<usize>,
+    /// (F11-6, 0.2.5 D1) The immutable records of the open findings the run was SHOWN, taken once
+    /// at its start: a panel member's from its spec, a single run's from the store as it stood then.
+    /// The finish judges the reply's prior report and the prior-blocker semantics against them.
+    /// `None` only for a member whose spec carries ids without records (an older wire).
+    pub(crate) shown_priors: Option<Vec<crate::panel::member::ListedFinding>>,
+    /// (0.2.5 D1, F29-3) Under `--rev`: the live HEAD resolved ONCE at the start of the run (`""`
+    /// when it could not be resolved) - what decided [`Context::priors_withheld`] and what the
+    /// records name as `live_head`. `None` without `--rev`.
+    pub(crate) rev_live_head: Option<String>,
+    /// (0.2.5 D1, F10-3 / F11-4) The revision the brief was taken from (`HEAD` or a full sha) when
+    /// the live tree does not hold it and the run reads a throwaway worktree: the staging
+    /// materialises it from there; the handoff says so and the brief is not re-hashed live.
+    pub(crate) brief_from_revision: Option<String>,
     /// (R5) The prompt's owned inputs: `run_live` re-assembles [`Context::prompt_text`] from them
     /// once the worktree and the patch exist ([`finalize_prompt`]).
     pub(crate) prompt_plan: prompt::PromptPlan,
@@ -1083,13 +1100,32 @@ impl Context {
     }
 
     /// (R5, F18-1) The live HEAD at launch, when the records name another fingerprint
-    /// ([`Context::reviewed_info`]): recorded beside it as `live_head`.
+    /// ([`Context::reviewed_info`]): recorded beside it as `live_head`. (0.2.5 D1, F29-3) The ONE
+    /// resolution taken at the start of the run ([`Context::rev_live_head`]) - the same value that
+    /// decided whether the prior findings are withheld; `None` when it could not be resolved
+    /// ([`Context::live_head_unresolved`]).
     pub(crate) fn live_head(&self) -> Option<&str> {
         match (&self.isolation, &self.review_tree) {
-            (Some(p), Some(_)) if p.is_rev() => Some(self.revision.base_commit.as_str()),
+            (Some(p), Some(_)) if p.is_rev() => {
+                self.rev_live_head.as_deref().filter(|h| !h.is_empty())
+            }
             _ => None,
         }
     }
+
+    /// (0.2.5 D1, F29-3) Whether this `--rev` run's live HEAD could not be resolved at its start
+    /// (its prior findings were withheld for that reason): the records say so.
+    pub(crate) fn live_head_unresolved(&self) -> bool {
+        matches!((&self.isolation, &self.review_tree), (Some(p), Some(_)) if p.is_rev())
+            && self.rev_live_head.as_deref() == Some("")
+    }
+}
+
+/// (R5, F18-1, 0.2.5 D1 F29-3) Whether a `--rev` review of `rev_sha` withholds the task's open
+/// findings, decided from the ONE resolution of the live HEAD taken at the start of the run: when it
+/// names another commit, and - the safe side - when it could not be resolved (`""` / `None`).
+fn rev_withholds_priors(rev_sha: &str, live_head: Option<&str>) -> bool {
+    live_head.is_none_or(|h| h.is_empty() || h != rev_sha)
 }
 
 /// (R5, F18-7) The task directory's repo-relative path when its `handoffs/` is a real directory
@@ -2397,24 +2433,19 @@ fn build_context(
         None
     };
 
-    // Brief ref (repo-relative) + existence check.
+    // Brief ref (repo-relative) + existence check. (0.2.5 D1, F10-3 / F11-4) A brief the live tree
+    // does not hold is decided once the run's throwaway worktree is planned (below): accepted when
+    // the staging will materialise it from a revision, refused otherwise.
     let mut brief_ref = String::new();
     let mut brief_path = None;
+    let mut brief_missing_live = false;
     if !o.brief.is_empty() {
         let bp = if Path::new(&o.brief).is_absolute() {
             PathBuf::from(&o.brief)
         } else {
             cwd.join(&o.brief)
         };
-        if !bp.is_file() {
-            return Err((
-                format!(
-                    "brief '{}' not found (this script never writes briefs; write it first).",
-                    o.brief
-                ),
-                1,
-            ));
-        }
+        brief_missing_live = !bp.is_file();
         brief_ref =
             c3_core::paths::repo_relative(&repo_root, &bp).unwrap_or_else(|| o.brief.clone());
         // (F11-4) an in-repo reference with `..` (`sub/../brief.md`) is normalised to the same
@@ -2422,11 +2453,6 @@ fn build_context(
         brief_ref = crate::engines::worktree::normalized_brief_ref(&repo_root, &bp, &brief_ref);
         brief_path = Some(bp);
     }
-    let brief_sha = brief_path
-        .as_ref()
-        .and_then(|p| std::fs::read(p).ok())
-        .map(|b| c3_core::sha256_hex(&b))
-        .unwrap_or_default();
 
     // (B1) The throwaway worktree this run's reviewer reads: `--rev` (a revision git does not know
     // refuses here, nothing started), the engine's own isolation (kimi), or a claude diff-review /
@@ -2440,6 +2466,38 @@ fn build_context(
         spec.worktree_isolated,
     )
     .map_err(|m| (m, 1))?;
+
+    // (0.2.5 D1, F10-3 / F11-4) a brief committed at the reviewed revision need not exist in the
+    // live tree when the run reads a throwaway worktree: the staging materialises it from that
+    // revision (HEAD first, else the worktree's own - `brief_bytes`' order), and the handoff says
+    // so. Without a throwaway worktree, or committed nowhere, it is the refusal it always was.
+    let brief_committed: Option<(String, Vec<u8>)> = if brief_missing_live {
+        match isolation.as_ref().and_then(|iso| {
+            crate::engines::worktree::committed_brief(&repo_root, &brief_ref, iso.checkout())
+        }) {
+            Some(c) => Some(c),
+            None => {
+                return Err((
+                    format!(
+                        "brief '{}' not found (this script never writes briefs; write it first).",
+                        o.brief
+                    ),
+                    1,
+                ))
+            }
+        }
+    } else {
+        None
+    };
+    let brief_from_revision: Option<String> = brief_committed.as_ref().map(|(rev, _)| rev.clone());
+    let brief_sha = match &brief_committed {
+        Some((_, bytes)) => c3_core::sha256_hex(bytes),
+        None => brief_path
+            .as_ref()
+            .and_then(|p| std::fs::read(p).ok())
+            .map(|b| c3_core::sha256_hex(&b))
+            .unwrap_or_default(),
+    };
 
     // (A1) a reviewer in a throwaway worktree (of HEAD, or of `--rev`) reads the brief at its
     // repo-relative path IN that worktree: when the brief is neither committed at that revision nor
@@ -2568,14 +2626,17 @@ fn build_context(
                     .unwrap_or(m.nn) as u32
             })
             .unwrap_or(nn);
-        Some(super::reviewed::plan_diff(
+        let mut d = super::reviewed::plan_diff(
             &repo_root,
             &handoffs_dir,
             brief_path.as_deref(),
             stem_nn,
             &r.brief_prefix,
             &o.diff,
-        ))
+        );
+        // (0.2.5 D1) `--diff-tracked-only`: a one-revision patch leaves the untracked files out
+        d.tracked_only = o.diff_tracked_only;
+        Some(d)
     };
     let diff_line = diff_plan
         .as_ref()
@@ -2626,28 +2687,58 @@ fn build_context(
     // the same set for every member (`listed_ids`), never a sibling's mid-wave answer.
     // (F11-6) ... and shows each listed finding as it was at panel start (the spec's immutable
     // records), not as the store says when the member builds its prompt.
-    let (mut open_findings, mut open_findings_count) = read_open_findings(&store, &task);
-    if let Some(m) = member {
-        match member_records(Some(m)) {
-            Some(records) => open_findings = records.iter().map(open_finding_of).collect(),
-            None => open_findings.retain(|f| m.listed_ids.contains(&f.id)),
+    // (0.2.5 D1) A SINGLE run is judged against the findings it was shown exactly as a member: the
+    // open findings are read ONCE, here, into the same immutable records (`shown_priors`), and the
+    // prompt, the prior-blocker semantics and the validation of the prior report all use them -
+    // never a re-read of the store at the finish.
+    let shown_priors: Option<Vec<crate::panel::member::ListedFinding>> = match member {
+        Some(m) => member_records(Some(m)).map(|r| r.to_vec()),
+        None => Some(
+            store
+                .read_findings(&task)
+                .ok()
+                .flatten()
+                .map(|f| listed_findings(&f))
+                .unwrap_or_default(),
+        ),
+    };
+    let mut open_findings: Vec<OpenFinding> = match (&shown_priors, member) {
+        (Some(records), _) => records.iter().map(open_finding_of).collect(),
+        (None, m) => {
+            let (mut live, _) = read_open_findings(&store, &task);
+            if let Some(m) = m {
+                live.retain(|f| m.listed_ids.contains(&f.id));
+            }
+            live
         }
-        open_findings_count = open_findings.len();
-    }
+    };
+    let mut open_findings_count = open_findings.len();
     // (R5, F18-1 / F19-6) a review of ANOTHER revision than the live HEAD is not asked to re-check
     // the task's open findings: they were recorded against other code (seen live 2026-11-22:
     // reviewers of an old revision marked 34 already-fixed findings still-open). The prompt says how
     // many are not listed, the reply's prior findings are ignored for the store, and the
     // prior-blocker semantics do not apply to the run.
+    // (0.2.5 D1, F29-3) ONE resolution of the live HEAD, taken here at the start of the run, decides
+    // whether the reviewed revision is the live HEAD AND is what the records name as `live_head` -
+    // never two resolutions taken at different moments. A HEAD that cannot be resolved under
+    // `--rev` withholds the findings (the safe side) and the run says so (`Some("")`).
+    let rev_live_head: Option<String> = isolation
+        .as_ref()
+        .filter(|i| i.is_rev())
+        .map(|_| crate::engines::worktree::resolve_commit(&repo_root, "HEAD").unwrap_or_default());
     let priors_withheld = isolation
         .as_ref()
-        .filter(|i| {
-            i.is_rev()
-                && i.sha
-                    != crate::engines::worktree::resolve_commit(&repo_root, "HEAD")
-                        .unwrap_or_default()
-        })
+        .filter(|i| i.is_rev() && rev_withholds_priors(&i.sha, rev_live_head.as_deref()))
         .map(|_| open_findings_count);
+    if rev_live_head.as_deref() == Some("") {
+        let w = format!(
+            "the live HEAD could not be resolved at the start of the run, so it cannot be compared with the reviewed revision: the task's {open_findings_count} open finding(s) are withheld from this review"
+        );
+        if !o.dry_run {
+            println!("WARNING: {w}");
+        }
+        run_warnings.push(w);
+    }
     if priors_withheld.is_some() {
         open_findings.clear();
         open_findings_count = 0;
@@ -2755,12 +2846,19 @@ fn build_context(
     // path and backed by the zero-tool guard (`grok_review_tool_guard`); raw keeps today's inline.
     let code_review =
         crate::engines::grok::GROK_TOOL_REQUIRED_PURPOSES.contains(&o.purpose.as_str());
-    let brief_text = match &brief_path {
-        Some(bp) if spec.inline_brief && r.raw && !code_review => match std::fs::read_to_string(bp)
-        {
-            Ok(t) => t,
-            Err(e) => return Err((format!("the brief could not be read for inlining: {e}"), 1)),
-        },
+    let brief_text = match (&brief_path, &brief_committed) {
+        // (0.2.5 D1) a brief taken from a revision is inlined from its committed bytes
+        (Some(_), Some((_, bytes))) if spec.inline_brief && r.raw && !code_review => {
+            String::from_utf8_lossy(bytes).into_owned()
+        }
+        (Some(bp), _) if spec.inline_brief && r.raw && !code_review => {
+            match std::fs::read_to_string(bp) {
+                Ok(t) => t,
+                Err(e) => {
+                    return Err((format!("the brief could not be read for inlining: {e}"), 1))
+                }
+            }
+        }
         _ => String::new(),
     };
     // (A1) a reviewer in a throwaway worktree of HEAD (kimi, a claude diff-review / acceptance) is
@@ -2777,7 +2875,13 @@ fn build_context(
             &brief_ref,
             planned_handoffs_rel(&repo_root, &collab_root, task.as_str()).as_deref(),
         ),
-        Some(_) => crate::engines::worktree::isolation_prompt(&repo_root, &brief_ref),
+        Some(_) => crate::engines::worktree::isolation_prompt(
+            &repo_root,
+            &brief_ref,
+            c3_core::paths::repo_relative(&repo_root, &collab_root)
+                .filter(|r| !r.is_empty())
+                .as_deref(),
+        ),
         None => String::new(),
     };
     let prompt_plan = prompt::PromptPlan {
@@ -3167,6 +3271,9 @@ fn build_context(
         pending_ref: None,
         diff: diff_plan,
         priors_withheld,
+        shown_priors,
+        rev_live_head,
+        brief_from_revision,
         prompt_plan,
         handoffs_dir,
         reply_path,
@@ -4288,6 +4395,11 @@ fn prepare_review_inputs(ctx: &mut Context) -> Result<(), super::reviewed::Setup
     if let Some(d) = ctx.diff.as_mut() {
         super::reviewed::write_patch(d, &ctx.repo_root, &ctx.collab_root)
             .map_err(super::reviewed::SetupError::Capability)?;
+        // (0.2.5 D1, F18-4 / F19-2 / F20-6) the operator sees which untracked files the patch
+        // carries before the reviewer starts (the redactor removes only what looks like a secret)
+        if let Some(n) = super::reviewed::untracked_notice(d) {
+            eprintln!("{TOOL}: {n}");
+        }
     }
     if let Some(plan) = &ctx.isolation {
         let inputs = super::reviewed::StageInputs {
@@ -4823,22 +4935,24 @@ fn run_open_priors(
 struct PriorView {
     /// The prior findings of the semantics (status and severity as the reviewer was shown them).
     open_priors: Vec<super::semantics::OpenPrior>,
-    /// The ids a prior report may name (`None`: every id of the store, a single run).
+    /// The ids a prior report may name (`None`: every id of the store - only without records).
     reportable: Option<Vec<String>>,
-    /// The records a panel member was shown (empty for a single run / a spec without records).
+    /// The records the run was shown (empty only for a member spec without records).
     records: Vec<crate::panel::member::ListedFinding>,
 }
 
-/// (F11-6, F10-4) The prior view of a run: a panel member whose spec carries the immutable records
-/// of its listed findings is judged against THOSE - the status and severity it was shown, whatever
-/// a sibling or another process wrote to the store since - and may report only on those ids; a spec
-/// without records narrows the live store by `listed_ids` ([`run_open_priors`]); a single run sees
-/// the whole store.
+/// (F11-6, F10-4, 0.2.5 D1) The prior view of a run, ONE path for a panel member and a single run:
+/// a run that carries the immutable records of the findings it was shown (`shown` - a member's spec,
+/// a single run's snapshot taken at its start: [`Context::shown_priors`]) is judged against THOSE -
+/// the status and severity it was shown, whatever a sibling or another process wrote to the store
+/// since - and may report only on those ids; a member spec without records narrows the live store
+/// by `listed_ids` ([`run_open_priors`]).
 fn member_prior_view(
+    shown: Option<&[crate::panel::member::ListedFinding]>,
     member: Option<&crate::panel::member::MemberSpec>,
     existing: Option<&c3_core::findings::FindingsFile>,
 ) -> PriorView {
-    if let Some(records) = member_records(member) {
+    if let Some(records) = shown {
         return PriorView {
             open_priors: records
                 .iter()
@@ -5609,6 +5723,48 @@ fn finish(args: Finish) -> i32 {
         }
         sec.tree_problem = tree_problem;
     }
+    // (0.2.5 D1, F11-2) codex reads the LIVE brief and artifacts too (it runs no tree check of its
+    // own): a bound input that changed by the end of its last turn withholds the reply exactly as
+    // for an engine - the outcome is the failed read-only check naming the input, class
+    // `permission`, the reply kept (its salvage, `.partial.md`). A codex run in a throwaway worktree
+    // (`--rev`) read the staged copies and is unaffected.
+    let mut codex_bound_problem: Option<String> = None;
+    if !is_engine && register_failure_text.is_none() {
+        let (sha_after, changed, records, paths) = brief_artifact_drift(&ctx);
+        drift.brief_sha_after = sha_after;
+        drift.brief_changed = changed;
+        drift.artifacts = records;
+        drift.artifacts_changed_paths = paths;
+        let bound = tree::bound_inputs_changed(&ctx.brief_ref, &drift);
+        if tree::bound_inputs_withhold(&ctx.engine, ctx.review_tree.is_some()) && !bound.is_empty()
+        {
+            let check = tree::with_bound_input_change(
+                tree::EngineTreeCheck {
+                    outcome: "clean".into(),
+                    problem: String::new(),
+                    warnings: Vec::new(),
+                    files: Vec::new(),
+                },
+                &bound,
+            );
+            if bridge_outcome == "usable reply" {
+                bridge_outcome = format!("failed: {}", check.problem);
+                usable = false;
+                structured = None;
+            } else {
+                bridge_outcome = format!("{bridge_outcome}; also: {}", check.problem);
+            }
+            codex_bound_problem = Some(check.problem);
+        }
+    }
+    if let Some(problem) = codex_bound_problem.filter(|_| provider_failure.is_none()) {
+        provider_failure = Some(c3_core::ledger::ProviderFailure {
+            class: "permission".into(),
+            kind: Some(c3_core::health::failure_kind("permission", &problem)),
+            message: problem,
+            ..Default::default()
+        });
+    }
 
     // (F04-11) Preserve the raw reply as `.reply.json` at the handoff path BEFORE the write lock
     // (README "Write order": `.reply.json` first), so a crash during the commit still leaves the
@@ -5815,7 +5971,11 @@ fn finish(args: Finish) -> i32 {
         // the status, severity and text it was shown decide, and only a listed id is accepted as
         // a prior report; its checks still merge into the current store at the commit, under the
         // task lock.
-        let mut view = member_prior_view(ctx.panel_member.as_ref(), existing.as_ref());
+        let mut view = member_prior_view(
+            ctx.shown_priors.as_deref(),
+            ctx.panel_member.as_ref(),
+            existing.as_ref(),
+        );
         // (R5, F18-1 / F19-6) a review of another revision than the live HEAD was shown no prior
         // findings: its "prior findings" section is ignored for the store, and no prior blocker
         // applies to it.
@@ -7116,7 +7276,7 @@ mod engine_tests {
             listed: vec![shown],
             ..Default::default()
         };
-        let v = member_prior_view(Some(&spec), Some(&store));
+        let v = member_prior_view(member_records(Some(&spec)), Some(&spec), Some(&store));
         assert_eq!(v.open_priors.len(), 1);
         assert_eq!(
             (
@@ -7133,14 +7293,11 @@ mod engine_tests {
             listed_ids: vec!["F01-1".into()],
             ..Default::default()
         };
-        let v = member_prior_view(Some(&ids_only), Some(&store));
+        assert!(member_records(Some(&ids_only)).is_none());
+        let v = member_prior_view(None, Some(&ids_only), Some(&store));
         assert_eq!(v.open_priors.len(), 1);
         assert_eq!(v.open_priors[0].status, "fixed");
         assert_eq!(v.reportable, Some(vec!["F01-1".to_string()]));
-        // a single run: the whole store, every id reportable
-        let v = member_prior_view(None, Some(&store));
-        assert_eq!(v.open_priors.len(), 2);
-        assert_eq!(v.reportable, None);
         // the records a panel freezes: the open findings with their text
         let frozen = listed_findings(&store);
         assert_eq!(frozen.len(), 1);
@@ -7148,6 +7305,58 @@ mod engine_tests {
             (frozen[0].id.as_str(), frozen[0].severity.as_str()),
             ("F02-1", "major")
         );
+    }
+
+    // (0.2.5 D1, F29-3) one HEAD value decides a --rev run: the same resolution decides the
+    // withholding and is recorded; an unresolvable HEAD withholds (the safe side).
+    #[test]
+    fn one_head_value_decides_what_a_rev_run_is_compared_with() {
+        let sha = "1111111111111111111111111111111111111111";
+        assert!(!super::rev_withholds_priors(sha, Some(sha)));
+        assert!(super::rev_withholds_priors(
+            sha,
+            Some("2222222222222222222222222222222222222222")
+        ));
+        assert!(super::rev_withholds_priors(sha, Some("")));
+        assert!(super::rev_withholds_priors(sha, None));
+    }
+
+    // (0.2.5 D1) A single run is judged against the findings it was shown, exactly as a member: its
+    // snapshot taken at the start decides the semantics, the reportable ids and the prior-blocker
+    // lines, whatever the store says at the finish (a blocker resolved meanwhile stays the open
+    // blocker it was shown; a finding filed meanwhile is not reportable).
+    #[test]
+    fn a_single_run_is_judged_against_the_findings_it_was_shown() {
+        let at_start: c3_core::findings::FindingsFile = serde_json::from_str(
+            r#"{"task_id":"t","findings":[
+                {"id":"F01-1","status":"proposed","severity":"blocker","claim":"as shown",
+                 "locations":[{"path":"a.rs","line":3}]}]}"#,
+        )
+        .unwrap();
+        let at_finish: c3_core::findings::FindingsFile = serde_json::from_str(
+            r#"{"task_id":"t","findings":[
+                {"id":"F01-1","status":"fixed","severity":"blocker","claim":"resolved since"},
+                {"id":"F02-1","status":"proposed","severity":"major","claim":"filed meanwhile"}]}"#,
+        )
+        .unwrap();
+        let snapshot = listed_findings(&at_start);
+        let v = member_prior_view(Some(&snapshot), None, Some(&at_finish));
+        assert_eq!(v.open_priors.len(), 1);
+        assert_eq!(
+            (
+                v.open_priors[0].id.as_str(),
+                v.open_priors[0].status.as_str(),
+                v.open_priors[0].severity.as_str()
+            ),
+            ("F01-1", "proposed", "blocker")
+        );
+        assert_eq!(v.reportable, Some(vec!["F01-1".to_string()]));
+        assert_eq!(v.records[0].claim, "as shown");
+        assert_eq!(v.records[0].first_location, "`a.rs:3`");
+        // an empty store at the start: nothing is reportable at the finish
+        let none = member_prior_view(Some(&[]), None, Some(&at_finish));
+        assert!(none.open_priors.is_empty());
+        assert_eq!(none.reportable, Some(Vec::new()));
     }
 
     // (F11-2) a changed BOUND input fails the check naming the input (a warned or clean check
@@ -7195,6 +7404,33 @@ mod engine_tests {
             "{}",
             both.problem
         );
+    }
+
+    // (0.2.5 D1) The rule holds for every engine whose reviewer reads the LIVE tree - not agy only;
+    // a run in a throwaway worktree (its inputs are staged copies) and the http reviewer (it reads
+    // no file, only the pack) are unaffected. The changed inputs are named brief first.
+    #[test]
+    fn a_changed_bound_input_withholds_the_reply_of_every_live_tree_engine() {
+        use super::tree::{bound_inputs_changed, bound_inputs_withhold};
+        for engine in ["agy", "muse", "grok", "claude", "kimi", "codex"] {
+            assert!(bound_inputs_withhold(engine, false), "{engine}");
+            assert!(!bound_inputs_withhold(engine, true), "{engine} isolated");
+        }
+        assert!(!bound_inputs_withhold("http", false));
+        let drift = Drift {
+            brief_changed: true,
+            artifacts_changed_paths: vec!["a.rs".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            bound_inputs_changed("b.md", &drift),
+            vec![
+                "the brief `b.md`".to_string(),
+                "the artifact `a.rs`".to_string()
+            ]
+        );
+        assert_eq!(bound_inputs_changed("", &drift)[0], "the brief".to_string());
+        assert!(bound_inputs_changed("b.md", &Drift::default()).is_empty());
     }
     use super::*;
 

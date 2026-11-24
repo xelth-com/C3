@@ -617,11 +617,18 @@ fn brief_reviewed_line(ctx: &Context) -> String {
     let brief_line = if ctx.brief_ref.is_empty() {
         "Brief: (none, prompt only).".to_string()
     } else {
-        format!(
+        let mut l = format!(
             "Brief: `{}` (sha256 {}).",
             ctx.brief_ref,
             short_hash(&ctx.brief_sha)
-        )
+        );
+        // (0.2.5 D1, F10-3 / F11-4) not in the live tree: materialised from a committed revision
+        if let Some(rev) = &ctx.brief_from_revision {
+            l.push_str(&format!(
+                " Taken from the committed revision {rev} (the live tree does not hold it)."
+            ));
+        }
+        l
     };
     // (R5, F18-1) the revision the reviewer READ (under `--rev` the worktree's), the live HEAD at
     // launch beside it when that differs
@@ -637,6 +644,10 @@ fn brief_reviewed_line(ctx: &Context) -> String {
     );
     if let Some(live) = ctx.live_head() {
         reviewed_line.push_str(&format!(" Live HEAD at launch: {live}."));
+    } else if ctx.live_head_unresolved() {
+        reviewed_line.push_str(
+            " Live HEAD at launch: could not be resolved (the open findings were withheld).",
+        );
     }
     format!("{brief_line} {reviewed_line}")
 }

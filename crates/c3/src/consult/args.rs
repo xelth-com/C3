@@ -52,6 +52,8 @@ pub struct Options {
     /// (B1) `--diff <range>`: `git diff <range>` (a single revision: against the working tree,
     /// new files included) is written into the task's handoffs as a patch the prompt names.
     pub diff: String,
+    /// (0.2.5 D1) `--diff-tracked-only`: a one-revision `--diff` leaves the untracked files out.
+    pub diff_tracked_only: bool,
     pub reply_name: String,
     pub artifacts: Vec<String>,
     pub raw: bool,
@@ -285,6 +287,9 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
             let flag = if o.rev.is_empty() { "-Diff" } else { "-Rev" };
             return Err(format!("{flag} is refused before anything starts: {p}."));
         }
+    }
+    if o.diff_tracked_only && o.diff.is_empty() {
+        return Err("--diff-tracked-only goes with --diff (it leaves the untracked files out of a one-revision patch).".into());
     }
     if o.sandbox == "danger-full-access" {
         return Err("-Sandbox danger-full-access is refused: consultations run without write access to your machine.".into());

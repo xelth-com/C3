@@ -355,6 +355,16 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
             serde_json::Value::String(ctx.revision.tree_sha256.clone()),
         );
     }
+    // (0.2.5 D1, F29-3) the live HEAD could not be resolved at the start: no `live_head` to record,
+    // and the findings were withheld for that reason
+    if ctx.live_head_unresolved() {
+        e.extra
+            .insert("live_head_unresolved".into(), serde_json::json!(true));
+        e.extra.insert(
+            "live_tree_sha256".into(),
+            serde_json::Value::String(ctx.revision.tree_sha256.clone()),
+        );
+    }
     if let Some(n) = ctx.priors_withheld {
         e.extra
             .insert("prior_findings_withheld".into(), serde_json::json!(n));

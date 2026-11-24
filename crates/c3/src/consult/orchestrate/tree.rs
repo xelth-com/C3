@@ -214,23 +214,25 @@ pub(super) fn engine_tree_check(
     // siblings' handoffs are theirs to write meanwhile (each with its atomic-write temp); every
     // other collab path stays monitored.
     let mut own_prefixes = vec![own];
-    // (R5, F18-3) the bridge's own `--diff` patch file (any content hash, and its write temp) is
-    // the run's own file - a panel sibling that writes the same-named patch included
-    if let Some(d) = &ctx.diff {
-        own_prefixes.push(format!("{}/handoffs/{}.", ctx.task, d.stem));
-    }
     if let Some(m) = &ctx.panel_member {
         own_prefixes.extend(crate::engines::tree_check::panel_ignore_prefixes(
             ctx.task.as_str(),
             &m.sibling_nns,
         ));
     }
-    let collab_changed = crate::engines::tree_check::compare_collab(
+    let mut collab_changed = crate::engines::tree_check::compare_collab(
         collab_before,
         collab_after,
         ctx.task.as_str(),
         &own_prefixes,
     );
+    // (R5, F18-3; 0.2.5 D1, F27-3) the bridge's own `--diff` patch is the run's own file - exactly
+    // the file it wrote and that file's write-temp name (a panel sibling that writes the same patch
+    // included), nothing else that shares the patch's stem
+    if let Some(d) = &ctx.diff {
+        collab_changed
+            .retain(|k| !crate::consult::reviewed::is_run_patch_file(d, ctx.task.as_str(), k));
+    }
     if !collab_changed.is_empty() {
         let shown = collab_shown(ctx);
         let names: Vec<String> = collab_changed
@@ -252,23 +254,22 @@ pub(super) fn engine_tree_check(
             ));
         }
     }
-    // (F11-2) agy reads the live brief and artifacts while they may change: a change of a BOUND
-    // input is not ambient drift - the reply may answer other bytes than the ones the review is
-    // bound to - so it is collected apart and withholds the reply ([`with_bound_input_change`]).
-    let bound_apart = !isolated && ctx.engine == "agy";
-    let mut bound_changed: Vec<String> = Vec::new();
+    // (F11-2) a reviewer of the LIVE tree reads the live brief and artifacts while they may change:
+    // a change of a BOUND input is not ambient drift - the reply may answer other bytes than the
+    // ones the review is bound to - so it is collected apart and withholds the reply
+    // ([`with_bound_input_change`]). (0.2.5 D1) Every engine that reads the live tree, not agy only.
+    let bound_apart = bound_inputs_withhold(&ctx.engine, isolated);
+    let bound_changed: Vec<String> = if bound_apart {
+        bound_inputs_changed(&ctx.brief_ref, drift)
+    } else {
+        Vec::new()
+    };
     if drift.brief_changed {
         if isolated {
             main_warn.push(format!(
                 "the brief changed during the run (the reviewer read the copy staged at launch) - {NOT_THE_WORKTREE}"
             ));
-        } else if bound_apart {
-            bound_changed.push(if ctx.brief_ref.is_empty() {
-                "the brief".to_string()
-            } else {
-                format!("the brief `{}`", ctx.brief_ref)
-            });
-        } else {
+        } else if !bound_apart {
             files.push("brief".to_string());
             why.push(
                 "the brief changed during the run (by the reviewer or anyone else)".to_string(),
@@ -282,14 +283,7 @@ pub(super) fn engine_tree_check(
             main_warn.push(format!(
                 "artifact(s) changed during the run ({list}) - {NOT_THE_WORKTREE}"
             ));
-        } else if bound_apart {
-            bound_changed.extend(
-                drift
-                    .artifacts_changed_paths
-                    .iter()
-                    .map(|p| format!("the artifact `{p}`")),
-            );
-        } else {
+        } else if !bound_apart {
             files.extend(drift.artifacts_changed_paths.iter().cloned());
             why.push(format!(
                 "artifact(s) changed during the run (by the reviewer or anyone else): {list}"
@@ -343,7 +337,36 @@ pub(super) fn engine_tree_check(
     with_live_tree_warnings(with_bound_input_change(check, &bound_changed), main_warn)
 }
 
-/// (F11-2) A BOUND input - the brief, an artifact - that changed while agy read it: the outcome is
+/// (F11-2, 0.2.5 D1) Whether a change of a BOUND input (the brief, an artifact) withholds the reply
+/// of a run of `engine`: every engine whose reviewer reads the LIVE tree - agy, muse, grok, claude,
+/// kimi and codex - when it did not run in a throwaway worktree (`isolated`: its inputs are the
+/// copies staged at launch, so a live change does not reach it). The http reviewer reads no file at
+/// all: it received a pack built before the request.
+pub(super) fn bound_inputs_withhold(engine: &str, isolated: bool) -> bool {
+    !isolated && engine != "http"
+}
+
+/// (F11-2, 0.2.5 D1) The bound inputs that changed during the run, as the problem names them: the
+/// brief (with its reference, when it has one), then each changed artifact.
+pub(super) fn bound_inputs_changed(brief_ref: &str, drift: &Drift) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if drift.brief_changed {
+        out.push(if brief_ref.is_empty() {
+            "the brief".to_string()
+        } else {
+            format!("the brief `{brief_ref}`")
+        });
+    }
+    out.extend(
+        drift
+            .artifacts_changed_paths
+            .iter()
+            .map(|p| format!("the artifact `{p}`")),
+    );
+    out
+}
+
+/// (F11-2) A BOUND input - the brief, an artifact - that changed while a live-tree reviewer read it: the outcome is
 /// `failed` (the reply is not recorded as usable; the finish keeps its raw text, and the forced
 /// class is the one of a failed read-only check, `permission`), and the problem names the changed
 /// input(s). Ambient drift (the tree, the collab directory) stays a warning. `check` unchanged when

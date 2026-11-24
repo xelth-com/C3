@@ -192,7 +192,9 @@ pub fn agy_tool_is_writing(tool: &str) -> bool {
 ///     ARE the reply; an index alone exempts nothing); or
 ///   * its name is on [`AGY_READ_ONLY_TOOLS`] (a known reader - so a pure read never fails the run)
 ///     and its parameters, searched at every depth, show no command or written content
-///     ([`agy_params_show_write`]).
+///     ([`agy_params_show_write`]) - (F32-3) read by their role: a file name (a value under a
+///     path / file / directory / uri key) is data, never a command; only a value under another key
+///     is scanned.
 ///
 /// Everything else is writing (fail-safe: a writing call FAILS the run even when the monitored
 /// compare is clean): a tool not on the reader allow-list - with object parameters (whatever they
@@ -212,32 +214,91 @@ pub fn agy_tool_step_is_writing(
     parameters.is_some_and(agy_params_show_write)
 }
 
-/// (F10-1) Whether a reader's logged parameters, searched at EVERY depth, show a command or written
-/// content: a key whose name (lowercased, non-alphanumerics dropped) contains one of
-/// [`AGY_WRITE_PARAM_MARKERS`], or a string value - outside a search key (`query`, `pattern`,
-/// `regex`, `search`, `glob`, `includes`, `excludes`) - shaped like a command
-/// ([`command_shaped`]). A false positive only makes a reader count as writing (fail-safe).
+/// (F10-1, F32-3) Whether a reader's logged parameters, searched at EVERY depth, show a command or
+/// written content. The parameters are read by their ROLE, decided by the key that holds a value
+/// (lowercased, non-alphanumerics dropped - [`agy_param_role`]):
+///   * a key that names a command or written content (one of [`AGY_WRITE_PARAM_MARKERS`]) is a
+///     write, whatever its value;
+///   * a value under a path / file / directory / uri key ([`AGY_DATA_PARAM_SUFFIXES`]) is a file
+///     name, and a value under a search key (`query`, `pattern`, `regex`, `search`, `glob`,
+///     `includes`, `excludes`) a search term: data, never scanned - a reader that opens a file
+///     named `notes&&draft.md` is still a reader;
+///   * a string under any other key - one a reader's schema does not have, or a value with no key
+///     (an array at the top) - is scanned and is a write when it is shaped like a command
+///     ([`command_shaped`]).
+///
+/// An array takes the role of its key; a nested object's values are judged by their own keys (a
+/// command-like key or a command under an unknown key inside a path value still counts). A false
+/// positive only makes a reader count as writing (fail-safe).
 pub fn agy_params_show_write(v: &serde_json::Value) -> bool {
-    fn fold(k: &str) -> String {
-        k.chars()
-            .filter(|c| c.is_ascii_alphanumeric())
-            .collect::<String>()
-            .to_ascii_lowercase()
-    }
-    fn walk(v: &serde_json::Value, search_key: bool) -> bool {
+    fn walk(v: &serde_json::Value, role: AgyParamRole) -> bool {
         match v {
-            serde_json::Value::Object(m) => m.iter().any(|(k, x)| {
-                let f = fold(k);
-                AGY_WRITE_PARAM_MARKERS.iter().any(|w| f.contains(w))
-                    || walk(x, AGY_SEARCH_PARAM_MARKERS.iter().any(|s| f.contains(s)))
+            serde_json::Value::Object(m) => m.iter().any(|(k, x)| match agy_param_role(k) {
+                AgyParamRole::Write => true,
+                r => walk(x, r),
             }),
-            serde_json::Value::Array(a) => a.iter().any(|x| walk(x, search_key)),
-            serde_json::Value::String(s) => !search_key && command_shaped(s),
+            serde_json::Value::Array(a) => a.iter().any(|x| walk(x, role)),
+            serde_json::Value::String(s) => role == AgyParamRole::Scanned && command_shaped(s),
             _ => false,
         }
     }
-    walk(v, false)
+    walk(v, AgyParamRole::Scanned)
 }
+
+/// (F32-3) The role of one parameter of an allow-listed reader, by its key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgyParamRole {
+    /// The key names a command or written content: the step writes.
+    Write,
+    /// A file name (path / file / directory / uri key) or a search term: data, never a command.
+    Data,
+    /// Any other key: its string values are scanned for a command shape.
+    Scanned,
+}
+
+/// (F32-3) The role of the reader parameter `key` (lowercased, non-alphanumerics dropped): a write
+/// marker anywhere in it wins ([`AGY_WRITE_PARAM_MARKERS`] - `OverwriteFile` and `FileContent` are
+/// writes), then a search marker anywhere in it, then a key that ENDS in a file-name word
+/// ([`AGY_DATA_PARAM_SUFFIXES`]: `Path`, `AbsolutePath`, `file_path`, `DirectoryPath`,
+/// `SearchDirectory`, `Url` - a suffix, so `redirect` is not a directory); everything else is
+/// scanned.
+pub fn agy_param_role(key: &str) -> AgyParamRole {
+    let f: String = key
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if AGY_WRITE_PARAM_MARKERS.iter().any(|w| f.contains(w)) {
+        AgyParamRole::Write
+    } else if AGY_SEARCH_PARAM_MARKERS.iter().any(|s| f.contains(s))
+        || AGY_DATA_PARAM_SUFFIXES.iter().any(|s| f.ends_with(s))
+    {
+        AgyParamRole::Data
+    } else {
+        AgyParamRole::Scanned
+    }
+}
+
+/// (F32-3) The endings of a reader parameter's key that name a file, a directory or a uri: its value
+/// is a file name, never a command.
+pub const AGY_DATA_PARAM_SUFFIXES: &[&str] = &[
+    "path",
+    "paths",
+    "file",
+    "files",
+    "filename",
+    "filenames",
+    "dir",
+    "dirs",
+    "directory",
+    "directories",
+    "folder",
+    "folders",
+    "uri",
+    "uris",
+    "url",
+    "urls",
+];
 
 /// (F10-1) Whether a string value reads as a command line: its first word (a path's file name,
 /// extension dropped, lowercased) is one of [`AGY_COMMAND_WORDS`] and more follows it, or it chains

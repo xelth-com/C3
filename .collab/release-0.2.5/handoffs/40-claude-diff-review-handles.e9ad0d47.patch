@@ -1,0 +1,3944 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index e6b0129..d534f33 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -366,6 +366,36 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+   of the rest of the id or the plan's vendor. Test:
+   `a_roster_id_with_a_lab_token_is_matched_through_the_catalog_spelling` (the host-only case has no
+   alias; `kimi-k3.1-pro` still works).
++- **What C3 does inside a reviewer's worktree and inside the repository can no longer be redirected
++  by a directory swapped for a link (F32-1, F24-1, F29-2, F18-5, F27-2, F16-5, F13-9, F28-1).** For a
++  user nothing changes, except that the windows are gone: staging into the throwaway worktree (both
++  the files written and the brief, `handoffs/` and `state.md` read), the post-checkout sweep of links
++  that lead out, the worktree's removal, the repository repair's file replacement, the rules-file
++  rewrite and the `--diff` patch now work relative to directory handles opened once and verified on
++  the handle (the new module `contain`, on the `cap-std` crate), never by a path name checked first
++  and resolved again - a directory replaced by a junction or symlink after it was checked can no
++  longer send a write, a read or a removal outside, and the three "decided boundaries" (a local
++  process racing the window) are withdrawn. What it means in detail: every path below a root is
++  opened one component at a time without following any (a link refuses - also one that stays
++  inside, where it was followed before for the brief and `handoffs/`; such an entry is now skipped
++  and counted, a linked brief refuses the run as before); a staged or repaired file is written to a
++  new temporary name and renamed relative to its directory's handle, and a temporary file whose
++  removal fails is reported instead of ignored; the removal unlinks and deletes through the handles
++  and then runs only `git worktree prune` (no `git worktree remove --force`, no `remove_dir_all` on
++  a path); the patch is always written to a temporary file first and placed without replacing
++  anything - a hard link, or on a file system without hard links a claim of the name (an empty file
++  created exclusively, which a sibling waits for) replaced by a rename - so no partial patch is ever
++  left under its name. On Windows the protection rests on the handles C3 holds: a
++  directory opened by cap-std cannot be renamed or deleted, nor can any of its ancestors, while the
++  handle is open. Tests: `contain::tests::cap_std_refuses_a_link_as_a_path_component` (the proof:
++  a junction, and a directory symlink where one can be made, refuses as a path component, pointing
++  out or in; a root that is a link is refused; a held directory and its ancestors cannot be renamed
++  on Windows), and the race tests driven by the new hook `CODEX_CONSULT_TEST_CONTAIN_RACE` (a
++  directory swapped for a link between validation and use) for staging a file and publishing it,
++  reading the brief and `handoffs/`, descending in the walk and replacing a repository file, plus
++  the patch placement without hard links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`,
++  `CODEX_CONSULT_TEST_CONTAIN_WRITE_FAIL`). `c3_core::test_hooks::set_thread_hook` lets an
++  in-process test set a hook for its own thread only.
+ - **The `c3 maintain` tests no longer read the machine's process table.** A pass skips an engine
+   whose CLI is running ("grok skipped: in use"), and the integration tests drove that probe against
+   the real machine: on 2026-11-23 six to nine of them failed whenever another session's real
+diff --git a/Cargo.lock b/Cargo.lock
+index 7ef1705..2224cb5 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -54,6 +54,12 @@ version = "0.2.21"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+ 
++[[package]]
++name = "ambient-authority"
++version = "0.0.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e9d4ee0d472d1cd2e28c97dfa124b3d8d992e10eb0a035f33f5d12e3a177ba3b"
++
+ [[package]]
+ name = "ammonia"
+ version = "4.2.0"
+@@ -468,6 +474,8 @@ version = "0.2.4"
+ dependencies = [
+  "base64 0.22.1",
+  "c3-core",
++ "cap-fs-ext",
++ "cap-std",
+  "chrono",
+  "clap",
+  "ed25519-dalek",
+@@ -513,6 +521,48 @@ dependencies = [
+  "url",
+ ]
+ 
++[[package]]
++name = "cap-fs-ext"
++version = "4.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "56ff379b70af8e08307a8f65e7040c7301cb4a572538ade16b4984f0da77847f"
++dependencies = [
++ "cap-primitives",
++ "cap-std",
++ "io-lifetimes 3.0.1",
++ "windows-sys 0.61.2",
++]
++
++[[package]]
++name = "cap-primitives"
++version = "4.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8b5f74729fd2f44701d1a8eb47e906cdb3ccd9ec0f02baad85a744b791940b18"
++dependencies = [
++ "ambient-authority",
++ "fs-set-times",
++ "io-extras",
++ "io-lifetimes 3.0.1",
++ "ipnet",
++ "maybe-owned",
++ "rustix",
++ "rustix-linux-procfs",
++ "windows-sys 0.61.2",
++ "winx",
++]
++
++[[package]]
++name = "cap-std"
++version = "4.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c1ec78e242cfa2cfe276807ac2ecc00315a6c97786977414bcd1c3963b6c91b8"
++dependencies = [
++ "cap-primitives",
++ "io-extras",
++ "io-lifetimes 3.0.1",
++ "rustix",
++]
++
+ [[package]]
+ name = "castaway"
+ version = "0.2.4"
+@@ -1263,6 +1313,17 @@ dependencies = [
+  "percent-encoding",
+ ]
+ 
++[[package]]
++name = "fs-set-times"
++version = "0.20.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "94e7099f6313ecacbe1256e8ff9d617b75d1bcb16a6fddef94866d225a01a14a"
++dependencies = [
++ "io-lifetimes 2.0.4",
++ "rustix",
++ "windows-sys 0.52.0",
++]
++
+ [[package]]
+ name = "fs2"
+ version = "0.4.3"
+@@ -2056,6 +2117,28 @@ version = "4.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "14c00403deb17c3221a1fe4fb571b9ed0370b3dcd116553c77fa294a3d918699"
+ 
++[[package]]
++name = "io-extras"
++version = "0.19.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "20fd6de4ccfcc187e38bc21cfa543cb5a302cb86a8b114eb7f0bf0dc9f8ac00f"
++dependencies = [
++ "io-lifetimes 3.0.1",
++ "windows-sys 0.52.0",
++]
++
++[[package]]
++name = "io-lifetimes"
++version = "2.0.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "06432fb54d3be7964ecd3649233cddf80db2832f47fec34c01f65b3d9d774983"
++
++[[package]]
++name = "io-lifetimes"
++version = "3.0.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2f0fb0570afe1fed943c5c3d4102d5358592d8625fda6a0007fdbe65a92fba96"
++
+ [[package]]
+ name = "ipnet"
+ version = "2.12.2"
+@@ -2313,6 +2396,12 @@ dependencies = [
+  "rawpointer",
+ ]
+ 
++[[package]]
++name = "maybe-owned"
++version = "0.3.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
++
+ [[package]]
+ name = "md-5"
+ version = "0.10.6"
+@@ -3544,6 +3633,16 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "rustix-linux-procfs"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2fc84bf7e9aa16c4f2c758f27412dc9841341e16aa682d9c7ac308fe3ee12056"
++dependencies = [
++ "once_cell",
++ "rustix",
++]
++
+ [[package]]
+ name = "rustls"
+ version = "0.23.45"
+@@ -5606,6 +5705,16 @@ dependencies = [
+  "memchr",
+ ]
+ 
++[[package]]
++name = "winx"
++version = "0.36.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
++dependencies = [
++ "bitflags",
++ "windows-sys 0.52.0",
++]
++
+ [[package]]
+ name = "wit-bindgen"
+ version = "0.57.1"
+diff --git a/Cargo.toml b/Cargo.toml
+index 29ab709..c784a59 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -55,6 +55,13 @@ unicode-normalization = "0.1"
+ # .gitignore. Blocking, no async runtime.
+ ignore = "0.4"
+ globset = "0.4"
++# cap-std + cap-fs-ext: (0.2.5 D4) contained file operations - everything C3 writes, reads, walks
++# or removes inside a reviewer's throwaway worktree, the repository or a task's handoffs happens
++# relative to an open directory handle (`cap_std::fs::Dir`, Bytecode Alliance), never by a path
++# name checked earlier (`crate::contain`). cap-fs-ext adds the no-follow directory open and the
++# no-follow open option the component-by-component walk needs. Blocking, no async runtime.
++cap-std = "4.0.3"
++cap-fs-ext = "4.0.3"
+ # surrealdb + tokio: the derived context index (milestone 8), behind the `index-surreal`
+ # feature (opt-in; absent from the default build). `kv-surrealkv` is the embedded
+ # single-writer store (per-project `.c3/index/`); `protocol-ws` compiles the `ws://`
+diff --git a/crates/c3-core/src/test_hooks.rs b/crates/c3-core/src/test_hooks.rs
+index 1b0db81..a7ec9c0 100644
+--- a/crates/c3-core/src/test_hooks.rs
++++ b/crates/c3-core/src/test_hooks.rs
+@@ -48,14 +48,66 @@ pub fn mode_on() -> bool {
+     }
+ }
+ 
++thread_local! {
++    /// (0.2.5 D4) The hooks an in-process test set for ITS OWN thread ([`set_thread_hook`]).
++    static THREAD_HOOKS: std::cell::RefCell<Vec<(String, String)>> =
++        const { std::cell::RefCell::new(Vec::new()) };
++}
++
++/// (0.2.5 D4) The guard of a hook set for the current thread only ([`set_thread_hook`]); the hook
++/// is gone when it drops.
++#[must_use = "the thread hook is removed when this guard drops"]
++pub struct ThreadHook {
++    name: String,
++}
++
++impl Drop for ThreadHook {
++    fn drop(&mut self) {
++        THREAD_HOOKS.with(|h| {
++            let mut h = h.borrow_mut();
++            if let Some(i) = h.iter().rposition(|(n, _)| *n == self.name) {
++                h.remove(i);
++            }
++        });
++    }
++}
++
++/// (0.2.5 D4) Set a `CODEX_CONSULT_TEST_*` hook for the CURRENT THREAD only, until the returned
++/// guard drops: what an in-process (cargo unit) test uses to steer one call without touching the
++/// process environment, which every other test running in parallel shares - no mode gate is set and
++/// no other thread sees it. [`hook`] honours it without [`mode_on`]: the gate exists so that an
++/// ENVIRONMENT variable cannot change production behaviour by accident, and a thread hook never
++/// comes from the environment - only test code calls this.
++pub fn set_thread_hook(name: &str, value: &str) -> ThreadHook {
++    debug_assert!(
++        name.starts_with("CODEX_CONSULT_TEST_") && name != MODE_VAR,
++        "set_thread_hook() is for CODEX_CONSULT_TEST_* variables other than the mode gate"
++    );
++    THREAD_HOOKS.with(|h| h.borrow_mut().push((name.to_string(), value.to_string())));
++    ThreadHook {
++        name: name.to_string(),
++    }
++}
++
+ /// Read a `CODEX_CONSULT_TEST_*` hook variable, honoured only when [`mode_on`]. Returns `None` when
+ /// the variable is not set. When it IS set but the mode is off, the hook is ignored (returns
+-/// `None`) and the run warns once on stderr that it saw a test hook.
++/// `None`) and the run warns once on stderr that it saw a test hook. (0.2.5 D4) A hook set for the
++/// current thread ([`set_thread_hook`]) is returned first.
+ pub fn hook(name: &str) -> Option<String> {
+     debug_assert!(
+         name.starts_with("CODEX_CONSULT_TEST_") && name != MODE_VAR,
+         "hook() is for CODEX_CONSULT_TEST_* variables other than the mode gate"
+     );
++    let local = THREAD_HOOKS.with(|h| {
++        h.borrow()
++            .iter()
++            .rev()
++            .find(|(n, _)| n == name)
++            .map(|(_, v)| v.clone())
++    });
++    if local.is_some() {
++        return local;
++    }
+     let raw = std::env::var(name).ok()?;
+     if mode_on() {
+         return Some(raw);
+@@ -162,6 +214,21 @@ mod tests {
+         assert_eq!(test_mode_warning(), None);
+     }
+ 
++    // (0.2.5 D4) a thread hook is seen by its own thread only, without the mode gate, and is gone
++    // once its guard drops.
++    #[test]
++    fn a_thread_hook_is_seen_by_its_own_thread_only() {
++        const NAME: &str = "CODEX_CONSULT_TEST_THREAD_HOOK_PROBE";
++        assert_eq!(hook(NAME), None);
++        {
++            let _g = set_thread_hook(NAME, "here");
++            assert_eq!(hook(NAME).as_deref(), Some("here"));
++            let other = std::thread::spawn(|| hook(NAME)).join().unwrap();
++            assert_eq!(other, None, "another thread does not see it");
++        }
++        assert_eq!(hook(NAME), None, "gone after the guard dropped");
++    }
++
+     #[test]
+     fn unset_hook_is_none_and_does_not_warn() {
+         let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
+diff --git a/crates/c3/Cargo.toml b/crates/c3/Cargo.toml
+index c9a3ed2..93bf577 100644
+--- a/crates/c3/Cargo.toml
++++ b/crates/c3/Cargo.toml
+@@ -24,6 +24,8 @@ rustls.workspace = true
+ webpki-roots.workspace = true
+ ignore = { workspace = true }
+ globset = { workspace = true }
++cap-std = { workspace = true }
++cap-fs-ext = { workspace = true }
+ url = { workspace = true }
+ unicode-normalization = { workspace = true }
+ surrealdb = { workspace = true, optional = true }
+diff --git a/crates/c3/src/consult/reviewed.rs b/crates/c3/src/consult/reviewed.rs
+index 74b3d0c..807d7ef 100644
+--- a/crates/c3/src/consult/reviewed.rs
++++ b/crates/c3/src/consult/reviewed.rs
+@@ -333,38 +333,16 @@ fn skip_staging(p: &Path) -> bool {
+     })
+ }
+ 
+-/// (R5, F18-5) What a staging source is, read WITHOUT following it.
+-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+-enum SourceKind {
+-    Absent,
+-    /// A symlink / junction / reparse point, or a path whose canonical form leaves the repository
+-    /// (a link on its way): never read.
+-    Linked,
+-    Dir,
+-    File,
+-    Other,
+-}
+-
+-fn source_kind(repo: &Path, p: &Path) -> SourceKind {
+-    let Ok(meta) = std::fs::symlink_metadata(p) else {
+-        return SourceKind::Absent;
+-    };
+-    if worktree::is_link(&meta) {
+-        return SourceKind::Linked;
+-    }
+-    let inside = std::fs::canonicalize(p)
+-        .ok()
+-        .zip(std::fs::canonicalize(repo).ok())
+-        .is_some_and(|(c, r)| c.starts_with(r));
+-    if !inside {
+-        return SourceKind::Linked;
+-    }
+-    if meta.is_dir() {
+-        SourceKind::Dir
+-    } else if meta.is_file() {
+-        SourceKind::File
+-    } else {
+-        SourceKind::Other
++/// (R5, F18-5 / 0.2.5 D4) How a staging source that could not be reached through the repository's
++/// handles counts: a link on the way (any component, the entry itself) is skipped and counted, an
++/// entry that is not there or not of the asked kind is simply not staged, anything else refuses the
++/// run (`Err` with the words).
++fn source_step(e: crate::contain::StepError, shown: &Path) -> Result<bool, String> {
++    use crate::contain::Step;
++    match e.why {
++        Step::Link { .. } => Ok(true),
++        Step::Missing | Step::NotDir | Step::NotFile | Step::BadPath => Ok(false),
++        why => Err(format!("{} {why}", shown.display())),
+     }
+ }
+ 
+@@ -383,6 +361,13 @@ fn source_kind(repo: &Path, p: &Path) -> SourceKind {
+ /// ([`ReviewTree::links_skipped`]) - nothing outside the repository is copied into a worktree.
+ /// `Err(Capability)` when the worktree cannot be made, `Err(Refused)` when staging cannot be done
+ /// safely ([`SetupError`]); either way nothing was started.
++///
++/// (0.2.5 D4, F29-2 / F18-5) The sources are reached through HANDLES: the repository is opened once
++/// ([`crate::contain::Root::open_anchor`]), `handoffs/` and `state.md` are opened from it one
++/// component at a time without following any (a link anywhere on the way - one that stays inside
++/// the repository included - is skipped and counted), and the files are read through handles
++/// opened without following them; the brief likewise ([`worktree::brief_bytes`]). Nothing checked
++/// first is opened again by its name afterwards.
+ pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<ReviewTree, SetupError> {
+     let wt = ThrowawayWorktree::create(s.repo_root, plan.checkout()).map_err(|e| {
+         SetupError::Capability(format!(
+@@ -401,10 +386,19 @@ pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<Review
+     if let Some(cr) = &collab_rel {
+         let task_dir = s.collab_root.join(s.task);
+         let handoffs = task_dir.join("handoffs");
+-        match source_kind(s.repo_root, &handoffs) {
+-            SourceKind::Dir => {
++        let state = task_dir.join("state.md");
++        let repo = crate::contain::Root::open_anchor(s.repo_root).map_err(|e| {
++            refused(
++                "the task's handoffs",
++                format!("the repository {} {}", s.repo_root.display(), e.words()),
++            )
++        })?;
++        let task_rel = Path::new(cr).join(s.task);
++        match repo.open_dir(&task_rel.join("handoffs"), false) {
++            Ok(src) => {
+                 let st = wt
+                     .stage_dir(
++                        &src,
+                         &handoffs,
+                         &format!("{cr}/{}/handoffs", s.task),
+                         &skip_staging,
+@@ -413,16 +407,21 @@ pub fn setup_review_tree(plan: &IsolationPlan, s: &StageInputs) -> Result<Review
+                 links_skipped += st.links_skipped;
+                 handoffs_staged = st.files > 0;
+             }
+-            SourceKind::Linked => links_skipped += 1,
+-            _ => {}
++            Err(e) => {
++                if source_step(e, &handoffs).map_err(|e| refused("the task's handoffs", e))? {
++                    links_skipped += 1;
++                }
++            }
+         }
+-        let state = task_dir.join("state.md");
+-        match source_kind(s.repo_root, &state) {
+-            SourceKind::File => wt
+-                .stage_file(&state, &format!("{cr}/{}/state.md", s.task))
++        match repo.read(&task_rel.join("state.md")) {
++            Ok(bytes) => wt
++                .stage_bytes(&bytes, &format!("{cr}/{}/state.md", s.task))
+                 .map_err(|e| refused("the task's state.md", e))?,
+-            SourceKind::Linked => links_skipped += 1,
+-            _ => {}
++            Err(e) => {
++                if source_step(e, &state).map_err(|e| refused("the task's state.md", e))? {
++                    links_skipped += 1;
++                }
++            }
+         }
+         collab = Some(wt.path().join(cr));
+     }
+@@ -949,79 +948,162 @@ pub fn render_patch(repo: &Path, spec: &DiffSpec, excludes: &[String]) -> Result
+     }
+ }
+ 
+-/// (R5, F19-3) Put `bytes` at `path` without ever overwriting a file: an existing regular file with
+-/// the SAME bytes is reused (a panel sibling, or an earlier run, rendered the same patch); one with
+-/// other bytes, or anything that is not a regular file (a link, a directory), is an `Err`. The bytes
+-/// go into a new temp file beside it (exclusive create) which is then hard-linked to the name - an
+-/// atomic create that fails when the name exists, so a sibling never reads a half-written file; on
+-/// a file system without hard links the name itself is created exclusively.
+-fn place_patch(path: &Path, bytes: &[u8]) -> Result<(), String> {
+-    use std::io::Write;
+-    let shown = path.display().to_string();
+-    let reuse = || -> Result<(), String> {
+-        let m = std::fs::symlink_metadata(path)
+-            .map_err(|e| format!("{shown} cannot be checked ({e})"))?;
+-        if worktree::is_link(&m) || !m.is_file() {
+-            return Err(format!(
+-                "{shown} exists and is not a regular file; it is never reused or overwritten"
+-            ));
+-        }
+-        match std::fs::read(path) {
+-            Ok(b) if b == bytes => Ok(()),
+-            Ok(_) => Err(format!(
+-                "{shown} already holds other bytes; a patch file is never overwritten"
+-            )),
+-            Err(e) => Err(format!("{shown} cannot be read ({e})")),
++/// (0.2.5 D4) The test hook that makes the patch placement behave as on a file system without hard
++/// links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`, any value): the fallback placement is then proved.
++pub(crate) const PATCH_NO_HARDLINK_HOOK: &str = "CODEX_CONSULT_TEST_PATCH_NO_HARDLINK";
++
++/// The existing patch file `leaf` of `dir` reused when it holds exactly `bytes` (read through a
++/// handle opened without following it); anything else is an `Err`. A name another placement is
++/// still putting in place - an EMPTY claim on a file system without hard links
++/// ([`place_without_link`]) - is waited for up to two seconds.
++fn reuse_patch(
++    dir: &cap_std::fs::Dir,
++    leaf: &std::ffi::OsStr,
++    bytes: &[u8],
++    shown: &str,
++) -> Result<(), String> {
++    use crate::contain::Step;
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
++    loop {
++        match crate::contain::read_file_in(dir, leaf) {
++            Ok(b) if b == bytes => return Ok(()),
++            Ok(b) if b.is_empty() && std::time::Instant::now() < deadline => {
++                std::thread::sleep(std::time::Duration::from_millis(20));
++            }
++            Ok(_) => {
++                return Err(format!(
++                    "{shown} already holds other bytes; a patch file is never overwritten"
++                ))
++            }
++            Err(Step::Link { .. }) | Err(Step::NotFile) => {
++                return Err(format!(
++                    "{shown} exists and is not a regular file; it is never reused or overwritten"
++                ))
++            }
++            Err(e) => return Err(format!("{shown} cannot be read ({e})")),
+         }
+-    };
+-    if std::fs::symlink_metadata(path).is_ok() {
+-        return reuse();
+-    }
+-    let dir = path
+-        .parent()
+-        .ok_or_else(|| format!("{shown} has no directory"))?;
+-    let _ = std::fs::create_dir_all(dir);
+-    let name = path
+-        .file_name()
+-        .map(|n| n.to_string_lossy().to_string())
+-        .unwrap_or_default();
+-    let tmp = dir.join(format!(
++    }
++}
++
++/// (0.2.5 D4, F28-1) Place the complete temporary file `tmp` of `dir` under `leaf` WITHOUT a hard
++/// link and without replacing anything that is not this call's own, relative to the directory's
++/// handle: the name is CLAIMED by an exclusive create of an empty file (`AlreadyExists` when it is
++/// taken), then the temporary file is renamed onto the claim. A sibling that meets the empty claim
++/// waits for it ([`reuse_patch`]); when the rename fails the claim is removed again (a removal that
++/// fails is named in the error). (A rename that refuses to replace exists on Windows only as a
++/// rename of a path the process's current directory would complete - not used.)
++fn place_without_link(
++    dir: &cap_std::fs::Dir,
++    tmp: &std::ffi::OsStr,
++    leaf: &std::ffi::OsStr,
++) -> std::io::Result<()> {
++    let mut o = cap_std::fs::OpenOptions::new();
++    o.write(true).create_new(true);
++    drop(dir.open_with(leaf, &o)?);
++    crate::contain::race_point("patch-claim");
++    dir.rename(tmp, dir, leaf)
++        .map_err(|e| match dir.remove_file(leaf) {
++            Ok(()) => e,
++            Err(e2) => std::io::Error::new(
++                e.kind(),
++                format!("{e}; the claimed name could not be removed again ({e2})"),
++            ),
++        })
++}
++
++/// (R5, F19-3) Put `bytes` at `dir/name` without ever overwriting a file: an existing regular file
++/// with the SAME bytes is reused (a panel sibling, or an earlier run, rendered the same patch); one
++/// with other bytes, or anything that is not a regular file (a link, a directory), is an `Err`.
++///
++/// (0.2.5 D4, F28-1) Through a handle on the handoffs directory, with a temporary file on EVERY
++/// file system: the bytes go into a new temporary file (an exclusive create relative to the
++/// directory's handle), synced, and are then placed under the name without replacing anything - a
++/// hard link relative to the handle (fails when the name exists); where the file system has no hard
++/// links, [`place_without_link`]. The final name never holds partial bytes: on every error path
++/// what this call created is removed again, and a removal that fails is named in the `Err` (or, when
++/// the patch itself is in place, said on stderr).
++fn place_patch(dir_path: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
++    use std::ffi::OsStr;
++    let shown = dir_path.join(name).display().to_string();
++    let _ = std::fs::create_dir_all(dir_path);
++    let root = crate::contain::Root::open_anchor(dir_path)
++        .map_err(|e| format!("{} {}", dir_path.display(), e.words()))?;
++    let dir = root.dir();
++    let leaf = OsStr::new(name);
++    match crate::contain::entry(dir, leaf) {
++        Ok(Some(_)) => return reuse_patch(dir, leaf, bytes, &shown),
++        Ok(None) => {}
++        Err(e) => return Err(format!("{shown} cannot be checked ({e})")),
++    }
++    let tmp_name = format!(
+         "{}.{}.tmp",
+         name.trim_end_matches(".patch"),
+         uuid::Uuid::new_v4().simple()
+-    ));
+-    let written = (|| -> std::io::Result<()> {
+-        let mut f = std::fs::OpenOptions::new()
+-            .write(true)
+-            .create_new(true)
+-            .open(&tmp)?;
+-        f.write_all(bytes)?;
+-        f.sync_all()
+-    })();
++    );
++    let tmp = OsStr::new(&tmp_name);
++    let remove_tmp = || match dir.remove_file(tmp) {
++        Ok(()) => None,
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
++        Err(e) => Some(e),
++    };
++    let noted = |msg: String, cleanup: Option<std::io::Error>| match cleanup {
++        None => msg,
++        Some(e) => format!("{msg}; its temporary file {tmp_name} could not be removed ({e})"),
++    };
++    let mut o = cap_std::fs::OpenOptions::new();
++    o.write(true).create_new(true);
++    let mut f = dir
++        .open_with(tmp, &o)
++        .map_err(|e| format!("{shown} could not be written ({e})"))?;
++    let written = crate::contain::write_hook(&mut f, bytes).and_then(|()| f.sync_all());
++    drop(f);
+     if let Err(e) = written {
+-        let _ = std::fs::remove_file(&tmp);
+-        return Err(format!("{shown} could not be written ({e})"));
++        return Err(noted(
++            format!("{shown} could not be written ({e})"),
++            remove_tmp(),
++        ));
+     }
+-    let linked = std::fs::hard_link(&tmp, path);
+-    let _ = std::fs::remove_file(&tmp);
+-    match linked {
++    crate::contain::race_point("patch-place");
++    let linked = if c3_core::test_hooks::hook(PATCH_NO_HARDLINK_HOOK).is_some() {
++        Err(std::io::Error::new(
++            std::io::ErrorKind::Unsupported,
++            "hard links refused (test hook)",
++        ))
++    } else {
++        dir.hard_link(tmp, dir, leaf)
++    };
++    let placed = match linked {
+         Ok(()) => Ok(()),
+-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => reuse(),
+-        Err(_) => {
+-            // no hard links here: create the name itself exclusively
+-            match std::fs::OpenOptions::new()
+-                .write(true)
+-                .create_new(true)
+-                .open(path)
+-            {
+-                Ok(mut f) => f
+-                    .write_all(bytes)
+-                    .and_then(|_| f.sync_all())
+-                    .map_err(|e| format!("{shown} could not be written ({e})")),
+-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => reuse(),
+-                Err(e) => Err(format!("{shown} could not be written ({e})")),
++        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
++        // no hard links on this file system: place it without one
++        Err(_) => place_without_link(dir, tmp, leaf),
++    };
++    let warn_left = |cleanup: Option<std::io::Error>| {
++        if let Some(e) = cleanup {
++            eprintln!(
++                "codex-consult: the patch {shown} is in place, but its temporary file {tmp_name} could not be removed ({e})"
++            );
++        }
++    };
++    match placed {
++        Ok(()) => {
++            warn_left(remove_tmp());
++            Ok(())
++        }
++        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
++            let cleanup = remove_tmp();
++            match reuse_patch(dir, leaf, bytes, &shown) {
++                Ok(()) => {
++                    warn_left(cleanup);
++                    Ok(())
++                }
++                Err(m) => Err(noted(m, cleanup)),
+             }
+         }
++        Err(e) => Err(noted(
++            format!("{shown} could not be placed ({e})"),
++            remove_tmp(),
++        )),
+     }
+ }
+ 
+@@ -1043,8 +1125,10 @@ pub fn write_patch(
+     let (safe, redactions) = crate::pack::redact::redact(&String::from_utf8_lossy(&raw));
+     let bytes = safe.into_bytes();
+     let sha = c3_core::sha256_hex(&bytes);
+-    let path = plan.dir.join(format!("{}.{}.patch", plan.stem, &sha[..8]));
+-    place_patch(&path, &bytes).map_err(|e| format!("the -Diff patch could not be written: {e}"))?;
++    let name = format!("{}.{}.patch", plan.stem, &sha[..8]);
++    let path = plan.dir.join(&name);
++    place_patch(&plan.dir, &name, &bytes)
++        .map_err(|e| format!("the -Diff patch could not be written: {e}"))?;
+     plan.rel = shown_path(repo_root, &path);
+     plan.path = path;
+     plan.sha256 = sha;
+@@ -1701,6 +1785,192 @@ mod tests {
+         let _ = std::fs::remove_dir_all(r.parent().unwrap());
+     }
+ 
++    /// Undo a race hook's swap of `dir` (the link removed, the aside directory renamed back).
++    fn unswap(dir: &Path) {
++        let mut aside_name = dir.file_name().unwrap().to_os_string();
++        aside_name.push(".c3-race-orig");
++        let aside = dir.with_file_name(aside_name);
++        if aside.exists() {
++            let _ = std::fs::remove_dir(dir).or_else(|_| std::fs::remove_file(dir));
++            std::fs::rename(&aside, dir).unwrap();
++        }
++    }
++
++    // (0.2.5 D4, F29-2 / F18-5) THE READ RACE: a staging source directory is swapped for a link to
++    // an outside directory holding files of the same names. (a) After the brief's directory was
++    // opened (`read-open`): on Windows the swap is refused (the handle is held); elsewhere it
++    // happens and the brief is read from the ORIGINAL directory - the staged brief holds the live
++    // bytes. (b) Before the walk reaches it (`read-walk`): the walk meets the link and the run is
++    // refused (preflight-class); nothing outside is read. (c) `handoffs/` swapped after it was
++    // opened, before a file is read (`stage-read`): the inside bytes are staged, never the outside
++    // ones. In every case no outside byte reaches the worktree.
++    #[test]
++    fn a_staging_source_swapped_for_a_link_is_never_read_through() {
++        let r = repo("race-read");
++        let outside = r.parent().unwrap().join("outside");
++        std::fs::create_dir_all(&outside).unwrap();
++        std::fs::write(outside.join("brief.md"), "OUTSIDE-BRIEF\n").unwrap();
++        std::fs::write(outside.join("01-claude-x.md"), "OUTSIDE-HANDOFF\n").unwrap();
++        let docs = r.join("docs");
++        std::fs::create_dir_all(&docs).unwrap();
++        std::fs::write(docs.join("brief.md"), "INSIDE-BRIEF\n").unwrap();
++        let plan = plan_isolation(&r, "kimi", "framing", "", true)
++            .unwrap()
++            .unwrap();
++        let no_collab = r.parent().unwrap().join("collab");
++        let bp = docs.join("brief.md");
++        let run = |collab: &Path, brief: &str| {
++            setup_review_tree(
++                &plan,
++                &StageInputs {
++                    repo_root: &r,
++                    collab_root: collab,
++                    task: "t",
++                    brief_ref: brief,
++                    brief_path: (!brief.is_empty()).then_some(bp.as_path()),
++                    engine: "kimi",
++                },
++            )
++        };
++        let hook_on = |point: &str, dir: &Path| {
++            c3_core::test_hooks::set_thread_hook(
++                crate::contain::RACE_HOOK,
++                &format!("{point}|{}|{}", dir.display(), outside.display()),
++            )
++        };
++        // (a)
++        let h = hook_on("read-open", &docs);
++        let t = run(&no_collab, "docs/brief.md").unwrap_or_else(|e| panic!("(a) {e:?}"));
++        drop(h);
++        if cfg!(windows) {
++            assert!(
++                !r.join("docs.c3-race-orig").exists(),
++                "(a) held: not renamed"
++            );
++        }
++        assert_eq!(
++            std::fs::read_to_string(t.path().join("docs").join("brief.md")).unwrap(),
++            "INSIDE-BRIEF\n",
++            "(a) read from the directory that was opened"
++        );
++        assert!(!walk_has(t.path(), "OUTSIDE"), "(a)");
++        drop(t);
++        unswap(&docs);
++        // (b)
++        let h = hook_on("read-walk", &docs);
++        let got = run(&no_collab, "docs/brief.md");
++        drop(h);
++        let swapped = r.join("docs.c3-race-orig").exists();
++        match got {
++            Err(SetupError::Refused(m)) if swapped => {
++                assert!(m.contains("resolves outside the repository"), "(b) {m}");
++                assert!(crate::panel::run::is_preflight_refusal(&m), "(b) {m}");
++            }
++            Ok(t) if !swapped => {
++                assert!(!walk_has(t.path(), "OUTSIDE"), "(b) not swapped");
++            }
++            Err(e) => panic!("(b) swapped={swapped}: {e:?}"),
++            Ok(t) => panic!(
++                "(b) a brief behind a swapped-in link was staged: {:?}",
++                std::fs::read_to_string(t.path().join("docs").join("brief.md"))
++            ),
++        }
++        unswap(&docs);
++        // (c)
++        let h_dir = r.join(".collab").join("t").join("handoffs");
++        std::fs::create_dir_all(&h_dir).unwrap();
++        std::fs::write(h_dir.join("01-claude-x.md"), "INSIDE-HANDOFF\n").unwrap();
++        let h = hook_on("stage-read", &h_dir);
++        let t = run(&r.join(".collab"), "").unwrap_or_else(|e| panic!("(c) {e:?}"));
++        drop(h);
++        if cfg!(windows) {
++            assert!(
++                !r.join(".collab/t/handoffs.c3-race-orig").exists(),
++                "(c) held"
++            );
++        }
++        assert_eq!(
++            std::fs::read_to_string(t.path().join(".collab/t/handoffs/01-claude-x.md")).unwrap(),
++            "INSIDE-HANDOFF\n"
++        );
++        assert!(!walk_has(t.path(), "OUTSIDE"), "(c)");
++        drop(t);
++        unswap(&h_dir);
++        assert_eq!(
++            std::fs::read_to_string(outside.join("brief.md")).unwrap(),
++            "OUTSIDE-BRIEF\n"
++        );
++        let _ = std::fs::remove_dir_all(r.parent().unwrap());
++    }
++
++    // (0.2.5 D4, F28-1) A patch on a file system without hard links (the test hook) is still put in
++    // place from a COMPLETE temporary file: a write that fails half-way leaves neither the patch nor
++    // a temporary file; the placement then puts the whole patch under its name; a sibling with the
++    // same bytes reuses it; two placements racing on a fresh name both succeed with one whole file;
++    // other bytes under the name are never overwritten. No temporary file is left at any point.
++    #[test]
++    fn a_patch_without_hard_links_is_placed_whole_and_nothing_partial_is_left() {
++        let r = repo("nolink");
++        std::fs::write(r.join("app.txt"), "two\n").unwrap();
++        let handoffs = r.join(".collab/t/handoffs");
++        std::fs::create_dir_all(&handoffs).unwrap();
++        let collab = r.join(".collab");
++        let names = |d: &Path| -> Vec<String> {
++            let mut v: Vec<String> = std::fs::read_dir(d)
++                .unwrap()
++                .flatten()
++                .map(|e| e.file_name().to_string_lossy().to_string())
++                .collect();
++            v.sort();
++            v
++        };
++        let _nolink = c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1");
++        {
++            let _fail = c3_core::test_hooks::set_thread_hook(crate::contain::WRITE_FAIL_HOOK, "1");
++            let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
++            let err = write_patch(&mut p, &r, &collab).unwrap_err();
++            assert!(err.contains("injected write failure"), "{err}");
++            assert!(names(&handoffs).is_empty(), "{:?}", names(&handoffs));
++        }
++        let mut p = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
++        write_patch(&mut p, &r, &collab).unwrap();
++        let bytes = std::fs::read(&p.path).unwrap();
++        assert_eq!(p.sha256, c3_core::sha256_hex(&bytes));
++        let name = p.path.file_name().unwrap().to_string_lossy().to_string();
++        assert_eq!(names(&handoffs), vec![name.clone()]);
++        // (a panel member shares the panel's first handoff number, so the same stem)
++        let mut p2 = plan_diff(&r, &handoffs, None, 2, "claude", "HEAD");
++        write_patch(&mut p2, &r, &collab).unwrap();
++        assert_eq!(p2.path, p.path, "a sibling reuses the file");
++        // two placements racing on a fresh name
++        std::fs::remove_file(&p.path).unwrap();
++        let racers: Vec<_> = (0..2)
++            .map(|_| {
++                let (dir, name, bytes) = (handoffs.clone(), name.clone(), bytes.clone());
++                std::thread::spawn(move || {
++                    let _h = c3_core::test_hooks::set_thread_hook(PATCH_NO_HARDLINK_HOOK, "1");
++                    place_patch(&dir, &name, &bytes)
++                })
++            })
++            .collect();
++        for t in racers {
++            assert_eq!(t.join().unwrap(), Ok(()));
++        }
++        assert_eq!(std::fs::read(&p.path).unwrap(), bytes);
++        assert_eq!(names(&handoffs), vec![name.clone()]);
++        // other bytes under the name are never overwritten
++        std::fs::remove_file(&p.path).unwrap();
++        std::fs::write(&p.path, "somebody else's bytes\n").unwrap();
++        let err = place_patch(&handoffs, &name, &bytes).unwrap_err();
++        assert!(err.contains("never overwritten"), "{err}");
++        assert_eq!(
++            std::fs::read_to_string(&p.path).unwrap(),
++            "somebody else's bytes\n"
++        );
++        assert_eq!(names(&handoffs), vec![name]);
++        let _ = std::fs::remove_dir_all(r.parent().unwrap());
++    }
++
+     /// Whether any regular file below `root` (links not followed) holds `needle`.
+     fn walk_has(root: &Path, needle: &str) -> bool {
+         let mut stack = vec![root.to_path_buf()];
+diff --git a/crates/c3/src/contain.rs b/crates/c3/src/contain.rs
+new file mode 100644
+index 0000000..57db029
+--- /dev/null
++++ b/crates/c3/src/contain.rs
+@@ -0,0 +1,1251 @@
++//! (0.2.5 D4) Contained file operations: what C3 writes, reads, walks and removes INSIDE a
++//! directory it must never leave - a reviewer's throwaway worktree, the repository, a task's
++//! handoffs - happens relative to an open directory handle ([`cap_std::fs::Dir`]), never by a path
++//! name that was checked earlier and then resolved again (findings F32-1, F24-1, F29-2, F18-5,
++//! F27-2, F16-5, F13-9, F28-1: "checked by path name, then used by path name").
++//!
++//! A root is opened ONCE ([`Root`]) and verified on that handle; every later step is relative to an
++//! open handle:
++//!
++//! * a path below a root is opened ONE COMPONENT AT A TIME, each relative to its parent's handle
++//!   and without following it ([`open_child`]): a component that is a link - a symlink, a junction,
++//!   any other Windows reparse point (C3's rule: every reparse point counts as a link) - refuses,
++//!   even one that would stay inside the root;
++//! * a file is read through a handle opened without following it, verified to be a regular file
++//!   on that handle ([`read_file_in`]);
++//! * a file is written to a NEW temporary name in its directory (an exclusive create relative to the
++//!   directory's handle) and published by a rename relative to the same handle, replacing nothing but
++//!   a regular file; whatever this call created is removed through the same handle on failure, and
++//!   a failed removal is reported ([`publish`]);
++//! * a tree is walked without ever descending into a link ([`walk_links`]) and removed through the
++//!   handles ([`remove_contents`], [`remove_root`]).
++//!
++//! What holds it on each platform (proved by `cap_std_refuses_a_link_as_a_path_component`):
++//! on Linux and macOS cap-std's operations are the `*at` system calls on the directory's file
++//! descriptor (`openat` with `O_NOFOLLOW`, `mkdirat`, `renameat`, `unlinkat`), so a component that
++//! is renamed or replaced after it was opened cannot redirect them - they complete in the directory
++//! that was opened. On Windows a file is created and opened relative to the directory handle
++//! (`NtCreateFile` with a root directory); cap-std opens every directory WITHOUT
++//! `FILE_SHARE_DELETE`, so while C3 holds a directory's handle neither that directory nor any of its
++//! ancestors can be renamed or deleted (the system refuses with a sharing violation / access
++//! denied) - the path the remaining operations (rename, remove, create a directory) are built from
++//! cannot name another directory meanwhile. A junction or directory symlink in a component is
++//! refused there by the no-follow open (`ERROR_STOPPED_ON_SYMLINK`), and cap-std refuses to resolve
++//! a junction even when asked to follow (its target is absolute: "a path led outside of the
++//! filesystem").
++//!
++//! The race tests drive [`race_point`]: a test-only hook ([`RACE_HOOK`], `c3_core::test_hooks`)
++//! that swaps a directory for a link at a named point between validation and use.
++
++use std::ffi::{OsStr, OsString};
++use std::io;
++use std::path::{Component, Path, PathBuf};
++
++use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsMaybeDirExt};
++use cap_std::ambient_authority;
++use cap_std::fs::{Dir, File, Metadata, OpenOptions};
++
++/// (0.2.5 D4) The race hook (test mode, or a thread hook of an in-process test): one line per swap,
++/// `<point>|<directory>|<link target>` - when the operation reaches `<point>`, `<directory>` is
++/// renamed aside (to `<name>.c3-race-orig`) and a link to `<link target>` is made in its place (a
++/// junction on Windows, a symlink elsewhere). On Windows the rename fails while C3 holds the
++/// directory's handle, which is the protection; the test reads which of the two happened.
++pub(crate) const RACE_HOOK: &str = "CODEX_CONSULT_TEST_CONTAIN_RACE";
++
++/// Windows' `FILE_ATTRIBUTE_REPARSE_POINT`.
++#[cfg(windows)]
++const ATTR_REPARSE: u32 = 0x400;
++/// Windows' `FILE_ATTRIBUTE_DIRECTORY`.
++#[cfg(windows)]
++const ATTR_DIRECTORY: u32 = 0x10;
++
++/// What an entry is, read without following it (metadata through its parent's handle).
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(crate) enum Kind {
++    /// A link: a symlink, or on Windows any reparse point. `symlink`: Rust's `is_symlink` (on
++    /// Windows a name-surrogate reparse point - a symlink or a junction); `dir`: it carries the
++    /// directory attribute (Windows: removed with `remove_dir`).
++    Link {
++        symlink: bool,
++        dir: bool,
++    },
++    Dir,
++    File,
++    Other,
++}
++
++/// [`Kind`] of metadata read without following the entry.
++pub(crate) fn kind_of(m: &Metadata) -> Kind {
++    let symlink = m.file_type().is_symlink();
++    #[cfg(windows)]
++    let (reparse, dir_attr) = {
++        use cap_std::fs::MetadataExt;
++        let a = m.file_attributes();
++        (a & ATTR_REPARSE != 0, a & ATTR_DIRECTORY != 0)
++    };
++    #[cfg(not(windows))]
++    let (reparse, dir_attr) = (false, false);
++    if symlink || reparse {
++        Kind::Link {
++            symlink,
++            dir: dir_attr,
++        }
++    } else if m.is_dir() {
++        Kind::Dir
++    } else if m.is_file() {
++        Kind::File
++    } else {
++        Kind::Other
++    }
++}
++
++/// The entry `name` of `dir`, read without following it; `None` when it is not there.
++pub(crate) fn entry(dir: &Dir, name: &OsStr) -> io::Result<Option<Kind>> {
++    match dir.symlink_metadata(name) {
++        Ok(m) => Ok(Some(kind_of(&m))),
++        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
++        Err(e) => Err(e),
++    }
++}
++
++/// The normal components of a relative path (`.` dropped); `None` for a path with a root, a drive
++/// prefix or a `..` - such a path is never resolved below a root.
++pub(crate) fn components(rel: &Path) -> Option<Vec<&OsStr>> {
++    let mut v = Vec::new();
++    for c in rel.components() {
++        match c {
++            Component::Normal(n) => v.push(n),
++            Component::CurDir => {}
++            _ => return None,
++        }
++    }
++    Some(v)
++}
++
++/// Why one step below a root did not give what was asked.
++#[derive(Debug)]
++pub(crate) enum Step {
++    /// The entry is a link (never followed). `symlink` as in [`Kind::Link`].
++    Link { symlink: bool },
++    /// A directory was needed and the entry is something else.
++    NotDir,
++    /// A regular file was needed and the entry is something else.
++    NotFile,
++    /// The entry is not there.
++    Missing,
++    /// The path is not a plain relative path (a root, a prefix, a `..`).
++    BadPath,
++    /// The directory could not be created.
++    Create(io::Error),
++    /// The entry could not be opened or read.
++    Io(io::Error),
++}
++
++impl std::fmt::Display for Step {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            Step::Link { .. } => write!(f, "is a link"),
++            Step::NotDir => write!(f, "is not a directory"),
++            Step::NotFile => write!(f, "is not a regular file"),
++            Step::Missing => write!(f, "is not there"),
++            Step::BadPath => write!(f, "is not a path inside the root"),
++            Step::Create(e) => write!(f, "could not be created ({e})"),
++            Step::Io(e) => write!(f, "cannot be read ({e})"),
++        }
++    }
++}
++
++/// A [`Step`] at the root-relative path `at` (the components up to and including the one that
++/// failed).
++#[derive(Debug)]
++pub(crate) struct StepError {
++    pub(crate) at: PathBuf,
++    pub(crate) why: Step,
++}
++
++/// Why `name` in `dir` failed to open as asked (`e`), read without following it.
++fn classify(dir: &Dir, name: &OsStr, e: io::Error, want_dir: bool) -> Step {
++    match entry(dir, name) {
++        Ok(None) => Step::Missing,
++        Ok(Some(Kind::Link { symlink, .. })) => Step::Link { symlink },
++        Ok(Some(Kind::Dir)) if want_dir => Step::Io(e),
++        Ok(Some(Kind::File)) if !want_dir => Step::Io(e),
++        Ok(Some(_)) if want_dir => Step::NotDir,
++        Ok(Some(_)) => Step::NotFile,
++        Err(_) => Step::Io(e),
++    }
++}
++
++/// A directory handle that is a real directory (not a link), checked on the handle itself.
++fn verified_dir(d: Dir) -> Result<Dir, Step> {
++    let m = d.dir_metadata().map_err(Step::Io)?;
++    match kind_of(&m) {
++        Kind::Dir => Ok(d),
++        Kind::Link { symlink, .. } => Err(Step::Link { symlink }),
++        _ => Err(Step::NotDir),
++    }
++}
++
++/// Open the directory `name` of `dir` WITHOUT following it (a link, on Windows any reparse point,
++/// refuses), creating it first when `create` and it is not there. The handle is checked to be a
++/// real directory.
++pub(crate) fn open_child(dir: &Dir, name: &OsStr, create: bool) -> Result<Dir, Step> {
++    match dir.open_dir_nofollow(name) {
++        Ok(d) => verified_dir(d),
++        Err(e) => match classify(dir, name, e, true) {
++            Step::Missing if create => {
++                match dir.create_dir(name) {
++                    Ok(()) => {}
++                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
++                    Err(e) => return Err(Step::Create(e)),
++                }
++                match dir.open_dir_nofollow(name) {
++                    Ok(d) => verified_dir(d),
++                    Err(e) => Err(classify(dir, name, e, true)),
++                }
++            }
++            other => Err(other),
++        },
++    }
++}
++
++/// The options of a read-only open that does not follow the final component.
++fn nofollow_read() -> OpenOptions {
++    let mut o = OpenOptions::new();
++    o.read(true).follow(FollowSymlinks::No);
++    o
++}
++
++/// Open the file `name` of `dir` for reading WITHOUT following it; the handle is checked to be a
++/// regular file (not a link, not a reparse point, not a directory or device). A name that is not a
++/// regular file when read without following it is refused BEFORE it is opened (so a FIFO is never
++/// opened); the handle check catches an entry swapped in between.
++pub(crate) fn open_file_in(dir: &Dir, name: &OsStr) -> Result<File, Step> {
++    match entry(dir, name) {
++        Ok(None) => return Err(Step::Missing),
++        Ok(Some(Kind::Link { symlink, .. })) => return Err(Step::Link { symlink }),
++        Ok(Some(Kind::File)) => {}
++        Ok(Some(_)) => return Err(Step::NotFile),
++        Err(e) => return Err(Step::Io(e)),
++    }
++    let f = dir
++        .open_with(name, &nofollow_read())
++        .map_err(|e| classify(dir, name, e, false))?;
++    let m = f.metadata().map_err(Step::Io)?;
++    match kind_of(&m) {
++        Kind::File => Ok(f),
++        Kind::Link { symlink, .. } => Err(Step::Link { symlink }),
++        _ => Err(Step::NotFile),
++    }
++}
++
++/// The bytes of the regular file `name` of `dir` ([`open_file_in`]).
++pub(crate) fn read_file_in(dir: &Dir, name: &OsStr) -> Result<Vec<u8>, Step> {
++    use std::io::Read;
++    let mut f = open_file_in(dir, name)?;
++    let mut buf = Vec::new();
++    f.read_to_end(&mut buf).map_err(Step::Io)?;
++    Ok(buf)
++}
++
++/// The names in `dir` (its own handle; `.` and `..` are never listed), ordinal-sorted.
++pub(crate) fn list(dir: &Dir) -> io::Result<Vec<OsString>> {
++    let mut names = Vec::new();
++    for e in dir.entries()? {
++        names.push(e?.file_name());
++    }
++    names.sort();
++    Ok(names)
++}
++
++/// Why a root could not be opened.
++#[derive(Debug)]
++pub(crate) enum RootError {
++    /// The root itself is a link (a symlink, a junction, any reparse point).
++    Link,
++    NotDir,
++    Missing,
++    Io(io::Error),
++}
++
++impl RootError {
++    /// The words after the root's name: `is a link`, `is not a directory`, ...
++    pub(crate) fn words(&self) -> String {
++        match self {
++            RootError::Link => "is a link".to_string(),
++            RootError::NotDir => "is not a directory".to_string(),
++            RootError::Missing => "is not there".to_string(),
++            RootError::Io(e) => format!("cannot be read ({e})"),
++        }
++    }
++}
++
++/// Why `path` could not be opened as a root (`e`), read without following it.
++fn classify_root(path: &Path, e: io::Error) -> RootError {
++    match std::fs::symlink_metadata(path) {
++        Err(m) if m.kind() == io::ErrorKind::NotFound => RootError::Missing,
++        Err(_) => RootError::Io(e),
++        Ok(m) if crate::engines::worktree::is_link(&m) || m.file_type().is_symlink() => {
++            RootError::Link
++        }
++        Ok(m) if !m.is_dir() => RootError::NotDir,
++        Ok(_) => RootError::Io(e),
++    }
++}
++
++/// A file's identity on its volume: (device / volume serial, inode / file index), read from an
++/// open handle.
++pub(crate) type FileId = (u64, u64);
++
++fn identity(m: &Metadata) -> FileId {
++    (
++        cap_fs_ext::MetadataExt::dev(m),
++        cap_fs_ext::MetadataExt::ino(m),
++    )
++}
++
++/// A directory opened ONCE and verified on its handle; everything below it is reached through
++/// handles ([`open_child`]). `path` is kept for messages (and the root's own removal,
++/// [`remove_root`]); it is never used to reach an entry.
++#[derive(Debug)]
++pub(crate) struct Root {
++    dir: Dir,
++    path: PathBuf,
++    id: FileId,
++}
++
++impl Root {
++    /// Open `path` as a root that must itself be a real directory: it is opened WITHOUT following
++    /// it, and the handle is checked (not a link, not any reparse point, a directory) - a
++    /// throwaway worktree C3 made.
++    pub(crate) fn open(path: &Path) -> Result<Root, RootError> {
++        let mut o = OpenOptions::new();
++        o.read(true).follow(FollowSymlinks::No).maybe_dir(true);
++        let f = File::open_ambient_with(path, &o, ambient_authority())
++            .map_err(|e| classify_root(path, e))?;
++        let m = f.metadata().map_err(RootError::Io)?;
++        match kind_of(&m) {
++            Kind::Dir => {}
++            Kind::Link { .. } => return Err(RootError::Link),
++            _ => return Err(RootError::NotDir),
++        }
++        let dir = Dir::from_std_file(f.into_std());
++        Ok(Root {
++            dir,
++            path: path.to_path_buf(),
++            id: identity(&m),
++        })
++    }
++
++    /// Open `path` as an ANCHOR: the name is followed to its directory (the repository root, a
++    /// task's handoffs directory - where they live is not C3's to judge), and only what lies BELOW
++    /// it is contained. The handle is checked to be a directory.
++    pub(crate) fn open_anchor(path: &Path) -> Result<Root, RootError> {
++        let dir =
++            Dir::open_ambient_dir(path, ambient_authority()).map_err(
++                |e| match std::fs::metadata(path) {
++                    Err(m) if m.kind() == io::ErrorKind::NotFound => RootError::Missing,
++                    Ok(m) if !m.is_dir() => RootError::NotDir,
++                    _ => RootError::Io(e),
++                },
++            )?;
++        let m = dir.dir_metadata().map_err(RootError::Io)?;
++        if !m.is_dir() {
++            return Err(RootError::NotDir);
++        }
++        Ok(Root {
++            dir,
++            path: path.to_path_buf(),
++            id: identity(&m),
++        })
++    }
++
++    /// The path the root was opened by (for messages).
++    pub(crate) fn path(&self) -> &Path {
++        &self.path
++    }
++
++    /// The root directory's identity, read on its handle when it was opened.
++    pub(crate) fn id(&self) -> FileId {
++        self.id
++    }
++
++    /// The root's handle.
++    pub(crate) fn dir(&self) -> &Dir {
++        &self.dir
++    }
++
++    /// Open the directory `rel` below the root one component at a time ([`open_child`]; created
++    /// when `create`). An empty `rel` is the root itself.
++    pub(crate) fn open_dir(&self, rel: &Path, create: bool) -> Result<Dir, StepError> {
++        let comps = components(rel).ok_or_else(|| StepError {
++            at: rel.to_path_buf(),
++            why: Step::BadPath,
++        })?;
++        let mut cur = self.dir.try_clone().map_err(|e| StepError {
++            at: PathBuf::new(),
++            why: Step::Io(e),
++        })?;
++        let mut at = PathBuf::new();
++        for c in comps {
++            at.push(c);
++            cur = open_child(&cur, c, create).map_err(|why| StepError {
++                at: at.clone(),
++                why,
++            })?;
++        }
++        Ok(cur)
++    }
++
++    /// The parent directory of the file `rel` (opened as [`Root::open_dir`]) and the file's name.
++    pub(crate) fn open_parent(
++        &self,
++        rel: &Path,
++        create: bool,
++    ) -> Result<(Dir, OsString), StepError> {
++        let bad = || StepError {
++            at: rel.to_path_buf(),
++            why: Step::BadPath,
++        };
++        let comps = components(rel).ok_or_else(bad)?;
++        let (leaf, parents) = comps.split_last().ok_or_else(bad)?;
++        let parent: PathBuf = parents.iter().collect();
++        let dir = self.open_dir(&parent, create)?;
++        Ok((dir, leaf.to_os_string()))
++    }
++
++    /// What `rel` is, no component followed: `Ok(None)` when it (or a directory on its way) is not
++    /// there; a link on the way is an `Err` at that component.
++    pub(crate) fn kind(&self, rel: &Path) -> Result<Option<Kind>, StepError> {
++        let (dir, leaf) = match self.open_parent(rel, false) {
++            Ok(v) => v,
++            Err(StepError {
++                why: Step::Missing, ..
++            }) => return Ok(None),
++            Err(e) => return Err(e),
++        };
++        entry(&dir, &leaf).map_err(|e| StepError {
++            at: rel.to_path_buf(),
++            why: Step::Io(e),
++        })
++    }
++
++    /// The bytes of the regular file `rel` below the root: no component and not the file itself is
++    /// followed ([`read_file_in`]).
++    pub(crate) fn read(&self, rel: &Path) -> Result<Vec<u8>, StepError> {
++        race_point("read-walk");
++        let (dir, leaf) = self.open_parent(rel, false)?;
++        race_point("read-open");
++        read_file_in(&dir, &leaf).map_err(|why| StepError {
++            at: rel.to_path_buf(),
++            why,
++        })
++    }
++}
++
++/// The bytes of the regular file at `path`, its directory opened as an anchor ([`Root::open_anchor`])
++/// and the file itself opened without following it. `Err` is the reason alone (the caller names
++/// the path).
++pub(crate) fn read_path(path: &Path) -> Result<Vec<u8>, String> {
++    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
++        return Err("it names no file".to_string());
++    };
++    let parent = if parent.as_os_str().is_empty() {
++        Path::new(".")
++    } else {
++        parent
++    };
++    let root = Root::open_anchor(parent).map_err(|e| format!("its directory {}", e.words()))?;
++    read_file_in(root.dir(), name).map_err(|why| format!("it {why}"))
++}
++
++/// When [`publish`] runs its check.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub(crate) enum Stage {
++    /// Before the temporary file is created.
++    BeforeCreate,
++    /// After it was written and synced, right before the rename.
++    BeforeRename,
++}
++
++/// One publication: `bytes` written to the NEW file `tmp` of `dir`, then renamed onto `leaf`.
++pub(crate) struct Publish<'a> {
++    pub(crate) dir: &'a Dir,
++    pub(crate) leaf: &'a OsStr,
++    pub(crate) tmp: &'a OsStr,
++    pub(crate) bytes: &'a [u8],
++    /// Permission bits the new file takes before it is published (the file it replaces keeps
++    /// them); `None` leaves the defaults.
++    pub(crate) permissions: Option<cap_std::fs::Permissions>,
++    /// The caller's check of the destination, before the create and again right before the rename.
++    pub(crate) check: &'a dyn Fn(Stage) -> Result<(), String>,
++    /// The race-point prefix (`<race>-create`, `<race>-publish`).
++    pub(crate) race: &'a str,
++}
++
++/// What failed in [`publish`].
++#[derive(Debug)]
++pub(crate) enum PublishError {
++    /// The caller's check refused.
++    Check(String),
++    /// The temporary file could not be created.
++    Create(io::Error),
++    /// It could not be written or synced.
++    Write(io::Error),
++    /// It could not be renamed onto the destination.
++    Rename(io::Error),
++}
++
++/// A failed [`publish`]: what failed and, when the temporary file could not be removed again, why.
++#[derive(Debug)]
++pub(crate) struct PublishFailure {
++    pub(crate) error: PublishError,
++    /// The temporary file's removal failed (it is still there).
++    pub(crate) cleanup: Option<io::Error>,
++    pub(crate) tmp: OsString,
++}
++
++impl PublishFailure {
++    /// `msg` with the failed cleanup appended, when there was one.
++    pub(crate) fn with_cleanup(&self, msg: String) -> String {
++        match &self.cleanup {
++            None => msg,
++            Some(e) => format!(
++                "{msg}; its temporary file {} could not be removed ({e})",
++                self.tmp.to_string_lossy()
++            ),
++        }
++    }
++}
++
++/// Write `p.bytes` to the NEW file `p.tmp` of `p.dir` (an exclusive create relative to the
++/// directory's handle: nothing can be planted there, no link followed), sync it, run the caller's
++/// check again, then rename it onto `p.leaf` relative to the same handle. A rename replaces only
++/// the directory entry - a link at the destination is replaced, never written through (the caller's
++/// check refuses one anyway). On any failure the temporary file is removed through the same handle;
++/// a removal that fails is reported in [`PublishFailure::cleanup`].
++pub(crate) fn publish(p: &Publish<'_>) -> Result<(), PublishFailure> {
++    let fail = |error: PublishError, cleanup: Option<io::Error>| PublishFailure {
++        error,
++        cleanup,
++        tmp: p.tmp.to_os_string(),
++    };
++    (p.check)(Stage::BeforeCreate).map_err(|why| fail(PublishError::Check(why), None))?;
++    race_point(&format!("{}-create", p.race));
++    let mut o = OpenOptions::new();
++    o.write(true).create_new(true);
++    let mut f = p
++        .dir
++        .open_with(p.tmp, &o)
++        .map_err(|e| fail(PublishError::Create(e), None))?;
++    let remove_tmp = || match p.dir.remove_file(p.tmp) {
++        Ok(()) => None,
++        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
++        Err(e) => Some(e),
++    };
++    let written = (|| -> io::Result<()> {
++        write_hook(&mut f, p.bytes)?;
++        f.sync_all()?;
++        if let Some(perm) = &p.permissions {
++            f.set_permissions(perm.clone())?;
++        }
++        Ok(())
++    })();
++    drop(f);
++    if let Err(e) = written {
++        return Err(fail(PublishError::Write(e), remove_tmp()));
++    }
++    if let Err(why) = (p.check)(Stage::BeforeRename) {
++        return Err(fail(PublishError::Check(why), remove_tmp()));
++    }
++    race_point(&format!("{}-publish", p.race));
++    p.dir
++        .rename(p.tmp, p.dir, p.leaf)
++        .map_err(|e| fail(PublishError::Rename(e), remove_tmp()))
++}
++
++/// (0.2.5 D4) The test hook that makes a write of a [`publish`] or a patch fail after half the bytes
++/// (`CODEX_CONSULT_TEST_CONTAIN_WRITE_FAIL`, any value): the error paths' cleanup is then proved.
++pub(crate) const WRITE_FAIL_HOOK: &str = "CODEX_CONSULT_TEST_CONTAIN_WRITE_FAIL";
++
++/// `f.write_all(bytes)`, or - under [`WRITE_FAIL_HOOK`] - half of them and an injected error.
++pub(crate) fn write_hook(f: &mut File, bytes: &[u8]) -> io::Result<()> {
++    use std::io::Write;
++    if c3_core::test_hooks::hook(WRITE_FAIL_HOOK).is_some() {
++        f.write_all(&bytes[..bytes.len() / 2])?;
++        return Err(io::Error::other("injected write failure"));
++    }
++    f.write_all(bytes)
++}
++
++/// Remove ONE link `name` of `dir` (never its target), relative to the directory's handle: on
++/// Windows a link carrying the directory attribute (a junction, a directory symlink) with
++/// `remove_dir`, any other with `remove_file` (each falling back to the other); elsewhere
++/// `remove_file`. Neither follows the link.
++pub(crate) fn remove_link(dir: &Dir, name: &OsStr, dir_attr: bool) -> io::Result<()> {
++    #[cfg(windows)]
++    {
++        if dir_attr {
++            return dir.remove_dir(name).or_else(|_| dir.remove_file(name));
++        }
++        dir.remove_file(name).or_else(|_| dir.remove_dir(name))
++    }
++    #[cfg(not(windows))]
++    {
++        let _ = dir_attr;
++        dir.remove_file(name)
++    }
++}
++
++/// Remove the regular (or other non-directory, non-link) entry `name` of `dir` through its handle.
++/// On Windows a read-only file is made writable first - through a handle opened on it without
++/// following it - and the removal tried again.
++fn remove_file_in(dir: &Dir, name: &OsStr) -> io::Result<()> {
++    #[cfg(windows)]
++    {
++        match dir.remove_file(name) {
++            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
++                clear_readonly_and_remove(dir, name)
++            }
++            other => other,
++        }
++    }
++    #[cfg(not(windows))]
++    {
++        dir.remove_file(name)
++    }
++}
++
++/// (Windows) Clear the read-only attribute of the regular file `name` of `dir` through a handle
++/// opened on it without following it, then remove it relative to the directory's handle.
++#[cfg(windows)]
++fn clear_readonly_and_remove(dir: &Dir, name: &OsStr) -> io::Result<()> {
++    use cap_std::fs::OpenOptionsExt;
++    const FILE_READ_ATTRIBUTES: u32 = 0x80;
++    const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
++    let mut o = OpenOptions::new();
++    o.access_mode(FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES)
++        .follow(FollowSymlinks::No);
++    let f = dir.open_with(name, &o)?;
++    let m = f.metadata()?;
++    if kind_of(&m) != Kind::File {
++        return Err(io::Error::new(
++            io::ErrorKind::PermissionDenied,
++            "the entry is not a regular file",
++        ));
++    }
++    let mut perm = m.permissions();
++    perm.set_readonly(false);
++    f.set_permissions(perm)?;
++    drop(f);
++    dir.remove_file(name)
++}
++
++/// One link a walk met: its directory's handle, the directory's root-relative path, its name, and
++/// whether it carries the directory attribute ([`Kind::Link`]).
++pub(crate) struct LinkAt<'a> {
++    pub(crate) dir: &'a Dir,
++    pub(crate) dir_rel: &'a Path,
++    pub(crate) name: &'a OsStr,
++    pub(crate) dir_attr: bool,
++}
++
++/// Walk every directory below `root` through handles and hand every LINK to `on_link` - never
++/// following one, never descending into one. Each directory is listed through its own handle and
++/// each subdirectory opened relative to its parent's handle without following it
++/// ([`open_child`]); a subdirectory that turns out to be a link by then (replaced after it was
++/// listed) is handed to `on_link` as a link. Every error (a directory that cannot be listed or
++/// opened, an entry that cannot be read, an `on_link` error) is collected; with `fail_fast` the
++/// walk stops at the first. Returns the errors (empty: a clean walk). `root` itself is not handed
++/// over.
++pub(crate) fn walk_links(
++    root: &Root,
++    fail_fast: bool,
++    on_link: &mut dyn FnMut(&LinkAt<'_>) -> Result<(), String>,
++) -> Vec<String> {
++    let mut errors: Vec<String> = Vec::new();
++    let first = match root.dir().try_clone() {
++        Ok(d) => d,
++        Err(e) => {
++            errors.push(format!("{} cannot be opened ({e})", root.path().display()));
++            return errors;
++        }
++    };
++    let mut stack: Vec<(Dir, PathBuf)> = vec![(first, PathBuf::new())];
++    while let Some((dir, rel)) = stack.pop() {
++        let shown = root.path().join(&rel);
++        let names = match list(&dir) {
++            Ok(n) => n,
++            Err(e) => {
++                errors.push(format!("{} cannot be listed ({e})", shown.display()));
++                if fail_fast {
++                    return errors;
++                }
++                continue;
++            }
++        };
++        for name in names {
++            let at = shown.join(&name);
++            let kind = match entry(&dir, &name) {
++                Ok(Some(k)) => k,
++                Ok(None) => continue,
++                Err(e) => {
++                    errors.push(format!("{} cannot be read ({e})", at.display()));
++                    if fail_fast {
++                        return errors;
++                    }
++                    continue;
++                }
++            };
++            let link = match kind {
++                Kind::Link { dir: d, .. } => Some(d),
++                Kind::Dir => {
++                    race_point("walk-descend");
++                    match open_child(&dir, &name, false) {
++                        Ok(sub) => {
++                            stack.push((sub, rel.join(&name)));
++                            None
++                        }
++                        // replaced by a link after it was listed: a link, never descended
++                        Err(Step::Link { .. }) => Some(match entry(&dir, &name) {
++                            Ok(Some(Kind::Link { dir: d, .. })) => d,
++                            _ => true,
++                        }),
++                        Err(Step::Missing) => None,
++                        Err(why) => {
++                            errors.push(format!("{} {why}", at.display()));
++                            if fail_fast {
++                                return errors;
++                            }
++                            None
++                        }
++                    }
++                }
++                _ => None,
++            };
++            if let Some(dir_attr) = link {
++                let l = LinkAt {
++                    dir: &dir,
++                    dir_rel: &rel,
++                    name: &name,
++                    dir_attr,
++                };
++                if let Err(why) = on_link(&l) {
++                    errors.push(why);
++                    if fail_fast {
++                        return errors;
++                    }
++                }
++            }
++        }
++    }
++    errors
++}
++
++/// The unlink function of a removal: [`remove_link`] in production; a test injects a failure.
++pub(crate) type UnlinkFn = fn(&Dir, &OsStr, bool) -> io::Result<()>;
++
++/// Remove EVERYTHING below `root` through handles: a link is unlinked with `unlink` (never
++/// followed), a file removed relative to its directory's handle, a subdirectory opened relative to
++/// its parent's handle without following it, emptied the same way and then removed relative to the
++/// parent's handle (a directory that became a link meanwhile is unlinked instead). The first error
++/// stops it: `Err` names it and what is left stays. `root` itself is not removed ([`remove_root`]).
++pub(crate) fn remove_contents(root: &Root, unlink: UnlinkFn) -> Result<(), String> {
++    fn empty(dir: &Dir, shown: &Path, unlink: UnlinkFn) -> Result<(), String> {
++        let names = list(dir).map_err(|e| format!("{} cannot be listed ({e})", shown.display()))?;
++        for name in names {
++            let at = shown.join(&name);
++            let kind = match entry(dir, &name) {
++                Ok(Some(k)) => k,
++                Ok(None) => continue,
++                Err(e) => return Err(format!("{} cannot be read ({e})", at.display())),
++            };
++            let link = match kind {
++                Kind::Link { dir: d, .. } => Some(d),
++                Kind::Dir => {
++                    race_point("walk-descend");
++                    match open_child(dir, &name, false) {
++                        Ok(sub) => {
++                            empty(&sub, &at, unlink)?;
++                            drop(sub);
++                            dir.remove_dir(&name).map_err(|e| {
++                                format!("the directory {} could not be removed ({e})", at.display())
++                            })?;
++                            None
++                        }
++                        Err(Step::Link { .. }) => Some(match entry(dir, &name) {
++                            Ok(Some(Kind::Link { dir: d, .. })) => d,
++                            _ => true,
++                        }),
++                        Err(Step::Missing) => None,
++                        Err(why) => return Err(format!("{} {why}", at.display())),
++                    }
++                }
++                _ => {
++                    remove_file_in(dir, &name).map_err(|e| {
++                        format!("the file {} could not be removed ({e})", at.display())
++                    })?;
++                    None
++                }
++            };
++            if let Some(dir_attr) = link {
++                unlink(dir, &name, dir_attr)
++                    .map_err(|e| format!("the link {} could not be removed ({e})", at.display()))?;
++                if entry(dir, &name).ok().flatten().is_some() {
++                    return Err(format!("the link {} is still there", at.display()));
++                }
++            }
++        }
++        Ok(())
++    }
++    empty(root.dir(), root.path(), unlink)
++}
++
++/// Remove the (emptied, [`remove_contents`]) root directory itself: its parent is opened, the
++/// entry is opened again from the parent's handle WITHOUT following it and must be the SAME
++/// directory as `root` (its identity), then `root`'s handle is released and the entry removed
++/// relative to the parent's handle - an empty directory or, if it was swapped in that instant, a
++/// link (never followed); a non-empty directory is never removed. A root that is not there any
++/// more is `Ok`.
++pub(crate) fn remove_root(root: Root) -> Result<(), String> {
++    let path = root.path().to_path_buf();
++    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
++        return Err(format!("{} has no parent directory", path.display()));
++    };
++    let parent_dir = Dir::open_ambient_dir(parent, ambient_authority()).map_err(|e| {
++        format!(
++            "the directory above {} cannot be opened ({e})",
++            path.display()
++        )
++    })?;
++    let again = match open_child(&parent_dir, name, false) {
++        Ok(d) => d,
++        Err(Step::Missing) => return Ok(()),
++        Err(why) => return Err(format!("{} {why} now; it was not removed", path.display())),
++    };
++    let same = again
++        .dir_metadata()
++        .map(|m| identity(&m) == root.id())
++        .unwrap_or(false);
++    if !same {
++        return Err(format!(
++            "{} is no longer the directory that was emptied; it was not removed",
++            path.display()
++        ));
++    }
++    drop(again);
++    drop(root);
++    race_point("remove-root");
++    match parent_dir.remove_dir(name) {
++        Ok(()) => Ok(()),
++        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
++        Err(e) => Err(format!("the directory could not be removed ({e})")),
++    }
++}
++
++/// (0.2.5 D4) A race point: under [`RACE_HOOK`], swap the named directory for a link here (a test
++/// proves that the operation then refuses, or completes strictly inside the directory it had
++/// opened, never outside). Does nothing without the hook.
++pub(crate) fn race_point(point: &str) {
++    let Some(spec) = c3_core::test_hooks::hook(RACE_HOOK) else {
++        return;
++    };
++    for line in spec.lines() {
++        let mut parts = line.splitn(3, '|');
++        let (Some(p), Some(dir), Some(target)) = (parts.next(), parts.next(), parts.next()) else {
++            continue;
++        };
++        if p == point {
++            swap_for_link(Path::new(dir), Path::new(target));
++        }
++    }
++}
++
++/// Rename `dir` aside (`<name>.c3-race-orig`) and make a link to `target` in its place: a junction
++/// on Windows (no privilege needed), a symlink elsewhere. Nothing happens when the rename is refused
++/// (on Windows: C3 holds the directory's handle).
++fn swap_for_link(dir: &Path, target: &Path) {
++    let Some(name) = dir.file_name() else {
++        return;
++    };
++    let mut aside_name = name.to_os_string();
++    aside_name.push(".c3-race-orig");
++    let aside = dir.with_file_name(aside_name);
++    if std::fs::rename(dir, &aside).is_err() {
++        return;
++    }
++    #[cfg(windows)]
++    {
++        let win = |p: &Path| p.to_string_lossy().replace('/', "\\");
++        let _ = std::process::Command::new("cmd")
++            .args(["/c", "mklink", "/J"])
++            .arg(win(dir))
++            .arg(win(target))
++            .output();
++    }
++    #[cfg(not(windows))]
++    {
++        let _ = std::os::unix::fs::symlink(target, dir);
++    }
++}
++
++#[cfg(test)]
++pub(crate) mod tests {
++    use super::*;
++
++    /// A scratch layout: `<base>/root/inner/own.txt` and `<base>/outside/sentinel.txt` (+ `x/`).
++    pub(crate) fn scratch(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
++        let base = std::env::temp_dir().join(format!(
++            "c3-contain-{tag}-{}",
++            uuid::Uuid::new_v4().simple()
++        ));
++        let root = base.join("root");
++        let outside = base.join("outside");
++        std::fs::create_dir_all(root.join("inner")).unwrap();
++        std::fs::create_dir_all(outside.join("x")).unwrap();
++        std::fs::write(outside.join("sentinel.txt"), "OUTSIDE\n").unwrap();
++        std::fs::write(root.join("inner").join("own.txt"), "INSIDE\n").unwrap();
++        (base, root, outside)
++    }
++
++    /// A directory link at `link` to `target`: a junction on Windows (no privilege needed), a
++    /// symlink elsewhere.
++    pub(crate) fn junction_or_symlink(link: &Path, target: &Path) {
++        #[cfg(windows)]
++        {
++            let win = |p: &Path| p.to_string_lossy().replace('/', "\\");
++            let ok = std::process::Command::new("cmd")
++                .args(["/c", "mklink", "/J"])
++                .arg(win(link))
++                .arg(win(target))
++                .output()
++                .map(|o| o.status.success())
++                .unwrap_or(false);
++            assert!(ok, "mklink /J failed");
++        }
++        #[cfg(not(windows))]
++        std::os::unix::fs::symlink(target, link).unwrap();
++    }
++
++    /// A directory SYMLINK at `link` to `target` (relative or absolute); `false` when the system
++    /// refuses to make one (on Windows it needs a privilege or developer mode).
++    fn try_dir_symlink(link: &Path, target: &Path) -> bool {
++        #[cfg(windows)]
++        {
++            std::os::windows::fs::symlink_dir(target, link).is_ok()
++        }
++        #[cfg(not(windows))]
++        {
++            std::os::unix::fs::symlink(target, link).is_ok()
++        }
++    }
++
++    /// The names in `dir` (to prove nothing was created there).
++    pub(crate) fn names(dir: &Path) -> Vec<String> {
++        let mut v: Vec<String> = std::fs::read_dir(dir)
++            .unwrap()
++            .flatten()
++            .map(|e| e.file_name().to_string_lossy().to_string())
++            .collect();
++        v.sort();
++        v
++    }
++
++    /// Every operation on a path whose component `link` is a link must refuse (or report the link)
++    /// and never reach `outside`.
++    fn assert_refused_through(root: &Root, link: &str, outside: &Path) {
++        let before = names(outside);
++        let l = Path::new(link);
++        // the contained walk: the link component refuses, as a link
++        for rel in [l.to_path_buf(), l.join("x"), l.join("sentinel.txt")] {
++            match root.open_dir(&rel, false) {
++                Err(StepError {
++                    why: Step::Link { .. },
++                    at,
++                }) => assert_eq!(at, l, "{rel:?}"),
++                other => panic!("open_dir({rel:?}) through `{link}`: {other:?}"),
++            }
++        }
++        match root.open_dir(&l.join("newdir"), true) {
++            Err(StepError {
++                why: Step::Link { .. },
++                ..
++            }) => {}
++            other => panic!("open_dir(create) through `{link}`: {other:?}"),
++        }
++        match root.read(&l.join("sentinel.txt")) {
++            Err(StepError {
++                why: Step::Link { .. },
++                ..
++            }) => {}
++            other => panic!("read through `{link}`: {other:?}"),
++        }
++        match root.kind(l) {
++            Ok(Some(Kind::Link { .. })) => {}
++            other => panic!("kind(`{link}`): {other:?}"),
++        }
++        // cap-std itself: the no-follow open refuses the link ...
++        assert!(root.dir().open_dir_nofollow(l).is_err(), "{link}");
++        // ... and its own resolution never leaves the root through it, even asked to follow
++        assert!(
++            root.dir().create_dir(l.join("via-cap-std")).is_err() || {
++                // a link whose target lies inside the root may be followed by cap-std itself
++                // (never by C3's walk above); it then never reaches `outside`
++                !outside.join("via-cap-std").exists()
++            }
++        );
++        let mut o = OpenOptions::new();
++        o.write(true).create_new(true);
++        let _ = root.dir().open_with(l.join("via-cap-std.txt"), &o);
++        assert_eq!(names(outside), before, "nothing was created outside");
++        assert_eq!(
++            std::fs::read_to_string(outside.join("sentinel.txt")).unwrap(),
++            "OUTSIDE\n"
++        );
++    }
++
++    // (0.2.5 D4) THE PROOF the wave stands on: cap-std, used component by component without
++    // following, refuses a JUNCTION (Windows) and a DIRECTORY SYMLINK (every platform where one can
++    // be made) as a path component - pointing outside the root, and pointing INSIDE it (C3 refuses
++    // a link even where it would stay inside) - and a root that is itself a link. On Windows, while
++    // a directory handle is held, neither that directory nor an ancestor can be renamed - what keeps
++    // the path-built operations (rename, remove, create a directory) on the opened directory.
++    #[test]
++    fn cap_std_refuses_a_link_as_a_path_component() {
++        let (base, root_p, outside) = scratch("proof");
++        // a junction (Windows) / symlink (elsewhere) to the outside directory, and one to `inner`
++        junction_or_symlink(&root_p.join("j"), &outside);
++        junction_or_symlink(&root_p.join("jin"), &root_p.join("inner"));
++        let root = Root::open(&root_p).unwrap();
++        assert_refused_through(&root, "j", &outside);
++        assert_refused_through(&root, "jin", &outside);
++        // directory SYMLINKS (absolute out, relative out, relative in), where the system allows
++        let made: Vec<&str> = [
++            ("sabs", outside.clone()),
++            ("srel", PathBuf::from("..").join("outside")),
++            ("sin", PathBuf::from("inner")),
++        ]
++        .iter()
++        .filter(|(n, t)| try_dir_symlink(&root_p.join(n), t))
++        .map(|(n, _)| *n)
++        .collect();
++        if made.is_empty() {
++            eprintln!(
++                "skipped the directory-symlink half of cap_std_refuses_a_link_as_a_path_component: this system refused to create a directory symlink (it needs a privilege or developer mode on Windows); the junction half ran"
++            );
++        }
++        for n in &made {
++            assert_refused_through(&root, n, &outside);
++        }
++        // the link entries are reported as links, read through the root's handle
++        let kinds: Vec<(String, Kind)> = list(root.dir())
++            .unwrap()
++            .into_iter()
++            .filter_map(|n| {
++                let k = entry(root.dir(), &n).unwrap()?;
++                Some((n.to_string_lossy().to_string(), k))
++            })
++            .collect();
++        for (n, k) in &kinds {
++            if n != "inner" {
++                assert!(matches!(k, Kind::Link { .. }), "{n}: {k:?}");
++            }
++        }
++        // a root that is itself a link is refused by the no-follow open
++        let lroot = base.join("lroot");
++        junction_or_symlink(&lroot, &outside);
++        assert!(matches!(Root::open(&lroot), Err(RootError::Link)));
++        // the walk reports every link and descends into none
++        let mut seen: Vec<String> = Vec::new();
++        let errs = walk_links(&root, false, &mut |l| {
++            seen.push(l.dir_rel.join(l.name).to_string_lossy().replace('\\', "/"));
++            Ok(())
++        });
++        assert!(errs.is_empty(), "{errs:?}");
++        seen.sort();
++        let mut want: Vec<String> = vec!["j".into(), "jin".into()];
++        want.extend(made.iter().map(|s| s.to_string()));
++        want.sort();
++        assert_eq!(seen, want);
++        // Windows: a held directory pins itself and every ancestor
++        #[cfg(windows)]
++        {
++            let inner = root.open_dir(Path::new("inner"), false).unwrap();
++            drop(root);
++            assert!(
++                std::fs::rename(root_p.join("inner"), root_p.join("inner2")).is_err(),
++                "a held directory cannot be renamed"
++            );
++            assert!(
++                std::fs::rename(&root_p, base.join("root2")).is_err(),
++                "an ancestor of a held directory cannot be renamed"
++            );
++            drop(inner);
++            std::fs::rename(root_p.join("inner"), root_p.join("inner2")).unwrap();
++        }
++        #[cfg(not(windows))]
++        drop(root);
++        // clean up the links themselves, never their targets
++        for n in ["j", "jin", "sabs", "srel", "sin"] {
++            let p = root_p.join(n);
++            if let Ok(m) = std::fs::symlink_metadata(&p) {
++                if crate::engines::worktree::is_link(&m) {
++                    let _ = std::fs::remove_dir(&p).or_else(|_| std::fs::remove_file(&p));
++                }
++            }
++        }
++        let _ = std::fs::remove_dir(&lroot).or_else(|_| std::fs::remove_file(&lroot));
++        assert_eq!(
++            std::fs::read_to_string(outside.join("sentinel.txt")).unwrap(),
++            "OUTSIDE\n"
++        );
++        let _ = std::fs::remove_dir_all(&base);
++    }
++
++    // (0.2.5 D4) The removal through handles takes a read-only file too (on Windows its attribute
++    // is cleared through a handle first), then the emptied root itself.
++    #[test]
++    fn a_tree_with_a_read_only_file_is_removed_through_its_handles() {
++        let (base, root_p, outside) = scratch("readonly");
++        let ro = root_p.join("inner").join("ro.txt");
++        std::fs::write(&ro, "x\n").unwrap();
++        let mut perm = std::fs::metadata(&ro).unwrap().permissions();
++        perm.set_readonly(true);
++        std::fs::set_permissions(&ro, perm).unwrap();
++        junction_or_symlink(&root_p.join("out"), &outside);
++        let root = Root::open(&root_p).unwrap();
++        remove_contents(&root, remove_link).unwrap();
++        assert!(names(&root_p).is_empty());
++        remove_root(root).unwrap();
++        assert!(std::fs::symlink_metadata(&root_p).is_err());
++        assert_eq!(
++            names(&outside),
++            vec!["sentinel.txt".to_string(), "x".to_string()]
++        );
++        let _ = std::fs::remove_dir_all(&base);
++    }
++
++    // (0.2.5 D4, F16-5) THE ROOT-REMOVAL RACE: the emptied root is swapped for a link to an outside
++    // directory after it was checked to be the same directory and released (`remove-root`): the
++    // final removal is relative to the parent's handle and never follows the link - on Windows it
++    // removes the link itself, elsewhere it refuses (a link is no directory to remove); the outside
++    // directory keeps everything. A root that is no longer the directory that was emptied is not
++    // removed at all.
++    #[test]
++    fn the_root_swapped_for_a_link_before_its_removal_is_never_followed() {
++        let (base, root_p, outside) = scratch("rootrace");
++        let root = Root::open(&root_p).unwrap();
++        remove_contents(&root, remove_link).unwrap();
++        let hook = c3_core::test_hooks::set_thread_hook(
++            RACE_HOOK,
++            &format!("remove-root|{}|{}", root_p.display(), outside.display()),
++        );
++        let r = remove_root(root);
++        drop(hook);
++        let aside = base.join("root.c3-race-orig");
++        if aside.exists() {
++            match &r {
++                Ok(()) => assert!(
++                    std::fs::symlink_metadata(&root_p).is_err(),
++                    "the link itself was removed"
++                ),
++                Err(why) => assert!(why.contains("could not be removed"), "{why}"),
++            }
++        } else {
++            assert_eq!(r, Ok(()));
++        }
++        assert_eq!(
++            names(&outside),
++            vec!["sentinel.txt".to_string(), "x".to_string()]
++        );
++        // a root replaced by ANOTHER real directory is not the one that was emptied
++        let other_p = base.join("other");
++        std::fs::create_dir_all(&other_p).unwrap();
++        let other = Root::open(&other_p).unwrap();
++        drop(other);
++        let other = Root::open(&other_p).unwrap();
++        std::fs::create_dir_all(base.join("swap")).unwrap();
++        let held_id = other.id();
++        // emulate: same path, other directory (rename the original away, put a new one in place)
++        let moved = base.join("other-moved");
++        #[cfg(windows)]
++        let renamed = {
++            // a held directory cannot be renamed on Windows: the identity check is shown on the
++            // directory itself instead
++            let _ = &moved;
++            false
++        };
++        #[cfg(not(windows))]
++        let renamed = std::fs::rename(&other_p, &moved).is_ok();
++        if renamed {
++            std::fs::create_dir_all(&other_p).unwrap();
++            let why = remove_root(other).unwrap_err();
++            assert!(why.contains("no longer the directory"), "{why}");
++            assert!(other_p.exists() && moved.exists());
++        } else {
++            assert_eq!(other.id(), held_id);
++            drop(other);
++        }
++        let _ = std::fs::remove_dir(&root_p).or_else(|_| std::fs::remove_file(&root_p));
++        let _ = std::fs::remove_dir_all(&base);
++    }
++
++    // (0.2.5 D4) publish: an exclusive temp, a rename relative to the handle; a refused check or an
++    // injected write failure leaves neither a temp nor a destination; a cleanup that fails would be
++    // reported (the message names the temp).
++    #[test]
++    fn publish_writes_by_rename_and_leaves_nothing_on_failure() {
++        let (base, root_p, _outside) = scratch("publish");
++        let root = Root::open(&root_p).unwrap();
++        let (dir, leaf) = root.open_parent(Path::new("a/b/new.txt"), true).unwrap();
++        let ok = |_: Stage| -> Result<(), String> { Ok(()) };
++        let p = Publish {
++            dir: &dir,
++            leaf: &leaf,
++            tmp: OsStr::new(".t1.tmp"),
++            bytes: b"hello\n",
++            permissions: None,
++            check: &ok,
++            race: "test",
++        };
++        publish(&p).unwrap();
++        assert_eq!(
++            std::fs::read_to_string(root_p.join("a/b/new.txt")).unwrap(),
++            "hello\n"
++        );
++        // a check that refuses before the rename: the temp is gone, the file keeps its bytes
++        let late = |s: Stage| -> Result<(), String> {
++            if s == Stage::BeforeRename {
++                Err("refused late".to_string())
++            } else {
++                Ok(())
++            }
++        };
++        let p2 = Publish {
++            bytes: b"other\n",
++            check: &late,
++            tmp: OsStr::new(".t2.tmp"),
++            ..p
++        };
++        let f = publish(&p2).unwrap_err();
++        assert!(matches!(f.error, PublishError::Check(_)) && f.cleanup.is_none());
++        // an injected write failure (half the bytes written): no temp, no change
++        let _hook = c3_core::test_hooks::set_thread_hook(WRITE_FAIL_HOOK, "1");
++        let p3 = Publish {
++            tmp: OsStr::new(".t3.tmp"),
++            check: &ok,
++            ..p2
++        };
++        let f = publish(&p3).unwrap_err();
++        assert!(matches!(f.error, PublishError::Write(_)), "{f:?}");
++        assert_eq!(names(&root_p.join("a/b")), vec!["new.txt".to_string()]);
++        assert_eq!(
++            std::fs::read_to_string(root_p.join("a/b/new.txt")).unwrap(),
++            "hello\n"
++        );
++        assert_eq!(f.with_cleanup("x".into()), "x");
++        drop(dir);
++        drop(root);
++        let _ = std::fs::remove_dir_all(&base);
++    }
++}
+diff --git a/crates/c3/src/engines/worktree.rs b/crates/c3/src/engines/worktree.rs
+index 316831e..f008a75 100644
+--- a/crates/c3/src/engines/worktree.rs
++++ b/crates/c3/src/engines/worktree.rs
+@@ -15,8 +15,11 @@
+ //! it must never run in the real checkout), every local-cwd engine under `c3 consult --rev <rev>`,
+ //! and a claude-engine reviewer on a `diff-review` / `acceptance` purpose (a frozen tree of HEAD).
+ 
++use std::ffi::OsStr;
+ use std::path::{Path, PathBuf};
+ 
++use crate::contain::{self, Kind, Root, Step, StepError};
++
+ /// The directory-name prefix of a reviewer's throwaway worktree (directly under the system temp
+ /// directory, followed by the run's 32-hex uuid). `setup::branches` leaves such a worktree out of its
+ /// "nobody owns this" count while a live run owns it, and reports it as stale once none does. The
+@@ -100,6 +103,21 @@ pub struct ThrowawayWorktree {
+     outside_links: Vec<String>,
+     /// The outcome of the one removal attempt (`None`: not tried yet).
+     removal: Option<Result<(), String>>,
++    /// (0.2.5 D4) The worktree's directory, opened ONCE right after the checkout without following
++    /// it and verified on that handle ([`Root::open`]): the post-checkout sweep, every staging write
++    /// and the removal work relative to it, never by the path name. `None` only for a leftover that
++    /// `c3 doctor --fix` removes ([`remove_throwaway_worktree`] opens it then).
++    root: Option<Root>,
++}
++
++/// How a failed creation's clean-up ended, in words.
++fn removal_words(r: Result<(), String>) -> String {
++    match r {
++        Ok(()) => "the worktree was removed".to_string(),
++        Err(e) => format!(
++            "the worktree was left in place ({e}); `c3 doctor` reports it for removal by hand"
++        ),
++    }
+ }
+ 
+ impl ThrowawayWorktree {
+@@ -123,18 +141,27 @@ impl ThrowawayWorktree {
+         let path = std::env::temp_dir().join(format!("{THROWAWAY_WORKTREE_PREFIX}{run_id}"));
+         let path_s = path.to_string_lossy().to_string();
+         git_capture(repo, &["worktree", "add", "--detach", &path_s, &sha])?;
++        // (0.2.5 D4) The worktree's directory is opened once, WITHOUT following it, and verified on
++        // that handle: everything C3 does in it from here on is relative to this handle.
++        let root = match Root::open(&path) {
++            Ok(r) => r,
++            Err(e) => {
++                let removal = removal_words(remove_worktree_dir(repo, &path, None, &REAL_REMOVAL));
++                return Err(format!(
++                    "its directory {} {}; {removal}",
++                    path.display(),
++                    e.words()
++                ));
++            }
++        };
+         // Name this process as its owner (in the worktree's git admin directory, not its files), so
+         // `c3 branches` / `c3 doctor` can tell a crashed run's leftover from a live run's worktree.
+         // (0.2.5 R2, F13-8) Not best effort: a worktree whose record cannot be written could not be
+         // told from a leftover, so it is not used - it is removed (link-safely) and the run fails as
+         // one whose worktree could not be made.
+         if let Err(why) = record_owner(&path) {
+-            let removal = match remove_worktree_dir(repo, &path, &REAL_REMOVAL) {
+-                Ok(()) => "the worktree was removed".to_string(),
+-                Err(e) => format!(
+-                    "the worktree was left in place ({e}); `c3 doctor` reports it for removal by hand"
+-                ),
+-            };
++            let removal =
++                removal_words(remove_worktree_dir(repo, &path, Some(root), &REAL_REMOVAL));
+             return Err(format!(
+                 "its owner record could not be written ({why}); {removal}"
+             ));
+@@ -144,15 +171,11 @@ impl ThrowawayWorktree {
+         // read or write the live checkout - or anything else - through it. A link that cannot be
+         // removed makes the worktree unusable: it is removed again and the run fails as one whose
+         // worktree could not be made.
+-        let outside_links = match unlink_outside_links(&path, remove_link) {
++        let outside_links = match unlink_outside_links(&root, contain::remove_link) {
+             Ok(v) => v,
+             Err(why) => {
+-                let removal = match remove_worktree_dir(repo, &path, &REAL_REMOVAL) {
+-                    Ok(()) => "the worktree was removed".to_string(),
+-                    Err(e) => format!(
+-                        "the worktree was left in place ({e}); `c3 doctor` reports it for removal by hand"
+-                    ),
+-                };
++                let removal =
++                    removal_words(remove_worktree_dir(repo, &path, Some(root), &REAL_REMOVAL));
+                 return Err(format!(
+                     "a link of the checked-out revision that leads outside the worktree could not be removed ({why}); {removal}"
+                 ));
+@@ -165,6 +188,7 @@ impl ThrowawayWorktree {
+             main_dirty,
+             outside_links,
+             removal: None,
++            root: Some(root),
+         })
+     }
+ 
+@@ -223,13 +247,21 @@ impl ThrowawayWorktree {
+     }
+ 
+     /// Copy the file `src` into the worktree at the repo-relative path `rel` (a [`stageable_rel`]
+-    /// path): its bytes are read first, then written with [`ThrowawayWorktree::stage_bytes`].
++    /// path): its bytes are read first - its directory opened as an anchor, the file itself never
++    /// followed ([`contain::read_path`]) - then written with [`ThrowawayWorktree::stage_bytes`].
+     pub fn stage_file(&self, src: &Path, rel: &str) -> Result<(), String> {
+-        let bytes = std::fs::read(src)
++        let bytes = contain::read_path(src)
+             .map_err(|e| format!("{} cannot be read to be copied in ({e})", src.display()))?;
+         self.stage_bytes(&bytes, rel)
+     }
+ 
++    /// The worktree's directory handle (opened at creation).
++    fn root(&self) -> Result<&Root, String> {
++        self.root
++            .as_ref()
++            .ok_or_else(|| format!("the worktree {} is not open", self.path.display()))
++    }
++
+     /// (F11-3) Write `bytes` into the worktree at the repo-relative path `rel` (a [`stageable_rel`]
+     /// path) WITHOUT ever writing outside the worktree: every directory on the way must be a real
+     /// directory inside the worktree - no component may be a symlink, a junction or any other
+@@ -237,149 +269,139 @@ impl ThrowawayWorktree {
+     /// or a regular file (never a link, a directory or anything else). The bytes go into a NEW file
+     /// beside the destination (created exclusively under a random name, so nothing can be planted
+     /// there), which then replaces the destination by a rename - the destination is never opened
+-    /// for writing, so a link or a hard link there cannot route the write elsewhere. The checks are
+-    /// repeated right before the rename. Any doubt is an `Err`: the caller refuses the run before
+-    /// the reviewer starts.
++    /// for writing, so a link or a hard link there cannot route the write elsewhere. The destination
++    /// check is repeated right before the rename. Any doubt is an `Err`: the caller refuses the run
++    /// before the reviewer starts.
++    ///
++    /// (0.2.5 D4, F32-1 / F24-1) Every step is relative to a directory HANDLE, never to the path
++    /// name: each directory on the way is opened (or created) relative to its parent's handle
++    /// without following it ([`Root::open_parent`]), the temporary file is created, the destination
++    /// checked and the rename made relative to the destination directory's handle, and on a failure
++    /// the temporary file is removed through it - a failed removal is reported in the `Err`
++    /// ([`contain::publish`]). A directory swapped for a link after it was opened cannot redirect
++    /// any of it: the write completes in the directory that was opened, inside the worktree.
+     pub fn stage_bytes(&self, bytes: &[u8], rel: &str) -> Result<(), String> {
+         if !stageable_rel(rel) {
+             return Err(format!("`{rel}` is not a path inside the repository"));
+         }
+-        let dest = self.path.join(rel);
+-        self.real_parent_inside(&dest)?;
+-        dest_replaceable(&dest, rel)?;
+-        let parent = dest
+-            .parent()
+-            .ok_or_else(|| format!("`{rel}` has no parent"))?;
+-        let tmp = parent.join(format!(".c3-stage-{}.tmp", uuid::Uuid::new_v4().simple()));
+-        let written = (|| -> std::io::Result<()> {
+-            use std::io::Write;
+-            let mut f = std::fs::OpenOptions::new()
+-                .write(true)
+-                .create_new(true)
+-                .open(&tmp)?;
+-            f.write_all(bytes)?;
+-            f.sync_all()
+-        })();
+-        if let Err(e) = written {
+-            let _ = std::fs::remove_file(&tmp);
+-            return Err(format!("`{rel}` could not be written ({e})"));
+-        }
+-        // the same checks once more, right before the destination is replaced
+-        let again = self
+-            .parent_still_inside(parent)
+-            .and_then(|_| dest_replaceable(&dest, rel));
+-        if let Err(why) = again {
+-            let _ = std::fs::remove_file(&tmp);
+-            return Err(why);
+-        }
+-        std::fs::rename(&tmp, &dest).map_err(|e| {
+-            let _ = std::fs::remove_file(&tmp);
+-            format!("`{rel}` could not be put in place ({e})")
++        let root = self.root()?;
++        let (dir, leaf) = root
++            .open_parent(Path::new(rel), true)
++            .map_err(|e| self.step_words(rel, e))?;
++        let check = |_: contain::Stage| dest_replaceable(&dir, &leaf, rel);
++        let tmp = format!(".c3-stage-{}.tmp", uuid::Uuid::new_v4().simple());
++        contain::publish(&contain::Publish {
++            dir: &dir,
++            leaf: &leaf,
++            tmp: OsStr::new(&tmp),
++            bytes,
++            permissions: None,
++            check: &check,
++            race: "stage",
++        })
++        .map_err(|f| {
++            let msg = match &f.error {
++                contain::PublishError::Check(why) => why.clone(),
++                contain::PublishError::Create(e) | contain::PublishError::Write(e) => {
++                    format!("`{rel}` could not be written ({e})")
++                }
++                contain::PublishError::Rename(e) => {
++                    format!("`{rel}` could not be put in place ({e})")
++                }
++            };
++            f.with_cleanup(msg)
+         })
+     }
+ 
+-    /// Whether `parent` (inside the worktree) is still a real directory - not a link - whose
+-    /// canonical path lies inside the worktree's root.
+-    fn parent_still_inside(&self, parent: &Path) -> Result<(), String> {
+-        let root =
+-            real_dir_canonical(&self.path).map_err(|why| format!("the worktree root {why}"))?;
+-        let canon =
+-            real_dir_canonical(parent).map_err(|why| format!("{} {why}", parent.display()))?;
+-        if !canon.starts_with(&root) {
+-            return Err(format!(
+-                "{} resolves outside the worktree",
+-                parent.display()
+-            ));
++    /// A step of the way to a staging destination that did not give a real directory, in the words
++    /// staging has always used.
++    fn step_words(&self, rel: &str, e: StepError) -> String {
++        let at = self.path.join(&e.at);
++        match e.why {
++            Step::Link { .. } => format!(
++                "{} is a link in the worktree; nothing is copied through it",
++                at.display()
++            ),
++            Step::NotDir | Step::NotFile => format!("{} is not a directory", at.display()),
++            Step::Create(err) => format!("{} could not be created ({err})", at.display()),
++            Step::BadPath => format!("`{rel}` is not a path inside the repository"),
++            Step::Missing => format!("{} is not there", at.display()),
++            Step::Io(err) => format!("{} cannot be opened ({err})", at.display()),
+         }
+-        Ok(())
+     }
+ 
+-    /// Copy the directory `src` (recursively; a file `skip` names is left out) into the worktree at
+-    /// the repo-relative path `rel`. (R5, F18-5) Nothing is ever read through a link: an entry that
+-    /// is a link (a symlink, a junction, any reparse point - read without following it) is neither
+-    /// followed nor copied, only counted. Returns how many files were copied and how many links
+-    /// were skipped.
++    /// Copy the directory `src` (recursively; a file `skip` names - its name is passed - is left
++    /// out) into the worktree at the repo-relative path `rel`. (R5, F18-5) Nothing is ever read
++    /// through a link: an entry that is a link (a symlink, a junction, any reparse point - read
++    /// without following it) is neither followed nor copied, only counted. Returns how many files
++    /// were copied and how many links were skipped.
++    ///
++    /// (0.2.5 D4, F29-2 / F18-5) `src` is an open directory HANDLE (the caller reached it from the
++    /// repository's handle without following any component); each subdirectory is opened relative
++    /// to its parent's handle without following it and each file read through a handle opened
++    /// without following it and checked to be a regular file ([`contain::read_file_in`]) - an entry
++    /// replaced by a link after it was listed is counted as a link, never read. `src_shown` names
++    /// the source in messages only.
+     pub fn stage_dir(
+         &self,
+-        src: &Path,
++        src: &cap_std::fs::Dir,
++        src_shown: &Path,
+         rel: &str,
+         skip: &dyn Fn(&Path) -> bool,
+     ) -> Result<StagedDir, String> {
+         let mut staged = StagedDir::default();
+-        let mut stack: Vec<(PathBuf, String)> = vec![(src.to_path_buf(), rel.to_string())];
+-        while let Some((dir, dir_rel)) = stack.pop() {
+-            let rd = std::fs::read_dir(&dir)
+-                .map_err(|e| format!("{} cannot be listed ({e})", dir.display()))?;
+-            for entry in rd.flatten() {
+-                let p = entry.path();
+-                let meta = match std::fs::symlink_metadata(&p) {
+-                    Ok(m) => m,
+-                    Err(_) => continue,
+-                };
+-                if is_link(&meta) {
+-                    staged.links_skipped += 1;
+-                    continue;
+-                }
+-                let name = entry.file_name().to_string_lossy().to_string();
+-                let child_rel = format!("{dir_rel}/{name}");
+-                if meta.is_dir() {
+-                    stack.push((p, child_rel));
+-                } else if meta.is_file() && !skip(&p) {
+-                    self.stage_file(&p, &child_rel)?;
+-                    staged.files += 1;
++        let first = src
++            .try_clone()
++            .map_err(|e| format!("{} cannot be opened ({e})", src_shown.display()))?;
++        let mut stack: Vec<(cap_std::fs::Dir, PathBuf, String)> =
++            vec![(first, src_shown.to_path_buf(), rel.to_string())];
++        while let Some((dir, shown, dir_rel)) = stack.pop() {
++            let names = contain::list(&dir)
++                .map_err(|e| format!("{} cannot be listed ({e})", shown.display()))?;
++            for name in names {
++                let p = shown.join(&name);
++                let child_rel = format!("{dir_rel}/{}", name.to_string_lossy());
++                match contain::entry(&dir, &name) {
++                    Ok(Some(Kind::Link { .. })) => staged.links_skipped += 1,
++                    Ok(Some(Kind::Dir)) => match contain::open_child(&dir, &name, false) {
++                        Ok(sub) => stack.push((sub, p, child_rel)),
++                        Err(Step::Link { .. }) => staged.links_skipped += 1,
++                        Err(Step::Missing) => {}
++                        Err(why) => return Err(format!("{} {why}", p.display())),
++                    },
++                    Ok(Some(Kind::File)) if !skip(Path::new(&name)) => {
++                        contain::race_point("stage-read");
++                        match contain::read_file_in(&dir, &name) {
++                            Ok(bytes) => {
++                                self.stage_bytes(&bytes, &child_rel)?;
++                                staged.files += 1;
++                            }
++                            Err(Step::Link { .. }) => staged.links_skipped += 1,
++                            Err(Step::Missing) => {}
++                            Err(why) => {
++                                return Err(format!(
++                                    "{} cannot be read to be copied in ({why})",
++                                    p.display()
++                                ))
++                            }
++                        }
++                    }
++                    // gone meanwhile, unreadable, skipped or not a file: not copied (as before)
++                    _ => {}
+                 }
+             }
+         }
+         Ok(staged)
+     }
+ 
+-    /// Create the parent directory of `dest` (inside the worktree) one component at a time: an
+-    /// existing component must be a real directory, never a link (a link is never followed, so no
+-    /// directory is ever created outside the worktree), and the result must resolve inside the
+-    /// worktree's root.
+-    fn real_parent_inside(&self, dest: &Path) -> Result<(), String> {
+-        let parent = dest
+-            .parent()
+-            .ok_or_else(|| format!("{} has no parent", dest.display()))?;
+-        let rel = parent
+-            .strip_prefix(&self.path)
+-            .map_err(|_| format!("{} is not inside the worktree", parent.display()))?;
+-        let mut cur = self.path.clone();
+-        for c in rel.components() {
+-            cur.push(c);
+-            match std::fs::symlink_metadata(&cur) {
+-                Ok(m) if is_link(&m) => {
+-                    return Err(format!(
+-                        "{} is a link in the worktree; nothing is copied through it",
+-                        cur.display()
+-                    ))
+-                }
+-                Ok(m) if m.is_dir() => {}
+-                Ok(_) => return Err(format!("{} is not a directory", cur.display())),
+-                Err(_) => std::fs::create_dir(&cur)
+-                    .map_err(|e| format!("{} could not be created ({e})", cur.display()))?,
+-            }
+-        }
+-        let root = std::fs::canonicalize(&self.path)
+-            .map_err(|e| format!("the worktree root cannot be resolved ({e})"))?;
+-        let canon = std::fs::canonicalize(parent)
+-            .map_err(|e| format!("{} cannot be resolved ({e})", parent.display()))?;
+-        if !canon.starts_with(&root) {
+-            return Err(format!(
+-                "{} resolves outside the worktree",
+-                parent.display()
+-            ));
+-        }
+-        Ok(())
+-    }
+-
+     /// Remove the worktree once ([`remove_worktree_dir`] with the real git and unlink); a refusal
+     /// is logged in one line and returned. A second call returns the first call's outcome.
+     pub fn remove(&mut self) -> Result<(), String> {
+         if let Some(r) = &self.removal {
+             return r.clone();
+         }
+-        let r = remove_worktree_dir(&self.repo, &self.path, &REAL_REMOVAL);
++        let root = self.root.take();
++        let r = remove_worktree_dir(&self.repo, &self.path, root, &REAL_REMOVAL);
+         if let Err(why) = &r {
+             eprintln!(
+                 "codex-consult: the reviewer's throwaway worktree {} was left in place: {why} (`c3 doctor --fix` removes it once that is safe)",
+@@ -405,55 +427,57 @@ impl Drop for ThrowawayWorktree {
+     }
+ }
+ 
+-/// Removes ONE link (never its target) - [`remove_link`] in production.
+-type UnlinkFn = fn(&Path, &std::fs::Metadata) -> std::io::Result<()>;
+-
+ /// The git runner and the link remover of a throwaway worktree removal: the real ones in
+ /// production ([`REAL_REMOVAL`]); a test passes a git recorder or an injected unlink failure.
+ struct RemovalOps {
+     git: fn(&Path, &[&str]) -> Result<String, String>,
+-    unlink: UnlinkFn,
++    unlink: contain::UnlinkFn,
+ }
+ 
+ const REAL_REMOVAL: RemovalOps = RemovalOps {
+     git: git_capture,
+-    unlink: remove_link,
++    unlink: contain::remove_link,
+ };
+ 
+ /// Remove a throwaway worktree of `repo` WITHOUT ever reaching outside it (F02-21, F03-2, F04-5).
+ /// First every link inside is unlinked ([`unlink_links_inside_with`]: every reparse point counts
+ /// as a link and is never descended into). If that pass hit ANY error - a link that could not be
+-/// removed, an unreadable entry, a directory that is no longer a real directory inside the root -
+-/// or the root itself is (now) a link, NOTHING destructive runs: no `git worktree remove --force`,
+-/// no prune, no `remove_dir_all`; `Err` says why and the directory stays for a later `c3 doctor
+-/// --fix`. After a clean pass the root is checked once more and the worktree removed with git; the
+-/// directory fallback (when git left something) runs only after the same pass comes back clean
+-/// again. A path that does not exist at all is only pruned.
+-fn remove_worktree_dir(repo: &Path, path: &Path, ops: &RemovalOps) -> Result<(), String> {
+-    if let Err(e) = std::fs::symlink_metadata(path) {
+-        if e.kind() == std::io::ErrorKind::NotFound {
+-            let _ = (ops.git)(repo, &["worktree", "prune"]);
+-            return Ok(());
++/// removed, an unreadable entry - or the root itself is (now) a link, NOTHING destructive runs: no
++/// file is removed, git is not called; `Err` says why and the directory stays for a later `c3
++/// doctor --fix`. A path that does not exist at all is only pruned.
++///
++/// (0.2.5 D4, F16-5) The removal is bound to ONE directory handle: `root` is the handle the
++/// worktree was opened by at creation (a leftover is opened here, without following it - a root
++/// that is a link is refused). The pass, then the removal of everything inside
++/// ([`contain::remove_contents`]: each file and link removed relative to its directory's handle,
++/// each subdirectory opened without following it) and of the emptied directory itself
++/// ([`contain::remove_root`]: the entry must still be the same directory) all go through it; then
++/// `git worktree prune` drops the registration. No `git worktree remove --force` and no
++/// `remove_dir_all` on a path name any more.
++fn remove_worktree_dir(
++    repo: &Path,
++    path: &Path,
++    root: Option<Root>,
++    ops: &RemovalOps,
++) -> Result<(), String> {
++    let root = match root {
++        Some(r) => r,
++        None => {
++            if let Err(e) = std::fs::symlink_metadata(path) {
++                if e.kind() == std::io::ErrorKind::NotFound {
++                    let _ = (ops.git)(repo, &["worktree", "prune"]);
++                    return Ok(());
++                }
++            }
++            Root::open(path).map_err(|e| format!("the worktree root {}", e.words()))?
+         }
+-    }
+-    let pass = unlink_links_inside_with(path, ops.unlink);
++    };
++    let pass = unlink_links_inside_with(&root, ops.unlink);
+     if !pass.errors.is_empty() {
+         return Err(pass.summary());
+     }
+-    real_dir_canonical(path).map_err(|why| format!("the worktree root {why}"))?;
+-    let path_s = path.to_string_lossy().to_string();
+-    let _ = (ops.git)(repo, &["worktree", "remove", "--force", &path_s]);
+-    let _ = (ops.git)(repo, &["worktree", "prune"]);
+-    if std::fs::symlink_metadata(path).is_err() {
+-        return Ok(());
+-    }
+-    // `worktree remove` left something (or refused): the same checks again, then the directory.
+-    let again = unlink_links_inside_with(path, ops.unlink);
+-    if !again.errors.is_empty() {
+-        return Err(again.summary());
+-    }
+-    std::fs::remove_dir_all(path)
+-        .map_err(|e| format!("the directory could not be removed ({e})"))?;
++    contain::remove_contents(&root, ops.unlink)?;
++    contain::remove_root(root)?;
+     let _ = (ops.git)(repo, &["worktree", "prune"]);
+     Ok(())
+ }
+@@ -461,6 +485,8 @@ fn remove_worktree_dir(repo: &Path, path: &Path, ops: &RemovalOps) -> Result<(),
+ /// The result of one unlink pass: how many links were removed and every error met.
+ #[derive(Debug, Default)]
+ struct UnlinkPass {
++    // (read by the tests; a removal acts on `errors` only)
++    #[cfg_attr(not(test), allow(dead_code))]
+     removed: usize,
+     errors: Vec<String>,
+ }
+@@ -478,17 +504,16 @@ impl UnlinkPass {
+ 
+ /// (F11-3) A staging destination may be replaced only when it is absent or a regular file that is
+ /// not a link (read without following it); a link, a directory, anything else, or an entry that
+-/// cannot be read is refused.
+-fn dest_replaceable(dest: &Path, rel: &str) -> Result<(), String> {
+-    match std::fs::symlink_metadata(dest) {
+-        Ok(m) if is_link(&m) => Err(format!(
++/// cannot be read is refused. (0.2.5 D4) Read through the destination directory's handle.
++fn dest_replaceable(dir: &cap_std::fs::Dir, leaf: &OsStr, rel: &str) -> Result<(), String> {
++    match contain::entry(dir, leaf) {
++        Ok(Some(Kind::Link { .. })) => Err(format!(
+             "`{rel}` is a link in the worktree; nothing is copied through it"
+         )),
+-        Ok(m) if m.is_file() => Ok(()),
+-        Ok(_) => Err(format!(
++        Ok(Some(Kind::File)) | Ok(None) => Ok(()),
++        Ok(Some(_)) => Err(format!(
+             "`{rel}` is not a regular file in the worktree; nothing is copied over it"
+         )),
+-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+         Err(e) => Err(format!("`{rel}` cannot be checked in the worktree ({e})")),
+     }
+ }
+@@ -509,165 +534,72 @@ pub(crate) fn is_link(meta: &std::fs::Metadata) -> bool {
+     }
+ }
+ 
+-/// The canonical path of `p` when it is a real directory - not a link (read without following
+-/// it) and a directory; else why not.
+-fn real_dir_canonical(p: &Path) -> Result<PathBuf, String> {
+-    let meta = std::fs::symlink_metadata(p).map_err(|e| format!("cannot be read ({e})"))?;
+-    if is_link(&meta) {
+-        return Err("is a link".to_string());
+-    }
+-    if !meta.is_dir() {
+-        return Err("is not a directory".to_string());
+-    }
+-    std::fs::canonicalize(p).map_err(|e| format!("cannot be resolved ({e})"))
+-}
+-
+-/// Remove every link INSIDE `root` without following it: `root` must be a real directory (not a
+-/// link); the walk reads each entry with `symlink_metadata`, removes a link ([`is_link`]: every
+-/// reparse point on Windows) with `unlink` and never descends into one. Before a directory is read,
+-/// and again before its entries are acted on, it is re-checked to still be a real directory whose
+-/// canonical path lies inside the root's - otherwise the walk ABORTS. Every other error (an
+-/// unreadable directory or entry, a link that could not be removed or is still there) is collected
+-/// and the walk goes on. `root` itself is not touched.
+-fn unlink_links_inside_with(root: &Path, unlink: UnlinkFn) -> UnlinkPass {
+-    let mut pass = UnlinkPass::default();
+-    let canon_root = match real_dir_canonical(root) {
+-        Ok(c) => c,
+-        Err(why) => {
+-            pass.errors.push(format!("the worktree root {why}"));
+-            return pass;
+-        }
+-    };
+-    let inside = |dir: &Path| -> Result<(), String> {
+-        match real_dir_canonical(dir) {
+-            Ok(c) if c.starts_with(&canon_root) => Ok(()),
+-            Ok(_) => Err(format!("{} resolves outside the worktree", dir.display())),
+-            Err(why) => Err(format!("{} {why}", dir.display())),
+-        }
+-    };
+-    let mut stack = vec![root.to_path_buf()];
+-    while let Some(dir) = stack.pop() {
+-        if let Err(why) = inside(&dir) {
+-            pass.errors.push(why);
+-            return pass;
+-        }
+-        let rd = match std::fs::read_dir(&dir) {
+-            Ok(rd) => rd,
+-            Err(e) => {
+-                pass.errors
+-                    .push(format!("{} cannot be listed ({e})", dir.display()));
+-                continue;
+-            }
+-        };
+-        let mut entries: Vec<PathBuf> = Vec::new();
+-        for entry in rd {
+-            match entry {
+-                Ok(en) => entries.push(en.path()),
+-                Err(e) => pass.errors.push(format!(
+-                    "an entry of {} cannot be read ({e})",
+-                    dir.display()
+-                )),
++/// Remove every link INSIDE `root` without following it, through the handles
++/// ([`contain::walk_links`]): each directory is listed through its own handle and each
++/// subdirectory opened relative to its parent's handle without following it, so the walk never
++/// descends into a link - one that replaces a directory after it was listed is met as a link and
++/// unlinked - and a link ([`contain::Kind::Link`]: every reparse point on Windows) is removed with
++/// `unlink` relative to its directory's handle. Every error (an unreadable directory or entry, a
++/// link that could not be removed or is still there) is collected and the walk goes on. `root`
++/// itself is not touched.
++fn unlink_links_inside_with(root: &Root, unlink: contain::UnlinkFn) -> UnlinkPass {
++    let mut removed = 0usize;
++    let errors = contain::walk_links(root, false, &mut |l| {
++        let at = root.path().join(l.dir_rel).join(l.name);
++        match unlink(l.dir, l.name, l.dir_attr) {
++            Ok(()) if contain::entry(l.dir, l.name).ok().flatten().is_none() => {
++                removed += 1;
++                Ok(())
+             }
++            Ok(()) => Err(format!("the link {} is still there", at.display())),
++            Err(e) => Err(format!(
++                "the link {} could not be removed ({e})",
++                at.display()
++            )),
+         }
+-        if let Err(why) = inside(&dir) {
+-            pass.errors.push(why);
+-            return pass;
+-        }
+-        for path in entries {
+-            let meta = match std::fs::symlink_metadata(&path) {
+-                Ok(m) => m,
+-                Err(e) => {
+-                    pass.errors
+-                        .push(format!("{} cannot be read ({e})", path.display()));
+-                    continue;
+-                }
+-            };
+-            if is_link(&meta) {
+-                match unlink(&path, &meta) {
+-                    Ok(()) if std::fs::symlink_metadata(&path).is_err() => pass.removed += 1,
+-                    Ok(()) => pass
+-                        .errors
+-                        .push(format!("the link {} is still there", path.display())),
+-                    Err(e) => pass.errors.push(format!(
+-                        "the link {} could not be removed ({e})",
+-                        path.display()
+-                    )),
+-                }
+-            } else if meta.is_dir() {
+-                stack.push(path);
+-            }
+-        }
+-    }
+-    pass
++    });
++    UnlinkPass { removed, errors }
+ }
+ 
+ /// (R5, F18-6) Remove every link INSIDE the fresh worktree `root` whose target does not resolve to
+ /// a path inside the worktree - a target outside it, or one that cannot be resolved (a dangling
+-/// link: a write through it would create its target wherever it points). Every entry is read with
+-/// `symlink_metadata`; a link ([`is_link`]: every reparse point on Windows) is never followed and
+-/// never descended into - one whose canonical target lies inside the worktree is left as the
+-/// revision has it. Returns the removed links' worktree-relative paths (ordinal-sorted); `Err` on
+-/// the first entry that cannot be read or link that cannot be removed (the caller does not use
+-/// such a worktree).
+-fn unlink_outside_links(root: &Path, unlink: UnlinkFn) -> Result<Vec<String>, String> {
+-    let canon_root = real_dir_canonical(root).map_err(|why| format!("the worktree root {why}"))?;
++/// link: a write through it would create its target wherever it points). A link ([`Kind::Link`]:
++/// every reparse point on Windows) is never descended into - one whose canonical target lies
++/// inside the worktree is left as the revision has it. Returns the removed links'
++/// worktree-relative paths (ordinal-sorted); `Err` on the first entry that cannot be read or link
++/// that cannot be removed (the caller does not use such a worktree).
++///
++/// (0.2.5 D4, F27-2) The walk goes through the handles ([`contain::walk_links`]): a directory
++/// replaced by a junction or symlink after it was listed is met as a link, never descended, and
++/// the unlink is relative to its directory's handle. Where a link leads is asked of the system
++/// (it resolves the link) only to CLASSIFY it - nothing is read or written through it.
++fn unlink_outside_links(root: &Root, unlink: contain::UnlinkFn) -> Result<Vec<String>, String> {
++    let canon_root = std::fs::canonicalize(root.path())
++        .map_err(|e| format!("the worktree root cannot be resolved ({e})"))?;
+     let mut removed: Vec<String> = Vec::new();
+-    let mut stack = vec![root.to_path_buf()];
+-    while let Some(dir) = stack.pop() {
+-        let rd = std::fs::read_dir(&dir)
+-            .map_err(|e| format!("{} cannot be listed ({e})", dir.display()))?;
+-        for entry in rd {
+-            let path = entry
+-                .map_err(|e| format!("an entry of {} cannot be read ({e})", dir.display()))?
+-                .path();
+-            let meta = std::fs::symlink_metadata(&path)
+-                .map_err(|e| format!("{} cannot be read ({e})", path.display()))?;
+-            if is_link(&meta) {
+-                let inside = std::fs::canonicalize(&path)
+-                    .map(|t| t.starts_with(&canon_root))
+-                    .unwrap_or(false);
+-                if inside {
+-                    continue;
+-                }
+-                unlink(&path, &meta).map_err(|e| {
+-                    format!("the link {} could not be removed ({e})", path.display())
+-                })?;
+-                if std::fs::symlink_metadata(&path).is_ok() {
+-                    return Err(format!("the link {} is still there", path.display()));
+-                }
+-                removed.push(
+-                    path.strip_prefix(root)
+-                        .map(|r| r.to_string_lossy().replace('\\', "/"))
+-                        .unwrap_or_else(|_| path.to_string_lossy().to_string()),
+-                );
+-            } else if meta.is_dir() {
+-                stack.push(path);
+-            }
++    let errors = contain::walk_links(root, true, &mut |l| {
++        let path = root.path().join(l.dir_rel).join(l.name);
++        let inside = std::fs::canonicalize(&path)
++            .map(|t| t.starts_with(&canon_root))
++            .unwrap_or(false);
++        if inside {
++            return Ok(());
++        }
++        unlink(l.dir, l.name, l.dir_attr)
++            .map_err(|e| format!("the link {} could not be removed ({e})", path.display()))?;
++        if contain::entry(l.dir, l.name).ok().flatten().is_some() {
++            return Err(format!("the link {} is still there", path.display()));
+         }
++        removed.push(l.dir_rel.join(l.name).to_string_lossy().replace('\\', "/"));
++        Ok(())
++    });
++    if let Some(first) = errors.into_iter().next() {
++        return Err(first);
+     }
+     removed.sort();
+     Ok(removed)
+ }
+ 
+-/// Remove one link (never its target): on Windows a reparse point carrying the directory attribute
+-/// (a junction, a directory symlink) with `remove_dir`, any other with `remove_file` (each falling
+-/// back to the other); elsewhere `remove_file`. Neither call follows the link.
+-fn remove_link(path: &Path, meta: &std::fs::Metadata) -> std::io::Result<()> {
+-    #[cfg(windows)]
+-    {
+-        use std::os::windows::fs::MetadataExt;
+-        if meta.file_attributes() & 0x10 != 0 {
+-            return std::fs::remove_dir(path).or_else(|_| std::fs::remove_file(path));
+-        }
+-        std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path))
+-    }
+-    #[cfg(not(windows))]
+-    {
+-        let _ = meta;
+-        std::fs::remove_file(path)
+-    }
+-}
+-
+ /// (`c3 doctor --fix`) Remove a throwaway worktree a crashed run left behind, with exactly the
+ /// removal a live run's guard runs on drop ([`remove_worktree_dir`]: links inside are unlinked
+ /// first, never followed, and nothing is deleted when that pass was not clean). The caller has
+@@ -681,6 +613,7 @@ pub(crate) fn remove_throwaway_worktree(repo: &Path, path: &Path) -> bool {
+         main_dirty: false,
+         outside_links: Vec::new(),
+         removal: None,
++        root: None,
+     };
+     wt.remove().is_ok()
+ }
+@@ -833,52 +766,148 @@ pub fn committed_blob(repo: &Path, rev: &str, rel: &str) -> Option<Vec<u8>> {
+     out.status.success().then_some(out.stdout)
+ }
+ 
+-/// (R5, F18-5) Why the live file `p` cannot be read for staging without reading through a link: it
+-/// is itself a link (a symlink, a junction, any reparse point - read without following it), or its
+-/// canonical path leaves the repository `repo` (a linked directory on its way). `None` for a file
+-/// that is not there at all (the caller's fallbacks decide) or a regular file inside the repository.
+-pub fn link_source_problem(repo: &Path, p: &Path) -> Option<String> {
+-    let meta = std::fs::symlink_metadata(p).ok()?;
+-    if is_link(&meta) {
+-        return Some(format!(
++/// (0.2.5 D4) The repository-relative place of the live file `p`: its place by name under `repo`
++/// (`.` and `..` resolved by name), else its canonical place; `None` when it is not below the
++/// repository (or is the repository itself).
++fn source_rel(repo: &Path, p: &Path) -> Option<PathBuf> {
++    if let Some(r) = c3_core::paths::repo_relative(repo, p) {
++        let mut parts: Vec<&str> = Vec::new();
++        for c in r.split(['/', '\\']) {
++            match c {
++                "" | "." => {}
++                ".." => {
++                    parts.pop()?;
++                }
++                other => parts.push(other),
++            }
++        }
++        return (!parts.is_empty()).then(|| parts.iter().collect());
++    }
++    let (c, r) = (
++        std::fs::canonicalize(p).ok()?,
++        std::fs::canonicalize(repo).ok()?,
++    );
++    let rel = c.strip_prefix(&r).ok()?;
++    (!rel.as_os_str().is_empty()).then(|| rel.to_path_buf())
++}
++
++/// The refusal of a staging source read through a link: `leaf` - the file itself is the link -, or
++/// a link on its way (named by whether the file then resolves outside the repository - that check
++/// only words the message; nothing is read through the link either way).
++fn linked_source_words(repo: &Path, p: &Path, leaf: bool) -> String {
++    if leaf {
++        return format!(
+             "`{}` is a link (a symlink or a junction), and nothing is ever read through a link into the worktree",
+             p.display()
+-        ));
++        );
+     }
+     let inside = std::fs::canonicalize(p)
+         .ok()
+         .zip(std::fs::canonicalize(repo).ok())
+         .is_some_and(|(c, r)| c.starts_with(r));
+-    if !inside {
+-        return Some(format!(
++    if inside {
++        format!(
++            "`{}` is reached through a link (a symlink or a junction inside the repository), and nothing is ever read through a link into the worktree",
++            p.display()
++        )
++    } else {
++        format!(
+             "`{}` resolves outside the repository (a link on its way), and nothing outside the repository is ever copied into the worktree",
+             p.display()
+-        ));
++        )
++    }
++}
++
++/// (R5, F18-5) Why the live file `p` cannot be read for staging without reading through a link: it
++/// is itself a link (a symlink, a junction, any reparse point - read without following it), or a
++/// directory on its way is one (one leading out of the repository `repo`, or - 0.2.5 D4 - one that
++/// stays inside it: C3 never reads through a link). `None` for a file that is not there at all (the
++/// caller's fallbacks decide) or a regular file inside the repository.
++///
++/// (0.2.5 D4) The same walk the staging read does ([`contain::Root::kind`]): from the repository's
++/// handle, one component at a time, none followed.
++pub fn link_source_problem(repo: &Path, p: &Path) -> Option<String> {
++    let Some(rel) = source_rel(repo, p) else {
++        let meta = std::fs::symlink_metadata(p).ok()?;
++        return Some(linked_source_words(repo, p, is_link(&meta)));
++    };
++    let root = Root::open_anchor(repo).ok()?;
++    match root.kind(&rel) {
++        Ok(Some(Kind::Link { .. })) => Some(linked_source_words(repo, p, true)),
++        Err(StepError {
++            why: Step::Link { .. },
++            at,
++        }) => Some(linked_source_words(repo, p, at == rel)),
++        _ => None,
++    }
++}
++
++/// What reading the live brief gave.
++enum LiveSource {
++    Bytes(Vec<u8>),
++    /// It would be read through a link: refused (the words say why).
++    Linked(String),
++    /// It cannot be read (the committed copies may stand in).
++    Unreadable(String),
++}
++
++/// (0.2.5 D4, F29-2 / F18-5) Read the live file `p` of the repository `repo` through handles: the
++/// repository opened as an anchor, each directory on the way opened relative to its parent's handle
++/// without following it, the file opened without following it and checked to be a regular file
++/// on its handle ([`contain::Root::read`]) - the check IS the read, so nothing swapped in between
++/// can be read through.
++fn read_live_source(repo: &Path, p: &Path) -> LiveSource {
++    let Some(rel) = source_rel(repo, p) else {
++        return match std::fs::symlink_metadata(p) {
++            Err(e) => LiveSource::Unreadable(e.to_string()),
++            Ok(m) => LiveSource::Linked(linked_source_words(repo, p, is_link(&m))),
++        };
++    };
++    let root = match Root::open_anchor(repo) {
++        Ok(r) => r,
++        Err(e) => {
++            return LiveSource::Unreadable(format!(
++                "the repository {} {}",
++                repo.display(),
++                e.words()
++            ))
++        }
++    };
++    match root.read(&rel) {
++        Ok(b) => LiveSource::Bytes(b),
++        Err(StepError {
++            why: Step::Link { .. },
++            at,
++        }) => LiveSource::Linked(linked_source_words(repo, p, at == rel)),
++        Err(StepError {
++            why: Step::Io(e), ..
++        }) => LiveSource::Unreadable(e.to_string()),
++        Err(StepError {
++            why: Step::Missing, ..
++        }) => LiveSource::Unreadable("the file is not there".to_string()),
++        Err(e) => LiveSource::Unreadable(format!("{} {}", e.at.display(), e.why)),
+     }
+-    None
+ }
+ 
+ /// (F11-4) The bytes of the brief as the reviewer's worktree gets them: the live file when it can
+ /// be read, else the regular file committed at the live checkout's `HEAD` (materialised from HEAD),
+ /// else the one committed at `rev` (the worktree's own revision). `Err` names why none is there.
+-/// (R5, F18-5) A live brief that is a link, or reached through one from outside the repository, is
+-/// an `Err` at once - never read, and not replaced by a committed copy either.
++/// (R5, F18-5) A live brief that is a link, or reached through one, is an `Err` at once - never
++/// read, and not replaced by a committed copy either. (0.2.5 D4) The live file is read through
++/// handles ([`read_live_source`]).
+ pub fn brief_bytes(
+     repo: &Path,
+     brief_ref: &str,
+     brief_path: Option<&Path>,
+     rev: &str,
+ ) -> Result<Vec<u8>, String> {
+-    if let Some(why) = brief_path.and_then(|p| link_source_problem(repo, p)) {
+-        return Err(why);
+-    }
+-    let live = match brief_path {
+-        Some(p) => std::fs::read(p).map_err(|e| e.to_string()),
+-        None => Err("no brief file was resolved".to_string()),
+-    };
+-    let live_err = match live {
+-        Ok(b) => return Ok(b),
+-        Err(e) => e,
++    let live_err = match brief_path {
++        Some(p) => match read_live_source(repo, p) {
++            LiveSource::Bytes(b) => return Ok(b),
++            LiveSource::Linked(why) => return Err(why),
++            LiveSource::Unreadable(e) => e,
++        },
++        None => "no brief file was resolved".to_string(),
+     };
+     if let Some(b) = committed_blob(repo, "HEAD", brief_ref) {
+         return Ok(b);
+@@ -1221,7 +1250,10 @@ mod tests {
+         let (base, wt, outside) = link_scratch("dirlink");
+         let link = wt.join("sub").join("node_modules");
+         make_dir_link(&link, &outside);
+-        let pass = unlink_links_inside_with(&wt, remove_link);
++        let pass = {
++            let root = Root::open(&wt).unwrap();
++            unlink_links_inside_with(&root, contain::remove_link)
++        };
+         assert_eq!(pass.removed, 1);
+         assert!(pass.errors.is_empty(), "{:?}", pass.errors);
+         assert_link_gone_and_sentinel_kept(&base, &wt, &outside, &link);
+@@ -1242,8 +1274,17 @@ mod tests {
+         GIT_CALLS.with(|c| c.borrow().clone())
+     }
+ 
++    /// Remove ONE link by its path (test clean-up only; never its target).
++    fn remove_link_path(p: &Path) {
++        let _ = std::fs::remove_dir(p).or_else(|_| std::fs::remove_file(p));
++    }
++
+     /// An injected unlink failure (a link held open, a denied delete).
+-    fn failing_unlink(_path: &Path, _meta: &std::fs::Metadata) -> std::io::Result<()> {
++    fn failing_unlink(
++        _dir: &cap_std::fs::Dir,
++        _name: &OsStr,
++        _dir_attr: bool,
++    ) -> std::io::Result<()> {
+         Err(std::io::Error::new(
+             std::io::ErrorKind::PermissionDenied,
+             "injected unlink failure",
+@@ -1262,7 +1303,7 @@ mod tests {
+             git: recording_git,
+             unlink: failing_unlink,
+         };
+-        let r = remove_worktree_dir(&base, &wt, &ops);
++        let r = remove_worktree_dir(&base, &wt, None, &ops);
+         let why = r.expect_err("a failed unlink must refuse the removal");
+         assert!(why.contains("could not be removed"), "{why}");
+         assert!(
+@@ -1279,22 +1320,17 @@ mod tests {
+             "the link was left"
+         );
+         assert!(outside.join("sentinel.txt").exists());
+-        // the same tree with the real unlink is removed cleanly (git still recorded)
++        // the same tree with the real unlink is removed cleanly: (0.2.5 D4) through the handles,
++        // then only `git worktree prune` for the registration - never a forced `worktree remove`
+         let ok = RemovalOps {
+             git: recording_git,
+-            unlink: remove_link,
++            unlink: contain::remove_link,
+         };
+-        assert_eq!(remove_worktree_dir(&base, &wt, &ok), Ok(()));
+-        assert!(
+-            git_calls()
+-                .iter()
+-                .any(|c| c.starts_with("worktree remove --force")),
+-            "{:?}",
+-            git_calls()
+-        );
++        assert_eq!(remove_worktree_dir(&base, &wt, None, &ok), Ok(()));
++        assert_eq!(git_calls(), vec!["worktree prune".to_string()]);
+         assert!(
+             std::fs::symlink_metadata(&wt).is_err(),
+-            "the fallback removed it"
++            "the removal through the handles removed it"
+         );
+         assert!(outside.join("sentinel.txt").exists());
+         let _ = std::fs::remove_dir_all(&base);
+@@ -1312,9 +1348,9 @@ mod tests {
+         make_dir_link(&wt, &outside);
+         let ops = RemovalOps {
+             git: recording_git,
+-            unlink: remove_link,
++            unlink: contain::remove_link,
+         };
+-        let why = remove_worktree_dir(&base, &wt, &ops).expect_err("a link root is refused");
++        let why = remove_worktree_dir(&base, &wt, None, &ops).expect_err("a link root is refused");
+         assert!(why.contains("the worktree root is a link"), "{why}");
+         assert!(git_calls().is_empty(), "{:?}", git_calls());
+         assert!(!remove_throwaway_worktree(&base, &wt));
+@@ -1328,15 +1364,15 @@ mod tests {
+             "the root link was left"
+         );
+         // clean up the links themselves, never their target
+-        let _ = remove_link(&inner, &std::fs::symlink_metadata(&inner).unwrap());
+-        let _ = remove_link(&wt, &std::fs::symlink_metadata(&wt).unwrap());
++        remove_link_path(&inner);
++        remove_link_path(&wt);
+         assert!(outside.join("sentinel.txt").exists());
+         let _ = std::fs::remove_dir_all(&base);
+     }
+ 
+     // The production removal end to end on a real git worktree: a reviewer left a directory link to
+-    // an outside sentinel; the guard unlinks it, `git worktree remove --force` removes the worktree,
+-    // and the sentinel survives.
++    // an outside sentinel; the guard unlinks it, the worktree is removed through its handles and
++    // `git worktree prune` drops its registration, and the sentinel survives.
+     #[test]
+     fn a_real_worktree_with_a_link_to_an_outside_sentinel_is_removed_safely() {
+         let repo = brief_repo("wt-remove");
+@@ -1521,7 +1557,11 @@ mod tests {
+         std::fs::write(src.join("01-claude-x.events.jsonl"), "{}\n").unwrap();
+         std::fs::write(src.join("deep").join("note.md"), "deep\n").unwrap();
+         let skip = |p: &Path| p.to_string_lossy().ends_with(".events.jsonl");
+-        let n = wt.stage_dir(&src, ".collab/t/handoffs", &skip).unwrap();
++        let src_root = Root::open_anchor(&src).unwrap();
++        let n = wt
++            .stage_dir(src_root.dir(), &src, ".collab/t/handoffs", &skip)
++            .unwrap();
++        drop(src_root);
+         assert_eq!(
+             n,
+             StagedDir {
+@@ -1705,7 +1745,7 @@ mod tests {
+         let live_path = repo.join(rel);
+         if let Ok(m) = std::fs::symlink_metadata(&live_path) {
+             if is_link(&m) {
+-                let _ = remove_link(&live_path, &m);
++                remove_link_path(&live_path);
+             }
+         }
+         if let Some(d) = live_path.parent() {
+@@ -1915,7 +1955,7 @@ mod tests {
+         std::fs::create_dir_all(wt2.path().join("inner")).unwrap();
+         make_inner_dir_link(&wt2.path().join("inner-link"), &wt2.path().join("inner"));
+         assert_eq!(
+-            unlink_outside_links(wt2.path(), remove_link).unwrap(),
++            unlink_outside_links(wt2.root.as_ref().unwrap(), contain::remove_link).unwrap(),
+             Vec::<String>::new(),
+             "a link inside the worktree stays"
+         );
+@@ -1933,6 +1973,173 @@ mod tests {
+         let _ = std::fs::remove_dir_all(repo2.parent().unwrap());
+     }
+ 
++    /// Every entry below `dir` (links not followed), as paths relative to it.
++    fn tree_names(dir: &Path) -> Vec<String> {
++        let mut out = Vec::new();
++        let mut stack = vec![dir.to_path_buf()];
++        while let Some(d) = stack.pop() {
++            let Ok(rd) = std::fs::read_dir(&d) else {
++                continue;
++            };
++            for e in rd.flatten() {
++                let p = e.path();
++                out.push(
++                    p.strip_prefix(dir)
++                        .unwrap()
++                        .to_string_lossy()
++                        .replace('\\', "/"),
++                );
++                if std::fs::symlink_metadata(&p).is_ok_and(|m| m.is_dir() && !is_link(&m)) {
++                    stack.push(p);
++                }
++            }
++        }
++        out.sort();
++        out
++    }
++
++    /// No staging or repair temporary file anywhere below `dir`.
++    fn no_temp_below(dir: &Path) -> bool {
++        !tree_names(dir)
++            .iter()
++            .any(|n| n.contains(".c3-stage-") || n.ends_with(".tmp"))
++    }
++
++    // (0.2.5 D4, F32-1 / F24-1) THE STAGING RACE: the destination directory is swapped for a link
++    // to an outside directory right after it was opened - before the temporary file is created
++    // (`stage-create`), and before it is renamed into place (`stage-publish`). The write never
++    // reaches the outside directory and no temporary file is left anywhere: on Windows the swap
++    // itself is refused (C3 holds the directory's handle, so it cannot be renamed); elsewhere the
++    // swap happens and the file lands in the ORIGINAL directory - the one the handle names, now under
++    // its aside name - strictly inside the worktree. Either way the staging completes.
++    #[test]
++    fn staging_into_a_directory_swapped_for_a_link_never_leaves_the_worktree() {
++        for point in ["stage-create", "stage-publish"] {
++            let repo = brief_repo("race-stage");
++            let outside = repo.parent().unwrap().join("outside");
++            std::fs::create_dir_all(&outside).unwrap();
++            std::fs::write(outside.join("sentinel.txt"), "keep me\n").unwrap();
++            let wt = ThrowawayWorktree::create(&repo, "HEAD").unwrap();
++            let docs = wt.path().join("docs");
++            std::fs::create_dir_all(&docs).unwrap();
++            let hook = c3_core::test_hooks::set_thread_hook(
++                contain::RACE_HOOK,
++                &format!("{point}|{}|{}", docs.display(), outside.display()),
++            );
++            let r = wt.stage_bytes(b"the operator's brief\n", "docs/brief.md");
++            drop(hook);
++            let aside = wt.path().join("docs.c3-race-orig");
++            let swapped = aside.exists();
++            if cfg!(windows) {
++                assert!(
++                    !swapped,
++                    "{point}: a directory whose handle is held cannot be renamed on Windows"
++                );
++            }
++            assert_eq!(r, Ok(()), "{point}: completes in the directory it opened");
++            let landed = if swapped { &aside } else { &docs };
++            assert_eq!(
++                std::fs::read_to_string(landed.join("brief.md")).unwrap(),
++                "the operator's brief\n",
++                "{point}"
++            );
++            assert_eq!(tree_names(&outside), vec!["sentinel.txt".to_string()]);
++            assert_eq!(
++                std::fs::read_to_string(outside.join("sentinel.txt")).unwrap(),
++                "keep me\n"
++            );
++            assert!(
++                no_temp_below(wt.path()),
++                "{point}: {:?}",
++                tree_names(wt.path())
++            );
++            let wt_path = wt.path().to_path_buf();
++            drop(wt);
++            assert!(std::fs::symlink_metadata(&wt_path).is_err(), "{point}");
++            assert_eq!(tree_names(&outside), vec!["sentinel.txt".to_string()]);
++            let _ = std::fs::remove_dir_all(repo.parent().unwrap());
++        }
++    }
++
++    // (0.2.5 D4, F27-2 / F16-5) THE WALK RACE: a subdirectory is swapped for a link to an outside
++    // directory after the walk listed it and before it descends (`walk-descend`) - in the removal's
++    // link pass, in the post-checkout sweep and in the whole removal. The walk never descends
++    // through it: the link inside the outside directory (`trap`) and the sentinel are untouched, the
++    // swapped-in link itself is unlinked (never followed), the original directory is kept (or, in
++    // the whole removal, removed as part of the worktree). Where the system refuses the swap, the
++    // walk simply descends into the real directory.
++    #[test]
++    fn a_directory_swapped_for_a_link_during_the_walk_is_never_descended() {
++        for walker in ["pass", "sweep", "removal"] {
++            let (base, wt, outside) = link_scratch(&format!("race-walk-{walker}"));
++            let elsewhere = base.join("elsewhere");
++            std::fs::create_dir_all(&elsewhere).unwrap();
++            let trap = outside.join("trap");
++            make_inner_dir_link(&trap, &elsewhere);
++            let sub = wt.join("sub");
++            let hook = c3_core::test_hooks::set_thread_hook(
++                contain::RACE_HOOK,
++                &format!("walk-descend|{}|{}", sub.display(), outside.display()),
++            );
++            let swapped_links: usize = match walker {
++                "pass" => {
++                    let root = Root::open(&wt).unwrap();
++                    let pass = unlink_links_inside_with(&root, contain::remove_link);
++                    assert!(pass.errors.is_empty(), "{:?}", pass.errors);
++                    pass.removed
++                }
++                "sweep" => {
++                    let root = Root::open(&wt).unwrap();
++                    unlink_outside_links(&root, contain::remove_link)
++                        .unwrap()
++                        .len()
++                }
++                _ => {
++                    let ops = RemovalOps {
++                        git: recording_git,
++                        unlink: contain::remove_link,
++                    };
++                    assert_eq!(remove_worktree_dir(&base, &wt, None, &ops), Ok(()));
++                    assert!(std::fs::symlink_metadata(&wt).is_err(), "removed");
++                    0
++                }
++            };
++            drop(hook);
++            assert!(
++                std::fs::symlink_metadata(&trap).is_ok(),
++                "{walker}: the link inside the outside directory was never touched"
++            );
++            assert_eq!(
++                tree_names(&outside),
++                vec!["sentinel.txt".to_string(), "trap".to_string()],
++                "{walker}"
++            );
++            assert_eq!(
++                std::fs::read_to_string(outside.join("sentinel.txt")).unwrap(),
++                "keep me\n"
++            );
++            if walker != "removal" {
++                let aside = wt.join("sub.c3-race-orig");
++                if aside.exists() {
++                    assert_eq!(
++                        swapped_links, 1,
++                        "{walker}: the swapped-in link was unlinked"
++                    );
++                    assert!(std::fs::symlink_metadata(&sub).is_err(), "{walker}");
++                    assert!(
++                        aside.join("own.txt").exists(),
++                        "{walker}: the original is kept"
++                    );
++                } else {
++                    assert_eq!(swapped_links, 0, "{walker}");
++                    assert!(sub.join("own.txt").exists(), "{walker}");
++                }
++            }
++            remove_link_path(&trap);
++            let _ = std::fs::remove_dir_all(&base);
++        }
++    }
++
+     /// A directory link at `link` to `target` inside the same tree: a junction on Windows, a symlink
+     /// elsewhere (no sentinel check, unlike [`make_dir_link`]).
+     fn make_inner_dir_link(link: &Path, target: &Path) {
+diff --git a/crates/c3/src/lib.rs b/crates/c3/src/lib.rs
+index eb2e6c2..990e1e6 100644
+--- a/crates/c3/src/lib.rs
++++ b/crates/c3/src/lib.rs
+@@ -58,4 +58,6 @@ pub mod setup;
+ 
+ pub mod state_dir;
+ 
++pub(crate) mod contain;
++
+ pub mod budget;
+diff --git a/crates/c3/src/setup/repo_models.rs b/crates/c3/src/setup/repo_models.rs
+index f801e81..345dfb8 100644
+--- a/crates/c3/src/setup/repo_models.rs
++++ b/crates/c3/src/setup/repo_models.rs
+@@ -11,19 +11,24 @@
+ //! before the rename and compared with the snapshot the edit was computed from (when it changed,
+ //! the repair is dropped and the file left as it is), and the temporary file then REPLACES the
+ //! original by rename - so a failed or interrupted repair never leaves a truncated file, and a
+-//! second name of the file (a hard link) never sees the edit. The moment between that re-read and
+-//! the rename itself remains (a decided boundary, F13-9: closing it needs a local process with
+-//! write access to the repository, which can edit the files directly anyway). A file with more than
+-//! one hard link, a link (symlink, junction) or another reparse point, and a file under a linked
+-//! `.claude` / `.claude/agents` are not edited at all; the links are checked again immediately
+-//! before the rename. Every repair that was not made is reported with its reason.
++//! second name of the file (a hard link) never sees the edit. A file with more than one hard link,
++//! a link (symlink, junction) or another reparse point, and a file under a linked `.claude` /
++//! `.claude/agents` are not edited at all; the file is checked again immediately before the rename.
++//! Every repair that was not made is reported with its reason.
++//!
++//! (0.2.5 D4, F13-9 - the "decided boundary" is withdrawn) Every step is relative to directory
++//! HANDLES: the repository root is opened once ([`crate::contain::Root::open_anchor`]), each
++//! directory on the way to the file is opened relative to its parent's handle without following it
++//! (a link refuses), the file is checked, read and re-read through handles opened without following
++//! it, and the temporary file is created, renamed onto the file and - on a failure - removed
++//! relative to the file's directory handle ([`crate::contain::publish`]). A directory swapped for a
++//! link between the last check and the rename cannot carry the replacement out of the repository.
+ //!
+ //! It is used from two places: `c3 doctor --fix` (which then re-reports what is left) and the
+ //! `c3 hook` SessionStart line (automatic, default ON, off with `C3_REPO_MODELS=off` or
+ //! `"repo_models": false` in `<codex home>/c3/config.json`). Inside a child C3 started
+ //! (`C3_CHILD`) it does nothing at all.
+ 
+-use std::io::Write;
+ use std::path::{Path, PathBuf};
+ 
+ use c3_core::claude::model_family;
+@@ -214,14 +219,9 @@ fn refresh_repo_models_at(
+             continue;
+         };
+         if let Some((new_content, old, new)) = rewrite_agent_model(content) {
+-            let dirs = [
+-                (claude_dir.as_path(), ".claude"),
+-                (agents.as_path(), ".claude/agents"),
+-            ];
+             let edit = Edit {
+                 file: format!(".claude/agents/{name}"),
+-                path: &path,
+-                dirs: &dirs,
++                root: repo_root,
+                 snapshot: &snapshot,
+                 new_content: new_content.as_bytes(),
+             };
+@@ -238,8 +238,7 @@ fn refresh_repo_models_at(
+             {
+                 let edit = Edit {
+                     file: "AGENTS.md".to_string(),
+-                    path: &agents_md,
+-                    dirs: &[],
++                    root: repo_root,
+                     snapshot: &snapshot,
+                     new_content: new_content.as_bytes(),
+                 };
+@@ -251,19 +250,19 @@ fn refresh_repo_models_at(
+     report
+ }
+ 
+-/// One planned edit: the file, the directories under the repository root that must be real
+-/// directories for it, the bytes the edit was computed from and the new bytes.
++/// One planned edit: the file (repository-relative, `/`-separated - every directory on its way
++/// must be a real directory, named in a refusal by its repository-relative path), the repository
++/// root, the bytes the edit was computed from and the new bytes.
+ pub(crate) struct Edit<'a> {
+     pub(crate) file: String,
+-    pub(crate) path: &'a Path,
+-    pub(crate) dirs: &'a [(&'a Path, &'a str)],
++    pub(crate) root: &'a Path,
+     pub(crate) snapshot: &'a [u8],
+     pub(crate) new_content: &'a [u8],
+ }
+ 
+ /// Make one edit (or record why not) in `report`.
+ fn apply(report: &mut RepairReport, edit: &Edit<'_>, old: String, new: String) {
+-    let result = match edit_refusal(edit.dirs, edit.path) {
++    let result = match edit_refusal(edit) {
+         Some(why) => Err(why),
+         None => replace_file(edit),
+     };
+@@ -282,105 +281,157 @@ fn apply(report: &mut RepairReport, edit: &Edit<'_>, old: String, new: String) {
+     }
+ }
+ 
+-/// Why `path` may not be edited, or `None` when it may: every directory of `dirs` must be a real
+-/// directory (not a symlink or junction), the file a regular file that is not a link, with exactly
+-/// one name (a second hard link would see the edit too).
+-pub(crate) fn edit_refusal(dirs: &[(&Path, &str)], path: &Path) -> Option<String> {
+-    for (dir, label) in dirs {
+-        if !is_real_dir(dir) {
+-            return Some(format!(
+-                "{label} is {} or no directory, so the file may lie outside the repository - not edited",
+-                link_words(dir)
+-            ));
++/// (0.2.5 D4) The directory of `edit.file`, reached from the repository root's handle one
++/// component at a time without following any ([`crate::contain::open_child`]), and the file's name;
++/// `Err` is the refusal: a directory on the way that is a link, a reparse point or no directory.
++fn open_edit_dir(edit: &Edit<'_>) -> Result<(cap_std::fs::Dir, std::ffi::OsString), String> {
++    let root = crate::contain::Root::open_anchor(edit.root)
++        .map_err(|e| format!("the repository root {} - not edited", e.words()))?;
++    let parts: Vec<&str> = edit.file.split('/').filter(|p| !p.is_empty()).collect();
++    let Some((leaf, dirs)) = parts.split_last() else {
++        return Err("it names no file - not edited".to_string());
++    };
++    let mut dir = root
++        .dir()
++        .try_clone()
++        .map_err(|e| format!("the repository root cannot be opened ({e}) - not edited"))?;
++    let mut label = String::new();
++    for d in dirs {
++        if !label.is_empty() {
++            label.push('/');
+         }
++        label.push_str(d);
++        dir = crate::contain::open_child(&dir, std::ffi::OsStr::new(d), false).map_err(|why| {
++            format!(
++                "{label} is {} or no directory, so the file may lie outside the repository - not edited",
++                step_link_words(&why)
++            )
++        })?;
+     }
+-    if !is_real_file(path) {
+-        return Some(format!(
+-            "it is {} or no regular file, so its target may lie outside the repository - not edited",
+-            link_words(path)
+-        ));
++    Ok((dir, std::ffi::OsString::from(leaf)))
++}
++
++/// [`link_words`] from a refused step: a link names what it is, anything else both words.
++fn step_link_words(why: &crate::contain::Step) -> &'static str {
++    match why {
++        crate::contain::Step::Link { symlink } => reparse_words(*symlink, true),
++        _ => reparse_words(false, false),
+     }
+-    match link_count(path) {
+-        Ok(1) => None,
+-        Ok(n) => Some(format!(
++}
++
++/// (0.2.5 D4) The file `leaf` of `dir` opened without following it and checked on that handle: a
++/// regular file that is not a link or a reparse point, with exactly one name. Its handle is
++/// returned (for reading); `Err` is the refusal.
++fn open_edit_file(
++    dir: &cap_std::fs::Dir,
++    leaf: &std::ffi::OsStr,
++) -> Result<cap_std::fs::File, String> {
++    let f = crate::contain::open_file_in(dir, leaf).map_err(|why| {
++        format!(
++            "it is {} or no regular file, so its target may lie outside the repository - not edited",
++            step_link_words(&why)
++        )
++    })?;
++    let links = f
++        .metadata()
++        .map(|m| cap_fs_ext::MetadataExt::nlink(&m))
++        .map_err(|e| format!("could not count its hard links ({e}) - not edited"))?;
++    match links {
++        1 => Ok(f),
++        n => Err(format!(
+             "it has {n} hard links, so an edit would change the other names too - not edited"
+         )),
+-        Err(e) => Some(format!("could not count its hard links ({e}) - not edited")),
+     }
+ }
+ 
+-/// Replace `edit.path` with `edit.new_content` without writing through it: a sibling temporary
+-/// file is written, synced and read back; the links are checked again and the original re-read and
+-/// compared with `edit.snapshot`; then the temporary file is renamed over the original. On any
+-/// failure the temporary file is removed and the original is untouched.
++/// Why `edit.file` may not be edited, or `None` when it may: every directory on its way must be a
++/// real directory (not a symlink or junction), the file a regular file that is not a link, with
++/// exactly one name (a second hard link would see the edit too). (0.2.5 D4) Read through handles
++/// from the repository root, nothing followed.
++pub(crate) fn edit_refusal(edit: &Edit<'_>) -> Option<String> {
++    open_edit_dir(edit)
++        .and_then(|(dir, leaf)| open_edit_file(&dir, &leaf).map(|_| ()))
++        .err()
++}
++
++/// Replace `edit.file` with `edit.new_content` without writing through it: a sibling temporary
++/// file is written, synced and read back; the file is checked again and re-read and compared with
++/// `edit.snapshot`; then the temporary file is renamed over the original. On any failure the
++/// temporary file is removed (a removal that fails is named in the `Err`) and the original is
++/// untouched. (0.2.5 D4, F13-9) All of it relative to the file's directory HANDLE, reached from the
++/// repository root without following any component ([`open_edit_dir`], [`crate::contain::publish`]).
+ pub(crate) fn replace_file(edit: &Edit<'_>) -> Result<(), String> {
+-    let dir = edit
+-        .path
+-        .parent()
+-        .ok_or_else(|| "it has no parent directory - not edited".to_string())?;
+-    let name = edit
+-        .path
+-        .file_name()
+-        .map(|n| n.to_string_lossy().to_string())
+-        .unwrap_or_default();
++    use std::io::Read;
++    let (dir, leaf) = open_edit_dir(edit)?;
++    let original = open_edit_file(&dir, &leaf)?;
++    // the replacement keeps the original's permission bits (Unix; on Windows only the read-only
++    // attribute would carry over, which the repair never had to keep)
++    #[cfg(unix)]
++    let permissions = original.metadata().ok().map(|m| m.permissions());
++    #[cfg(not(unix))]
++    let permissions = None;
++    drop(original);
++    let name = leaf.to_string_lossy().to_string();
+     let nanos = std::time::SystemTime::now()
+         .duration_since(std::time::UNIX_EPOCH)
+         .map(|d| d.as_nanos())
+         .unwrap_or(0);
+-    let tmp = dir.join(format!(
+-        ".{name}.c3-repair-{}-{nanos}.tmp",
+-        std::process::id()
+-    ));
+-    let result = write_then_rename(edit, &tmp);
+-    if result.is_err() {
+-        let _ = std::fs::remove_file(&tmp);
+-    }
+-    result
+-}
+-
+-/// The body of [`replace_file`] (the caller removes `tmp` on an error).
+-fn write_then_rename(edit: &Edit<'_>, tmp: &Path) -> Result<(), String> {
+-    let mut f = std::fs::OpenOptions::new()
+-        .write(true)
+-        .create_new(true)
+-        .open(tmp)
+-        .map_err(|e| format!("could not create the temporary file ({e}) - left as it was"))?;
+-    f.write_all(edit.new_content)
+-        .and_then(|()| f.sync_all())
+-        .map_err(|e| format!("could not write the temporary file ({e}) - left as it was"))?;
+-    drop(f);
+-    #[cfg(unix)]
+-    {
+-        // the replacement keeps the original's permission bits
+-        if let Ok(m) = std::fs::metadata(edit.path) {
+-            let _ = std::fs::set_permissions(tmp, m.permissions());
++    let tmp = format!(".{name}.c3-repair-{}-{nanos}.tmp", std::process::id());
++    let tmp_os = std::ffi::OsString::from(&tmp);
++    let check = |stage: crate::contain::Stage| -> Result<(), String> {
++        if stage == crate::contain::Stage::BeforeCreate {
++            return Ok(());
+         }
+-    }
+-    match std::fs::read(tmp) {
+-        Ok(b) if b == edit.new_content => {}
+-        Ok(_) => {
+-            return Err(
+-                "the temporary file did not read back as written - left as it was".to_string(),
+-            )
++        match crate::contain::read_file_in(&dir, &tmp_os) {
++            Ok(b) if b == edit.new_content => {}
++            Ok(_) => {
++                return Err(
++                    "the temporary file did not read back as written - left as it was".to_string(),
++                )
++            }
++            Err(e) => {
++                return Err(format!(
++                    "could not read the temporary file back ({e}) - left as it was"
++                ))
++            }
+         }
+-        Err(e) => {
+-            return Err(format!(
+-                "could not read the temporary file back ({e}) - left as it was"
+-            ))
++        // Immediately before the replace: the file once more, then its content against the
++        // snapshot the edit was computed from (an editor's save in between wins; the repair is
++        // dropped).
++        let mut f = open_edit_file(&dir, &leaf)?;
++        let mut now = Vec::new();
++        f.read_to_end(&mut now)
++            .map_err(|e| format!("could not re-read it ({e}) - left as it was"))?;
++        if now != edit.snapshot {
++            return Err("it changed while it was being repaired - left as it was".to_string());
+         }
+-    }
+-    // Immediately before the replace: the links once more, then the content against the snapshot
+-    // the edit was computed from (an editor's save in between wins; the repair is dropped).
+-    if let Some(why) = edit_refusal(edit.dirs, edit.path) {
+-        return Err(why);
+-    }
+-    match std::fs::read(edit.path) {
+-        Ok(b) if b == edit.snapshot => {}
+-        Ok(_) => return Err("it changed while it was being repaired - left as it was".to_string()),
+-        Err(e) => return Err(format!("could not re-read it ({e}) - left as it was")),
+-    }
+-    std::fs::rename(tmp, edit.path)
+-        .map_err(|e| format!("could not replace it ({e}) - left as it was"))
++        crate::contain::race_point("repair-replace");
++        Ok(())
++    };
++    crate::contain::publish(&crate::contain::Publish {
++        dir: &dir,
++        leaf: &leaf,
++        tmp: &tmp_os,
++        bytes: edit.new_content,
++        permissions,
++        check: &check,
++        race: "repair",
++    })
++    .map_err(|f| {
++        let msg = match &f.error {
++            crate::contain::PublishError::Check(why) => why.clone(),
++            crate::contain::PublishError::Create(e) => {
++                format!("could not create the temporary file ({e}) - left as it was")
++            }
++            crate::contain::PublishError::Write(e) => {
++                format!("could not write the temporary file ({e}) - left as it was")
++            }
++            crate::contain::PublishError::Rename(e) => {
++                format!("could not replace it ({e}) - left as it was")
++            }
++        };
++        f.with_cleanup(msg)
++    })
+ }
+ 
+ /// (0.2.5 R2, F12-3) How a refusal names what `p` is, read without following it: `a link (a
+@@ -422,70 +473,6 @@ pub(crate) fn is_link(m: &std::fs::Metadata) -> bool {
+     }
+ }
+ 
+-/// A directory that is itself there, not a link to one (`symlink_metadata` does not follow a
+-/// symlink; a Windows junction is a reparse point).
+-pub(crate) fn is_real_dir(p: &Path) -> bool {
+-    std::fs::symlink_metadata(p)
+-        .map(|m| m.file_type().is_dir() && !is_link(&m))
+-        .unwrap_or(false)
+-}
+-
+-/// A regular file that is itself there, not a link to one.
+-fn is_real_file(p: &Path) -> bool {
+-    std::fs::symlink_metadata(p)
+-        .map(|m| m.file_type().is_file() && !is_link(&m))
+-        .unwrap_or(false)
+-}
+-
+-/// How many names (hard links) the file at `p` has, read without following a link.
+-#[cfg(unix)]
+-fn link_count(p: &Path) -> std::io::Result<u64> {
+-    use std::os::unix::fs::MetadataExt;
+-    Ok(std::fs::symlink_metadata(p)?.nlink())
+-}
+-
+-/// How many names (hard links) the file at `p` has (`GetFileInformationByHandle`'s
+-/// `nNumberOfLinks`, the file opened without following a reparse point).
+-#[cfg(windows)]
+-fn link_count(p: &Path) -> std::io::Result<u64> {
+-    use std::os::windows::fs::OpenOptionsExt;
+-    use std::os::windows::io::AsRawHandle;
+-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+-    #[allow(non_snake_case)]
+-    #[repr(C)]
+-    struct ByHandleFileInformation {
+-        dwFileAttributes: u32,
+-        ftCreationTime: [u32; 2],
+-        ftLastAccessTime: [u32; 2],
+-        ftLastWriteTime: [u32; 2],
+-        dwVolumeSerialNumber: u32,
+-        nFileSizeHigh: u32,
+-        nFileSizeLow: u32,
+-        nNumberOfLinks: u32,
+-        nFileIndexHigh: u32,
+-        nFileIndexLow: u32,
+-    }
+-    extern "system" {
+-        fn GetFileInformationByHandle(
+-            file: *mut std::ffi::c_void,
+-            info: *mut ByHandleFileInformation,
+-        ) -> i32;
+-    }
+-    let f = std::fs::OpenOptions::new()
+-        .read(true)
+-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+-        .open(p)?;
+-    // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is a valid value of this plain C struct.
+-    let mut info: ByHandleFileInformation = unsafe { std::mem::zeroed() };
+-    // SAFETY: `f` is an open file handle for the duration of the call and `info` points at a
+-    // writable struct of the layout the function fills.
+-    let ok = unsafe { GetFileInformationByHandle(f.as_raw_handle(), &mut info) };
+-    if ok == 0 {
+-        return Err(std::io::Error::last_os_error());
+-    }
+-    Ok(u64::from(info.nNumberOfLinks))
+-}
+-
+ /// The roster entries `AGENTS.md` may follow: the model id of each ACTIVE entry that is neither
+ /// protected (`ext.reserve_percent`) nor seated only on request (`ext.on_request`), one element per
+ /// entry. Empty on any error.
+@@ -761,14 +748,16 @@ mod tests {
+         let (base, repo) = repo_with_agents("words");
+         let file = repo.join(".claude").join("agents").join("w.md");
+         std::fs::write(&file, PINNED).unwrap();
++        let edit = |file: &str| Edit {
++            file: file.to_string(),
++            root: &repo,
++            snapshot: b"",
++            new_content: b"",
++        };
+         // a plain directory and file: no refusal at all
+-        let agents = repo.join(".claude").join("agents");
+-        assert_eq!(
+-            edit_refusal(&[(agents.as_path(), ".claude/agents")], &file),
+-            None
+-        );
++        assert_eq!(edit_refusal(&edit(".claude/agents/w.md")), None);
+         // a missing file: the refusal names both possibilities
+-        let why = edit_refusal(&[], &repo.join("none.md")).unwrap();
++        let why = edit_refusal(&edit("none.md")).unwrap();
+         assert!(
+             why.starts_with(
+                 "it is a link (a symlink or junction), a reparse point or no regular file"
+@@ -988,15 +977,9 @@ mod tests {
+         let path = agents.join("w.md");
+         let edited = "---\nname: w\nmodel: claude-opus-4-8\n---\nthe operator's new line\n";
+         std::fs::write(&path, edited).unwrap();
+-        let claude = repo.join(".claude");
+-        let dirs = [
+-            (claude.as_path(), ".claude"),
+-            (agents.as_path(), ".claude/agents"),
+-        ];
+         let edit = Edit {
+             file: ".claude/agents/w.md".into(),
+-            path: &path,
+-            dirs: &dirs,
++            root: &repo,
+             snapshot: PINNED.as_bytes(),
+             new_content: b"---\nname: w\nmodel: opus\n---\nbody\n",
+         };
+@@ -1037,6 +1020,71 @@ mod tests {
+         let _ = std::fs::remove_dir_all(&base);
+     }
+ 
++    // (0.2.5 D4, F13-9) THE REPAIR RACE: right before the rename (after the last check and the
++    // re-read, `repair-replace`) `.claude/agents` - and, in a second round, its parent `.claude` - is
++    // swapped for a link to an outside directory holding the same pinned file. The replacement never
++    // lands outside (the outside file keeps its bytes, no temporary file appears there) and none is
++    // left anywhere: on Windows the swap itself is refused (the agents directory's handle is held,
++    // which pins it and every ancestor); elsewhere it happens and the repair completes in the
++    // ORIGINAL directory - the one the handle names, now under its aside name.
++    #[test]
++    fn a_directory_swapped_for_a_link_before_the_replace_never_receives_the_repair() {
++        for swap in [".claude/agents", ".claude"] {
++            let (base, repo) = repo_with_agents("race-repair");
++            let agents = repo.join(".claude").join("agents");
++            std::fs::write(agents.join("w.md"), PINNED).unwrap();
++            let outside = base.join("outside");
++            let twin = if swap == ".claude" {
++                outside.join("agents")
++            } else {
++                outside.clone()
++            };
++            std::fs::create_dir_all(&twin).unwrap();
++            std::fs::write(twin.join("w.md"), PINNED).unwrap();
++            let swapped_dir = repo.join(swap);
++            let hook = c3_core::test_hooks::set_thread_hook(
++                crate::contain::RACE_HOOK,
++                &format!(
++                    "repair-replace|{}|{}",
++                    swapped_dir.display(),
++                    outside.display()
++                ),
++            );
++            let r = refresh_repo_models_at(&repo, &[]);
++            drop(hook);
++            let mut aside_name = swapped_dir.file_name().unwrap().to_os_string();
++            aside_name.push(".c3-race-orig");
++            let aside = swapped_dir.with_file_name(aside_name);
++            let swapped = aside.exists();
++            if cfg!(windows) {
++                assert!(
++                    !swapped,
++                    "{swap}: a held directory and its ancestors cannot be renamed"
++                );
++            }
++            assert_eq!(r.fixes.len(), 1, "{swap}: {r:?}");
++            let original = match (swapped, swap) {
++                (false, _) => agents.clone(),
++                (true, ".claude") => aside.join("agents"),
++                (true, _) => aside.clone(),
++            };
++            assert_eq!(
++                std::fs::read_to_string(original.join("w.md")).unwrap(),
++                "---\nname: w\nmodel: opus\n---\nbody\n",
++                "{swap}: the repair is in the original directory"
++            );
++            assert_eq!(std::fs::read_to_string(twin.join("w.md")).unwrap(), PINNED);
++            assert_eq!(names_in(&twin), vec!["w.md".to_string()], "{swap}");
++            assert_eq!(names_in(&original), vec!["w.md".to_string()], "{swap}");
++            if swapped {
++                let _ = std::fs::remove_dir(&swapped_dir)
++                    .or_else(|_| std::fs::remove_file(&swapped_dir));
++            }
++            assert_eq!(std::fs::read_to_string(twin.join("w.md")).unwrap(), PINNED);
++            let _ = std::fs::remove_dir_all(&base);
++        }
++    }
++
+     // (0.2.5, F02-1 / F02-2) The ordinary repair replaces the file by rename: the new bytes are in
+     // place, no temporary file is left, and AGENTS.md follows its one successor.
+     #[test]
+diff --git a/crates/c3/src/setup/rules.rs b/crates/c3/src/setup/rules.rs
+index d2a9fd6..c17699e 100644
+--- a/crates/c3/src/setup/rules.rs
++++ b/crates/c3/src/setup/rules.rs
+@@ -10,8 +10,10 @@
+ //! repair only ever APPENDS the missing section: no existing byte changes. The edit is the model
+ //! repair's: a sibling temporary file,
+ //! read back, the original re-read against the snapshot the edit was computed from, a rename over
+-//! the original, links and hard links refused ([`crate::setup::repo_models::replace_file`]). The
+-//! SessionStart hook does not do this, and nothing happens inside a C3 child (`C3_CHILD`).
++//! the original, links and hard links refused ([`crate::setup::repo_models::replace_file`]) - since
++//! 0.2.5 D4 all of it relative to directory handles reached from the repository root without
++//! following any component. The SessionStart hook does not do this, and nothing happens inside a
++//! C3 child (`C3_CHILD`).
+ //!
+ //! (0.2.5, S1) The same path replaces the template sentences that named the old folder `.eck/`
+ //! ([`STATE_SENTENCES`]) in `01-c3-protocol.md` / `02-delegation.md`: only a line that is the old
+@@ -152,20 +154,13 @@ pub fn repair_delegation_rule(repo_root: &Path) -> RuleRepair {
+     let Some(new_content) = with_branches_section(content) else {
+         return RuleRepair::default();
+     };
+-    let claude = repo_root.join(".claude");
+-    let rules = claude.join("rules");
+-    let dirs = [
+-        (claude.as_path(), ".claude"),
+-        (rules.as_path(), ".claude/rules"),
+-    ];
+     let edit = Edit {
+         file: DELEGATION_RULE.to_string(),
+-        path: &path,
+-        dirs: &dirs,
++        root: repo_root,
+         snapshot: &snapshot,
+         new_content: new_content.as_bytes(),
+     };
+-    let result = match edit_refusal(edit.dirs, edit.path) {
++    let result = match edit_refusal(&edit) {
+         Some(why) => Err(why),
+         None => replace_file(&edit),
+     };
+@@ -308,8 +303,6 @@ pub struct StateSentenceRepair {
+ /// without such a line is not touched. The caller keeps this out of a C3 child.
+ pub fn repair_state_sentences(repo_root: &Path) -> StateSentenceRepair {
+     let mut out = StateSentenceRepair::default();
+-    let claude = repo_root.join(".claude");
+-    let rules = claude.join("rules");
+     for file in state_sentence_files() {
+         let path = repo_root.join(file);
+         let Ok(snapshot) = std::fs::read(&path) else {
+@@ -321,18 +314,13 @@ pub fn repair_state_sentences(repo_root: &Path) -> StateSentenceRepair {
+         let Some(new_content) = with_state_sentences(file, content) else {
+             continue;
+         };
+-        let dirs = [
+-            (claude.as_path(), ".claude"),
+-            (rules.as_path(), ".claude/rules"),
+-        ];
+         let edit = Edit {
+             file: file.to_string(),
+-            path: &path,
+-            dirs: &dirs,
++            root: repo_root,
+             snapshot: &snapshot,
+             new_content: new_content.as_bytes(),
+         };
+-        let result = match edit_refusal(edit.dirs, edit.path) {
++        let result = match edit_refusal(&edit) {
+             Some(why) => Err(why),
+             None => replace_file(&edit),
+         };

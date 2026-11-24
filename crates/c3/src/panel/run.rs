@@ -2287,6 +2287,7 @@ fn build_spec(
         // (B1) every member gets its own throwaway worktree of the SAME commit
         "rev": b.rev_sha,
         "diff": o.diff,
+        "diff_tracked_only": o.diff_tracked_only,
         "reply_name": s.reply_name,
         "artifact": o.artifacts,
         // (M11) `--peer`/`--peers` reach a reviewer only through a pack, which only the http engine

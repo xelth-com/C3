@@ -715,3 +715,59 @@ swap -> xelth.com/C3 page after the tag.
   To do after the install: write `.c3/config.json` with `{"finish_checks": ["cargo fmt --all
   -- --check"]}` for this repository.
   Running: S2, D1.
+- 2026-11-23 11:51, wave S2 reported (F36-1..8, all done) and committed as ac26f5a, pushed; CI run
+  45159614961. On top of D4 + D2: one conflict in `finish/mod.rs` merged by hand (D2's journal line
+  for skipped checks + S2's `write_journal` through the resolved folder); fmt and workspace clippy
+  clean through the compiler turn; tests of the combination left to CI. The first commit attempt
+  was refused by the old gate over a line of this file; the same shell line had already gone on
+  and written the previous HEAD into brief 42 and into the F36 notes - both corrected.
+  S2 summary: an exclusive move lock in git's common directory and a re-read of the state after
+  any wait or rename error; leftovers relocated inside `.eck/` first, the rename last; a linked
+  `.c3` refused, links inside `.eck/` never followed; two collab resolvers (the default never
+  moves); collab paths normalised first; the live-run guard fails closed, repeated under the
+  lock, `begin_run` for a starting run; nested folders out of a patch. Known: its link checks use
+  `symlink_metadata` + the reparse test, not `contain.rs` (not in its base) - a follow-up.
+  Reviews: brief 40 (D4) launched, detach id `169783af` (`--rev 272920d --diff 84dbca4..272920d`,
+  roster-w40: Grok, DeepSeek, Muse contributor - 2 of 3 seated). Then 41 (D2, roster-w41, `--rev
+  0eea5f1 --diff 272920d..0eea5f1`) and 42 (S2, roster-w42, `--rev HEAD --diff 0eea5f1..ac26f5a`).
+  Running: D1 (worker), CI for 0eea5f1 and ac26f5a.
+- 2026-11-23 12:12: CI for ac26f5a (D4 + D2 + S2) GREEN (run 45159614961) - the Linux-only paths of
+  D2 ran there for the first time.
+- 2026-11-23 12:12, review of D4 `169783af`: 2 of 3 usable (DeepSeek skipped: the Alibaba plan's usage
+  limit). n=29 Muse HOLD 3 major / 3 minor / 2 note, n=30 Grok HOLD 1 major / 2 minor; both rated
+  yes. Findings F43-1..8, F44-1..3. The containment itself held; the majors are all in the `--diff`
+  patch placement: F43-1 `create_dir_all` by path before the anchor is opened; F43-2 = F44-1 an
+  abandoned empty claim blocks the patch name for ever; F43-3 a failed rename's cleanup can delete
+  a sibling's finished patch -> sent to the running D1 worker as items 25-27 (it is in that code).
+  For the last small wave (R7): F43-5 (the repair's discovery still reads by path), F43-6 (a
+  failed removal stops at the first error), F43-7 + F44-2 (CHANGELOG: the exceptions and the
+  changed behaviour for a link inside the repository on the way to the brief), F44-3 (a FIFO
+  swapped in after the kind check blocks the read - open non-blocking / check the handle first),
+  and S2's link checks moved onto `contain.rs`. wontfix: F43-4 (classification only), F43-8
+  (intended).
+  Review of D2 launched: detach id `f67bd985` (brief 41, Grok + GLM-5.3). Then brief 42 (S2).
+- 2026-11-24 09:04: RESUMED after a stop of about 21 hours. On 2026-11-23 ~12:25 the account's WEEKLY usage
+  limit was reached (this session's many opus workers used the rest of that week); the D1 worker
+  was cut off mid-wave with its worktree saved; the limit reset at 09:00 on 2026-11-24. Budget is
+  tight from here: fewer turns, no brief-writing workers, opus only where judgment is needed.
+  State found: main at ac26f5a, CI green for it; CI run 45156540894 (0eea5f1) was CANCELLED by
+  the 45-minute job timeout - its Windows job sat 50 minutes in the step `Test c3-cli` (the
+  per-crate split shows it; c3-core and c3 had passed), no log again. Third intermittent Windows
+  incident, all in the c3-cli integration tests; the next commit's run was green.
+  The weekly `c3 maintain` pass (due today 15:19, the installed binary is still 0.2.4 ba43ff6)
+  postponed to 2026-11-26 15:19 (`state.json.bak-2026-11-24`): it must run with the new binary.
+- 2026-11-24 09:04, review of D2 `f67bd985` (done 2026-11-23): 2 of 2 usable, both rated yes. n=31 GLM-5.3
+  ACCEPT 4 minor / 5 note (F45-1..9), n=32 Grok HOLD 4 major / 2 minor / 2 note (F46-1..8).
+  Majors: F46-1 the deadline stop still misses a grandchild forked after its snapshot, a child
+  with no recorded start time, a setsid daemon; F46-2 (= F45-1) the secret rule became too loose -
+  any one-case word under 24 letters passes under EVERY keyword (`password = "hunterhunter..."`);
+  F46-3 (= F45-8) `--close` deletes ignored files; F46-4 (= F45-3) `gh` may answer for another
+  repository (GH_REPO, several remotes). All accepted -> wave R7a (brief
+  `briefs/R7a-review-fixes-tooling.md`, 7 items; the secret rule: strict again under every
+  keyword, a plain single word passes only under the bare keyword `auth`).
+  Wave R7b (brief `briefs/R7b-review-fixes-handles-folder.md`): S2's folder operations onto
+  `contain.rs`, F43-5, F43-6, F43-7 + F44-2, F44-3, F46-5.
+  Launched from ac26f5a: R7a (worktree `agent-a64372534a0f70ef6`), R7b (worktree
+  `agent-abb8d1b4e3cdf1d5c`). D1 worker RESUMED by message (items 25-27 repeated). Verification of
+  S2 launched: detach id `349c6254` (brief 42, `--rev ac26f5a`, Grok + Muse contributor + Qwen).
+  OpenAI week: 54 % used until Nov 29 - enough for the acceptance, no Sol runs.

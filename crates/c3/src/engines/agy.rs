@@ -418,10 +418,14 @@ struct AgyToolStep {
     parameters: Option<Value>,
 }
 
-/// (F10-2, F11-1) Merge one event's logged parameters into a step's: any object seen wins over
-/// none, and two objects are united key by key - a key's empty value (`null`, `""`, `{}`, `[]`)
-/// gives way to a non-empty one, so an empty ACTIVE object followed by a populated DONE command
-/// keeps the command. A non-object value is kept only while no object was seen.
+/// (F10-2, F11-1, F24-4) Merge one event's logged parameters into a step's, at EVERY depth, so no
+/// event's evidence is lost before the step is classified: an empty value (`null`, `""`, `{}`,
+/// `[]`) gives way to a non-empty one (an empty ACTIVE object followed by a populated DONE command
+/// keeps the command); two objects are united key by key, recursively (a later event's command
+/// under a key whose object already has other keys is kept: `{"config":{"cwd":"."}}` then
+/// `{"config":{"action":"rm -rf x"}}`); two arrays are united; and two different non-empty values
+/// that cannot be united are BOTH kept, as an array under that key - so a command-shaped value from
+/// any event is never dropped (the classifier reads an array with the role of its key).
 fn merge_parameters(into: &mut Option<Value>, next: Option<Value>) {
     fn empty(v: &Value) -> bool {
         match v {
@@ -432,23 +436,49 @@ fn merge_parameters(into: &mut Option<Value>, next: Option<Value>) {
             _ => false,
         }
     }
-    let Some(next) = next else {
-        return;
-    };
-    match (into.as_mut(), next) {
-        (None, n) => *into = Some(n),
-        (Some(Value::Object(cur)), Value::Object(n)) => {
-            for (k, v) in n {
-                match cur.get(&k) {
-                    Some(old) if !empty(old) || empty(&v) => {}
-                    _ => {
-                        cur.insert(k, v);
+    fn merge(cur: &mut Value, next: Value) {
+        if empty(&next) || *cur == next {
+            return;
+        }
+        if empty(cur) {
+            *cur = next;
+            return;
+        }
+        match (cur, next) {
+            (Value::Object(c), Value::Object(n)) => {
+                for (k, v) in n {
+                    match c.get_mut(&k) {
+                        Some(old) => merge(old, v),
+                        None => {
+                            c.insert(k, v);
+                        }
                     }
                 }
             }
+            (Value::Array(a), Value::Array(n)) => {
+                for x in n {
+                    if !a.contains(&x) {
+                        a.push(x);
+                    }
+                }
+            }
+            (Value::Array(a), n) => {
+                if !a.contains(&n) {
+                    a.push(n);
+                }
+            }
+            (c, n) => {
+                let old = std::mem::take(c);
+                *c = Value::Array(vec![old, n]);
+            }
         }
-        (Some(cur), n @ Value::Object(_)) if !cur.is_object() => *into = Some(n),
-        _ => {}
+    }
+    let Some(next) = next else {
+        return;
+    };
+    match into.as_mut() {
+        None => *into = Some(next),
+        Some(cur) => merge(cur, next),
     }
 }
 
@@ -1172,6 +1202,123 @@ mod tests {
             e.writing_tool_names
         );
     }
+    /// (F24-4, F32-3) One classifier, one table: each row is a step's events (merged at every depth
+    /// before the step is classified) and whether the step writes. A later event's command under a
+    /// key whose object already has keys is kept (F24-4, the reviewer's RC1); a file name - a value
+    /// under a path / file / directory / uri key of an allow-listed reader - is data, never a command
+    /// (F32-3: `notes&&draft.md`); a value under another key, or under a key the reader's schema does
+    /// not have, is scanned; an unknown tool stays writing.
+    #[test]
+    fn agy_steps_merge_at_every_depth_and_read_reader_parameters_by_their_role() {
+        let ev = |state: &str, name: &str, params: &str| {
+            format!(
+                r#"{{"event":"step_update","step_update":{{"step_index":3,"state":"{state}","step_type":"tool","tool_name":"{name}","tool_info":{{"name":"{name}","parameters":{params}}}}}}}"#
+            )
+        };
+        // (tool name, its events as (state, parameters), whether the step writes)
+        type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
+        let table: &[Row] = &[
+            // F24-4: ACTIVE {"config":{"cwd":"."}}, DONE {"config":{"action":"rm -rf x"}}
+            (
+                "read_file",
+                &[
+                    ("ACTIVE", r#"{"config":{"cwd":"."}}"#),
+                    ("DONE", r#"{"config":{"action":"rm -rf x"}}"#),
+                ],
+                true,
+            ),
+            // a later scalar that differs is kept beside the first: a command is never dropped
+            (
+                "view_file",
+                &[
+                    ("ACTIVE", r#"{"Mode":"plain"}"#),
+                    ("DONE", r#"{"Mode":"del a.rs"}"#),
+                ],
+                true,
+            ),
+            // ... and a command-like key from any event is a write
+            (
+                "read_file",
+                &[
+                    ("ACTIVE", r#"{"Path":"a.md"}"#),
+                    ("DONE", r#"{"opts":{"CommandLine":"x"}}"#),
+                ],
+                true,
+            ),
+            // F32-3: a file name is data, at the top and nested, in an array too
+            (
+                "read_file",
+                &[("ACTIVE", r#"{"Path":"notes&&draft.md"}"#)],
+                false,
+            ),
+            (
+                "view_file",
+                &[
+                    ("ACTIVE", r#"{"AbsolutePath":"C:/r/a; rm x.md"}"#),
+                    (
+                        "DONE",
+                        r#"{"AbsolutePath":"C:/r/a; rm x.md","StartLine":1}"#,
+                    ),
+                ],
+                false,
+            ),
+            (
+                "read_many_files",
+                &[("ACTIVE", r#"{"paths":["a&&b.md","c || d.md"]}"#)],
+                false,
+            ),
+            (
+                "list_dir",
+                &[("ACTIVE", r#"{"DirectoryPath":"C:/r/x > y"}"#)],
+                false,
+            ),
+            (
+                "read_url_content",
+                &[("ACTIVE", r#"{"Url":"https://x.test/?a=1&&b=2"}"#)],
+                false,
+            ),
+            // a search term stays data
+            (
+                "grep_search",
+                &[("ACTIVE", r#"{"Query":"git diff && x","SearchPath":"C:/r"}"#)],
+                false,
+            ),
+            // a key the reader's schema does not have is scanned; a redirect is not a directory
+            (
+                "read_file",
+                &[("ACTIVE", r#"{"Path":"a.md","note":"rm -rf x"}"#)],
+                true,
+            ),
+            (
+                "read_file",
+                &[("ACTIVE", r#"{"redirect":"echo x > a.txt"}"#)],
+                true,
+            ),
+            // a file-name key whose name is also a write marker writes
+            (
+                "read_file",
+                &[("ACTIVE", r#"{"OverwriteFile":"a.md"}"#)],
+                true,
+            ),
+            // an unknown tool stays writing, whatever it names
+            ("open_notes", &[("ACTIVE", r#"{"Path":"notes.md"}"#)], true),
+        ];
+        for (name, events, writing) in table {
+            let s = events
+                .iter()
+                .map(|(state, p)| ev(state, name, p))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let e = read_agy_events(&s, true);
+            assert_eq!(
+                !e.writing_tool_names.is_empty(),
+                *writing,
+                "{name} {events:?}: {:?}",
+                e.writing_tool_names
+            );
+        }
+    }
+
     const DENIED_STDERR: &str = include_str!("fixtures/agy_denied.stderr.txt");
 
     // (wave 2e, F11-5) the agy tool-call classifier: an ACTIVE tool step opens a call keyed by its

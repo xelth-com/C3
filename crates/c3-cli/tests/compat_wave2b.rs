@@ -63,8 +63,9 @@ const FAKE_CMD: &str = "@echo off\r\nset \"FAKE_CODEX_ARGS=%*\"\r\npowershell -N
 /// raw `%*` text; `FAKE_CODEX_ENV_DUMP=<dir>` gets `<kind>-<pid>.env` with the names of the
 /// CODEX_* variables the process inherited; `FAKE_CODEX_HANG=1` hangs a new turn after
 /// `thread.started`, `FAKE_CODEX_HANG_RESUME=1` hangs a `resume` turn; `FAKE_CODEX_TOOL_OPEN=1`
-/// opens a command_execution item (item_9) and hangs; otherwise `FAKE_CODEX_REPLY` is copied to
-/// the `-o` file.
+/// opens a command_execution item (item_9) and hangs; `FAKE_CODEX_TOUCH=<abs path>` appends a line
+/// to that file during the turn (a bound input changing while codex reads it); otherwise
+/// `FAKE_CODEX_REPLY` is copied to the `-o` file.
 const FAKE_PS1: &str = r#"$ErrorActionPreference = 'Stop'
 $raw = [string]$env:FAKE_CODEX_ARGS
 if ($env:FAKE_CODEX_ENV_DUMP) {
@@ -90,6 +91,7 @@ if ($env:FAKE_CODEX_TOOL_OPEN -eq '1') {
 }
 if ($env:FAKE_CODEX_HANG -eq '1' -and -not $isResume) { Start-Sleep -Seconds 60 }
 if ($env:FAKE_CODEX_HANG_RESUME -eq '1' -and $isResume) { Start-Sleep -Seconds 60 }
+if ($env:FAKE_CODEX_TOUCH) { [IO.File]::AppendAllText([string]$env:FAKE_CODEX_TOUCH, "touched`n") }
 if ($o -and $env:FAKE_CODEX_REPLY) { [IO.File]::Copy($env:FAKE_CODEX_REPLY, $o, $true) }
 [Console]::Out.Write("{""type"":""turn.completed"",""usage"":{""input_tokens"":1000,""cached_input_tokens"":200,""cache_write_input_tokens"":0,""output_tokens"":300,""reasoning_output_tokens"":40}}`n")
 exit 0
@@ -999,6 +1001,73 @@ fn an_agy_run_whose_brief_changed_is_not_recorded_as_usable() {
     );
     assert_eq!(last["provider_failure"]["class"], "permission", "{last}");
     assert_eq!(last["tree_check"]["outcome"], "failed", "{last}");
+}
+
+// (0.2.5 D1, F11-2) the same rule for codex, which reads the LIVE brief too: the brief changes
+// during the turn, so the complete reply is not recorded as usable - the outcome names the changed
+// input, class permission; a run under `--rev` read the staged copy and stays usable.
+#[test]
+fn a_codex_run_whose_brief_changed_is_not_recorded_as_usable() {
+    let e = setup("codexbound");
+    let brief = e.repo.join("brief.md");
+    std::fs::write(
+        &brief,
+        "# Brief
+
+1. Is app.txt fine?
+",
+    )
+    .unwrap();
+    let brief_s = brief.to_string_lossy().to_string();
+    let x = e.consult(
+        &[
+            "--reply-name",
+            "cb",
+            "--brief",
+            "brief.md",
+            "--continue-sec",
+            "0",
+        ],
+        &[("FAKE_CODEX_TOUCH", &brief_s)],
+    );
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{t}");
+    let last = e.last();
+    let o = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        o.starts_with("failed: a bound input changed during the run: the brief `brief.md`"),
+        "{o}
+{t}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "permission", "{last}");
+    // the same change under --rev: the reviewer read its staged copy, the reply stands
+    let head = String::from_utf8_lossy(
+        &Command::new("git")
+            .arg("-C")
+            .arg(&e.repo)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    let y = e.consult(
+        &[
+            "--reply-name",
+            "cr",
+            "--brief",
+            "brief.md",
+            "--continue-sec",
+            "0",
+            "--rev",
+            &head,
+        ],
+        &[("FAKE_CODEX_TOUCH", &brief_s)],
+    );
+    let ty = text(&y);
+    assert_eq!(y.status.code(), Some(0), "{ty}");
+    assert_eq!(e.last()["bridge_outcome"], "usable reply", "{ty}");
 }
 
 // ------------------------------------------------------------------ ROLE / TOPIC (companions D8)

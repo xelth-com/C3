@@ -862,33 +862,56 @@ mod tests {
         }
     }
 
+    // (0.2.5 D1) A test of LINEARITY, not of wall time (a fixed 5 s bound failed at 9.7 s on a
+    // loaded machine): the cost of a ~4 MB reply (8N short strings) against that of a ~0.5 MB one
+    // (N), each the fastest of three runs - a linear normaliser stays near 8x, a quadratic one
+    // would be 64x; the ratio must stay far below the quadratic one. A generous absolute ceiling
+    // (minutes) is only a backstop.
     #[test]
     fn normalise_is_linear_on_a_large_reply() {
-        // A ~4 MB reply with 100 000 short strings normalises well under a generous bound.
-        let mut unproven = String::from("[");
-        for i in 0..100_000 {
-            if i > 0 {
-                unproven.push(',');
+        let reply = |n: usize| -> String {
+            let mut unproven = String::from("[");
+            for i in 0..n {
+                if i > 0 {
+                    unproven.push(',');
+                }
+                unproven.push_str("\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"");
             }
-            unproven.push_str("\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"");
-        }
-        unproven.push(']');
-        let big = format!(
-            r#"{{"schema_version":"1","verdict":"ACCEPT","verdict_reason":"r","reply_markdown":"m","findings":[],"prior_findings":[],"unproven":{unproven},"first_run_checklist":[]}}"#
-        );
+            unproven.push(']');
+            format!(
+                r#"{{"schema_version":"1","verdict":"ACCEPT","verdict_reason":"r","reply_markdown":"m","findings":[],"prior_findings":[],"unproven":{unproven},"first_run_checklist":[]}}"#
+            )
+        };
+        let fastest = |text: &str| -> std::time::Duration {
+            (0..3)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let out = normalise_reply(text);
+                    let elapsed = start.elapsed();
+                    assert!(matches!(out, Normalisation::Repaired { .. }));
+                    elapsed
+                })
+                .min()
+                .unwrap()
+        };
+        let small = reply(12_500);
+        let big = reply(100_000);
         assert!(
             big.len() > 3_000_000,
             "≈4 MB reply, got {} bytes",
             big.len()
         );
-        let start = std::time::Instant::now();
-        let out = normalise_reply(&big);
-        let elapsed = start.elapsed();
+        let t_small = fastest(&small);
+        let t_big = fastest(&big);
         assert!(
-            elapsed < std::time::Duration::from_secs(5),
-            "linear cost: {elapsed:?}"
+            t_big < std::time::Duration::from_secs(180),
+            "backstop: {t_big:?}"
         );
-        assert!(matches!(out, Normalisation::Repaired { .. }));
+        let ratio = t_big.as_secs_f64() / t_small.as_secs_f64().max(1e-6);
+        assert!(
+            ratio < 24.0,
+            "8x the input cost {ratio:.1}x the time ({t_small:?} -> {t_big:?}); quadratic would be 64x"
+        );
     }
 
     #[test]

@@ -247,6 +247,7 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         // (B1) the panel run resolved `--rev` to one full sha for every member
         rev: s("rev"),
         diff: s("diff"),
+        diff_tracked_only: b("diff_tracked_only"),
         reply_name: s("reply_name"),
         artifacts: list("artifact"),
         raw: b("raw"),

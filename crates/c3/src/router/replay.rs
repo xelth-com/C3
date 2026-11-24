@@ -30,8 +30,11 @@ pub struct ReplayReport {
     /// The first mismatch, if any (its message is printed and the process exits 1).
     pub first_diff: Option<String>,
     /// (R4) The consult numbers of the routed panels replayed from their rounded scores and
-    /// multipliers (no `ext.c3.draw`).
+    /// multipliers (no `ext.c3.draw`, or - 0.2.5 D1 - one with an invalid row).
     pub rounded: Vec<i64>,
+    /// (0.2.5 D1, F30-4) Of those, the panels whose `ext.c3.draw` block was recorded but is not
+    /// valid (treated as absent): the consult number and why.
+    pub invalid_draw: Vec<(i64, String)>,
 }
 
 impl ReplayReport {
@@ -72,8 +75,15 @@ pub fn replay_sessions(file: &SessionsFile, nn: Option<i64>) -> ReplayReport {
         seen.push(key);
         report.panels += 1;
 
-        if routing.mode == "routed" && recorded_draw(routing).is_none() {
-            report.rounded.push(entry.n);
+        if routing.mode == "routed" {
+            match recorded_draw(routing) {
+                Draw::Precise(_) => {}
+                Draw::Absent => report.rounded.push(entry.n),
+                Draw::Invalid(why) => {
+                    report.rounded.push(entry.n);
+                    report.invalid_draw.push((entry.n, why));
+                }
+            }
         }
         if let Some(diff) = replay_one(entry.n, routing) {
             report.first_diff = Some(diff);
@@ -93,8 +103,12 @@ pub fn replay_record(routing: &PanelRouting) -> Option<String> {
 fn replay_one(n: i64, routing: &PanelRouting) -> Option<String> {
     let explore = recorded_explore(routing);
 
-    // Reconstruct the draw's candidates from the eligible rows, in record order.
-    let precise = recorded_draw(routing);
+    // Reconstruct the draw's candidates from the eligible rows, in record order. (0.2.5 D1,
+    // F30-4) Precise values only from a fully valid block - never mixed with rounded ones.
+    let precise = match recorded_draw(routing) {
+        Draw::Precise(rows) => Some(rows),
+        Draw::Absent | Draw::Invalid(_) => None,
+    };
     let cands: Vec<Candidate> = routing
         .eligible
         .iter()
@@ -235,30 +249,60 @@ fn recorded_mult(e: &c3_core::ledger::RoutingEligible) -> f64 {
         .unwrap_or(1.0)
 }
 
+/// (R4, F16-6; 0.2.5 D1, F30-4) What a record's `ext.c3.draw` block gives the replay.
+#[derive(Debug, Clone, PartialEq)]
+enum Draw {
+    /// No block: the rounded values for every candidate.
+    Absent,
+    /// A block with an invalid row (or not a list): treated as absent - the rounded values for
+    /// every candidate - and the reason is reported.
+    Invalid(String),
+    /// Every row valid: the draw's unrounded `(position, score, mult)`.
+    Precise(Vec<(i64, f64, f64)>),
+}
+
 /// (R4, F16-6) The draw's unrounded `(position, score, mult)` of the record's `ext.c3.draw`, when
-/// it carries them; `None` for a record without them (rounded values only).
-fn recorded_draw(routing: &PanelRouting) -> Option<Vec<(i64, f64, f64)>> {
-    let rows = routing
+/// it carries them. (0.2.5 D1, F30-4) A block with ANY invalid row - no position or score, a
+/// multiplier that is not a positive finite number - is [`Draw::Invalid`], never partly used: a
+/// replay never weighs precise values for some candidates and rounded ones for others.
+fn recorded_draw(routing: &PanelRouting) -> Draw {
+    let Some(block) = routing
         .extra
-        .get("ext")?
-        .get("c3")?
-        .get("draw")?
-        .as_array()?;
-    Some(
-        rows.iter()
-            .filter_map(|r| {
-                let mult = r
-                    .get("mult")
-                    .and_then(|v| v.as_f64())
-                    .filter(|m| m.is_finite() && *m > 0.0)?;
-                Some((
-                    r.get("position")?.as_i64()?,
-                    r.get("score")?.as_f64()?,
-                    mult,
-                ))
-            })
-            .collect(),
-    )
+        .get("ext")
+        .and_then(|v| v.get("c3"))
+        .and_then(|v| v.get("draw"))
+    else {
+        return Draw::Absent;
+    };
+    let Some(rows) = block.as_array() else {
+        return Draw::Invalid("its ext.c3.draw block is not a list".to_string());
+    };
+    let mut out = Vec::with_capacity(rows.len());
+    for (i, r) in rows.iter().enumerate() {
+        let position = r.get("position").and_then(|v| v.as_i64());
+        let score = r
+            .get("score")
+            .and_then(|v| v.as_f64())
+            .filter(|s| s.is_finite());
+        let mult = r
+            .get("mult")
+            .and_then(|v| v.as_f64())
+            .filter(|m| m.is_finite() && *m > 0.0);
+        match (position, score, mult) {
+            (Some(p), Some(s), Some(m)) => out.push((p, s, m)),
+            _ => {
+                let what = if position.is_none() {
+                    "no position"
+                } else if score.is_none() {
+                    "no score"
+                } else {
+                    "a multiplier that is not a positive finite number"
+                };
+                return Draw::Invalid(format!("row {} of its ext.c3.draw block has {what}", i + 1));
+            }
+        }
+    }
+    Draw::Precise(out)
 }
 
 /// The lineage recorded for a seat's position (for the explored comparison).
@@ -362,11 +406,22 @@ pub fn run(collab_dir: &str, task: &str, nn: Option<i64>) -> i32 {
         println!("replay: no routed panel found");
         return 2;
     }
-    if !report.rounded.is_empty() {
-        let ns: Vec<String> = report.rounded.iter().map(|n| format!("n={n}")).collect();
+    let absent: Vec<String> = report
+        .rounded
+        .iter()
+        .filter(|n| !report.invalid_draw.iter().any(|(m, _)| m == *n))
+        .map(|n| format!("n={n}"))
+        .collect();
+    if !absent.is_empty() {
         println!(
             "replay: note - {} replayed from scores and multipliers rounded to 4 decimals (the record carries no full-precision values: written by a build before 0.2.5, or exact at that precision); a near tie can replay to another winner",
-            ns.join(", ")
+            absent.join(", ")
+        );
+    }
+    // (0.2.5 D1, F30-4) a full-precision block with an invalid row is not used at all
+    for (n, why) in &report.invalid_draw {
+        println!(
+            "replay: note - n={n} replayed from scores and multipliers rounded to 4 decimals for every candidate ({why}, so none of its full-precision values is used); a near tie can replay to another winner"
         );
     }
     match &report.first_diff {
@@ -463,5 +518,57 @@ mod tests {
         let new = replay_sessions(&mk(true), None);
         assert!(new.rounded.is_empty());
         assert!(new.identical());
+    }
+
+    // (0.2.5 D1, F30-4) A draw block with ANY invalid row - no position, no score, a multiplier
+    // that is not a positive finite number, or a block that is not a list - is treated as absent:
+    // the replay weighs the rounded values for EVERY candidate (it replays exactly like the record
+    // without the block) and the report names the panel with the reason; a valid block is used.
+    #[test]
+    fn a_replay_never_mixes_precise_and_rounded_values() {
+        let seed = sha2::Sha256::digest(7u32.to_be_bytes()).to_vec();
+        let without = record(&seed, false);
+        let with = record(&seed, true);
+        assert!(matches!(recorded_draw(&with), Draw::Precise(ref r) if r.len() == 2));
+        assert_eq!(recorded_draw(&without), Draw::Absent);
+        let broken = |row: serde_json::Value| -> PanelRouting {
+            let mut v = serde_json::to_value(record(&seed, true)).unwrap();
+            v["ext"]["c3"]["draw"][1] = row;
+            serde_json::from_value(v).unwrap()
+        };
+        for (row, why) in [
+            (serde_json::json!({"score": 0.24996, "mult": 0.19996}), "row 2 of its ext.c3.draw block has no position"),
+            (serde_json::json!({"position": 2, "mult": 0.19996}), "row 2 of its ext.c3.draw block has no score"),
+            (serde_json::json!({"position": 2, "score": 0.24996, "mult": 0.0}), "row 2 of its ext.c3.draw block has a multiplier that is not a positive finite number"),
+            (serde_json::json!({"position": 2, "score": 0.24996, "mult": -1.0}), "row 2 of its ext.c3.draw block has a multiplier that is not a positive finite number"),
+        ] {
+            let rec = broken(row);
+            assert_eq!(recorded_draw(&rec), Draw::Invalid(why.to_string()));
+            // the seats are those of the record without any full-precision value
+            assert_eq!(
+                replay_record(&rec).is_some(),
+                replay_record(&without).is_some(),
+                "{why}"
+            );
+        }
+        let mut v = serde_json::to_value(record(&seed, true)).unwrap();
+        v["ext"]["c3"]["draw"] = serde_json::json!({"position": 1});
+        let not_list: PanelRouting = serde_json::from_value(v).unwrap();
+        assert_eq!(
+            recorded_draw(&not_list),
+            Draw::Invalid("its ext.c3.draw block is not a list".to_string())
+        );
+        // the report names the panel replayed from rounded values, with the reason
+        let routing = serde_json::to_value(broken(serde_json::json!({"position": 2}))).unwrap();
+        let file: SessionsFile = serde_json::from_value(serde_json::json!({
+            "codex": { "consults": [ { "n": 9, "panel": { "id": "p9", "routing": routing } } ] }
+        }))
+        .unwrap();
+        let rep = replay_sessions(&file, None);
+        assert_eq!(rep.rounded, vec![9]);
+        assert_eq!(
+            rep.invalid_draw,
+            vec![(9, "row 2 of its ext.c3.draw block has no score".to_string())]
+        );
     }
 }

@@ -10,6 +10,10 @@
 //! lab: #1 is zhipu like the required #2, so it is recorded `not-picked` ("lab zhipu already seated
 //! by #2") and two members run.
 //!
+//! (0.2.5 D1) Two more real panels: one under `--rev` (each member in its own throwaway worktree
+//! of the same sha), and one whose optional kimi member is refused before it starts because its
+//! brief cannot be staged - replaced from the reserve.
+//!
 //! Windows only: the fake codex is a `.cmd` wrapper around a PowerShell script, as the plugin's
 //! own `fake-codex3.cmd` (`docs/port/fake-clis.md`). It lives in `c3-cli` so cargo builds the
 //! binary with the test's own feature set and hands its path through `CARGO_BIN_EXE_c3`; a panel
@@ -61,6 +65,7 @@ $tid = [guid]::NewGuid().ToString()
 [Console]::Out.Write("{""type"":""thread.started"",""thread_id"":""$tid""}`n")
 [Console]::Out.Write("{""type"":""turn.started""}`n")
 [Console]::Out.Flush()
+if ($env:FAKE_CODEX_CWD_DIR) { [IO.File]::WriteAllText((Join-Path $env:FAKE_CODEX_CWD_DIR "cwd-$([guid]::NewGuid().ToString('N')).txt"), (Get-Location).Path) }
 if ($o -and $env:FAKE_CODEX_REPLY) { [IO.File]::Copy($env:FAKE_CODEX_REPLY, $o, $true) }
 [Console]::Out.Write("{""type"":""turn.completed"",""usage"":{""input_tokens"":1000,""cached_input_tokens"":200,""cache_write_input_tokens"":0,""output_tokens"":300,""reasoning_output_tokens"":40}}`n")
 exit 0
@@ -359,4 +364,332 @@ fn a_panel_with_many_open_findings_starts_its_members() {
         stdout.contains("160 open finding(s) listed in the prompt"),
         "every member printed its own dry run with the findings: {stdout}"
     );
+}
+
+/// Run `git` in `repo` and return its trimmed stdout.
+fn git_out(repo: &Path, args: &[&str]) -> String {
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("git on PATH");
+    assert!(o.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+/// The canonical form of a path (a CI runner's TEMP is an 8.3 short path), `None` when it is gone.
+fn canonical(p: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(p).ok()
+}
+
+/// Whether the task lock `.consult.lock` of the fixture's task is free: absent, or openable for
+/// writing (a holder opens it without write sharing).
+fn task_lock_released(repo: &Path) -> bool {
+    let lock = repo.join(".collab").join("t").join(".consult.lock");
+    !lock.exists()
+        || std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock)
+            .is_ok()
+}
+
+// (0.2.5 D1) Two labs: zhipu (ZAI glm-5.3) and openai (gpt-5.1).
+const ROSTER_TWO_LABS: &str = r#"{"roster_version":1,"reviewers":[{"provider":"ZAI","model":"glm-5.3"},{"provider":"openai","model":"gpt-5.1"}]}"#;
+
+/// (0.2.5 D1) A REAL panel under `--rev` with two reviewers of different labs (the fake codex):
+/// both members run, each in its OWN throwaway worktree of the same (older) sha - two distinct
+/// working directories, neither the live checkout; both ledger entries and handoffs name that sha;
+/// both worktrees are gone afterwards and the task lock is released.
+#[test]
+fn a_rev_panel_runs_each_member_in_its_own_worktree_of_the_same_sha() {
+    let f = fixture("panel-rev", ROSTER_TWO_LABS);
+    let first = git_out(&f.repo, &["rev-parse", "HEAD"]);
+    std::fs::write(f.repo.join("app.txt"), "two\n").unwrap();
+    git(&f.repo, &["commit", "-q", "-am", "second"]);
+    let cwd_dir = f.work.join("cwds");
+    std::fs::create_dir_all(&cwd_dir).unwrap();
+    let mut cmd = Command::new(c3_bin());
+    for (k, _) in std::env::vars() {
+        if k.starts_with("CODEX_CONSULT_") || k.starts_with("FAKE_") || k.starts_with("C3_") {
+            cmd.env_remove(&k);
+        }
+    }
+    let out = cmd
+        .current_dir(&f.repo)
+        .env("CODEX_HOME", &f.home)
+        .env("RT_ZAI_KEY", "zai-test-key")
+        .env("CODEX_CONSULT_EXE", &f.fake)
+        .env("CODEX_CONSULT_ROSTER", &f.roster)
+        .env("CODEX_CONSULT_TELEMETRY", "off")
+        .env("C3_PRIORS", "off")
+        .env("FAKE_CODEX_REPLY", &f.reply)
+        .env("FAKE_CODEX_CWD_DIR", &cwd_dir)
+        .args([
+            "consult",
+            "--task",
+            "t",
+            "--panel",
+            "--panel-size",
+            "2",
+            "--prompt",
+            "x",
+            "--purpose",
+            "framing",
+            "--rev",
+            &first,
+            "--reply-name",
+            "rv",
+            "--codex-exe",
+        ])
+        .arg(&f.fake)
+        .output()
+        .expect("run c3");
+    let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let sessions = f.repo.join(".collab").join("t").join("sessions.json");
+    let ledger: Value =
+        serde_json::from_str(&std::fs::read_to_string(&sessions).expect("sessions.json")).unwrap();
+    let consults = ledger["codex"]["consults"].as_array().expect("consults");
+    assert_eq!(consults.len(), 2, "two members ran: {consults:#?}");
+    for c in consults {
+        assert_eq!(c["bridge_outcome"], "usable reply", "{c}");
+        assert_eq!(c["base_commit"], first.as_str(), "{c}");
+        assert_eq!(c["worktree"]["sha"], first.as_str(), "{c}");
+        let reply_rel = c["reply"].as_str().unwrap_or("");
+        let handoff = std::fs::read_to_string(f.repo.join(".collab").join("t").join(reply_rel))
+            .unwrap_or_default();
+        assert!(
+            handoff.contains(&format!("base {first},")),
+            "the handoff names the sha: {handoff}"
+        );
+    }
+    // two distinct working directories, neither the live checkout, both gone now
+    let cwds: Vec<PathBuf> = std::fs::read_dir(&cwd_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| PathBuf::from(std::fs::read_to_string(e.path()).unwrap().trim()))
+        .collect();
+    assert_eq!(cwds.len(), 2, "one turn per member: {cwds:?}");
+    assert_ne!(cwds[0], cwds[1], "each member has its own worktree");
+    let live = canonical(&f.repo).unwrap();
+    for c in &cwds {
+        assert!(!c.exists(), "the worktree {} was removed", c.display());
+        assert_ne!(canonical(c), Some(live.clone()));
+        assert!(
+            !c.starts_with(&f.repo) && !c.starts_with(&live),
+            "{} is not the live checkout",
+            c.display()
+        );
+    }
+    let worktrees = git_out(&f.repo, &["worktree", "list", "--porcelain"]);
+    assert_eq!(
+        worktrees
+            .lines()
+            .filter(|l| l.starts_with("worktree "))
+            .count(),
+        1,
+        "only the main checkout is left: {worktrees}"
+    );
+    assert!(task_lock_released(&f.repo), "the task lock is released");
+    let _ = std::fs::remove_dir_all(&f.work);
+}
+
+/// (0.2.5 D1) Three entries: kimi (moonshot, always in a throwaway worktree of HEAD), ZAI (zhipu)
+/// and openai - the last one is the reserve of a two-seat panel.
+const ROSTER_KIMI_FIRST: &str = r#"{"roster_version":1,"reviewers":[{"provider":"kimi","engine":"kimi","model":"kimi-code/k3","plan":"kimi-code"},{"provider":"ZAI","model":"glm-5.3"},{"provider":"openai","model":"gpt-5.1"}]}"#;
+
+/// Commit a LINK entry (mode 120000, through the index - no privilege needed) at `rel` pointing at
+/// `target`, and leave a REGULAR file with `live` at `rel` in the live tree (`kimi_engine.rs`'s
+/// fixture of the reviewer's RC1).
+fn commit_link_entry(repo: &Path, rel: &str, target: &Path, live: &str) {
+    use std::io::Write;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["hash-object", "-w", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("git on PATH");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(target.to_string_lossy().replace('\\', "/").as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    let blob = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    git(
+        repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("120000,{blob},{rel}"),
+        ],
+    );
+    git(repo, &["commit", "-q", "-m", "a link at the brief's path"]);
+    std::fs::write(repo.join(rel), live).unwrap();
+}
+
+/// A PATH without any directory that holds a kimi launcher (the real CLI can never start).
+fn path_without_kimi() -> String {
+    let path = std::env::var("PATH").unwrap_or_default();
+    path.split(';')
+        .filter(|d| {
+            !d.is_empty()
+                && !["kimi", "kimi.exe", "kimi.cmd"]
+                    .iter()
+                    .any(|n| Path::new(d).join(n).exists())
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// (0.2.5 D1) The re-seat after a staging refusal, as a REAL panel: the optional kimi member's
+/// brief cannot be staged into its throwaway worktree (HEAD commits a LINK at the brief's path - the
+/// reviewer's RC1 fixture of `kimi_engine.rs`), so it is refused before it starts with the
+/// preflight-class wording; the panel replaces it from the reserve (openai) and finishes with the
+/// reserve's reply beside the other seat's. No kimi turn starts and the sentinel the link points at
+/// keeps its bytes.
+#[test]
+fn a_staging_refusal_is_reseated_from_the_reserve() {
+    let f = fixture("panel-reseat", ROSTER_KIMI_FIRST);
+    let sentinel = f.work.join("sentinel.txt");
+    std::fs::write(&sentinel, "keep me\n").unwrap();
+    commit_link_entry(
+        &f.repo,
+        "brief.md",
+        &sentinel,
+        "# Brief\n\n1. Is app.txt fine?\n",
+    );
+    // the fake kimi and its scratch home (a managed-oauth token whose contents are never read)
+    let kimi = f.work.join("fake-kimi.cmd");
+    std::fs::write(
+        &kimi,
+        include_str!("fixtures/fake-kimi.cmd")
+            .replace("\r\n", "\n")
+            .replace('\n', "\r\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        f.work.join("fake-kimi.ps1"),
+        include_str!("fixtures/fake-kimi.ps1"),
+    )
+    .unwrap();
+    let kimi_log = f.work.join("kimi.jsonl");
+    let uh = f.work.join("userhome");
+    std::fs::create_dir_all(uh.join("AppData").join("Local")).unwrap();
+    std::fs::create_dir_all(uh.join(".kimi-code").join("credentials")).unwrap();
+    std::fs::write(
+        uh.join(".kimi-code")
+            .join("credentials")
+            .join("oauth-token"),
+        "{\"oauth\":\"x\"}\n",
+    )
+    .unwrap();
+    let mut cmd = Command::new(c3_bin());
+    for (k, _) in std::env::vars() {
+        if k.starts_with("CODEX_CONSULT_") || k.starts_with("FAKE_") || k.starts_with("C3_") {
+            cmd.env_remove(&k);
+        }
+    }
+    let out = cmd
+        .current_dir(&f.repo)
+        .env("PATH", path_without_kimi())
+        .env("HOME", &uh)
+        .env("USERPROFILE", &uh)
+        .env("LOCALAPPDATA", uh.join("AppData").join("Local"))
+        .env("CODEX_HOME", &f.home)
+        .env("RT_ZAI_KEY", "zai-test-key")
+        .env("CODEX_CONSULT_EXE", &f.fake)
+        .env("CODEX_CONSULT_KIMI_EXE", &kimi)
+        .env("CODEX_CONSULT_ROSTER", &f.roster)
+        .env("CODEX_CONSULT_HEALTH", "none")
+        .env("CODEX_CONSULT_TELEMETRY", "off")
+        .env("C3_PRIORS", "off")
+        .env("FAKE_CODEX_REPLY", &f.reply)
+        .env("FAKE_KIMI_ARGV_LOG", &kimi_log)
+        .env("FAKE_KIMI_REPLY", &f.reply)
+        .args([
+            "consult",
+            "--task",
+            "t",
+            "--panel",
+            "--panel-size",
+            "2",
+            "--brief",
+            "brief.md",
+            "--prompt",
+            "x",
+            "--purpose",
+            "framing",
+            "--reply-name",
+            "rs",
+            "--codex-exe",
+        ])
+        .arg(&f.fake)
+        .output()
+        .expect("run c3");
+    let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("re-seating as seat 3: openai :: gpt-5.1 replaces kimi :: kimi-code/k3")
+            && stdout.contains("replaced by openai :: gpt-5.1"),
+        "the kimi seat is replaced from the reserve: {stdout}"
+    );
+    assert!(
+        stdout.contains("the kimi seat is not usable:")
+            || stderr.contains("the kimi seat is not usable:"),
+        "stdout:
+{stdout}
+stderr:
+{stderr}"
+    );
+    let sessions = f.repo.join(".collab").join("t").join("sessions.json");
+    let ledger: Value =
+        serde_json::from_str(&std::fs::read_to_string(&sessions).expect("sessions.json")).unwrap();
+    let consults = ledger["codex"]["consults"].as_array().expect("consults");
+    let ran: Vec<(String, String)> = consults
+        .iter()
+        .map(|c| {
+            (
+                c["reviewer"]["model"].as_str().unwrap_or("").to_string(),
+                c["bridge_outcome"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    assert!(
+        ran.contains(&("gpt-5.1".to_string(), "usable reply".to_string())),
+        "the reserve's reply: {ran:?}"
+    );
+    assert!(
+        ran.contains(&("glm-5.3".to_string(), "usable reply".to_string())),
+        "the other seat's reply: {ran:?}"
+    );
+    assert!(
+        !ran.iter().any(|(m, _)| m.contains("kimi")),
+        "the refused seat never reached the ledger: {ran:?}"
+    );
+    let kimi_turns = std::fs::read_to_string(&kimi_log)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.contains("\"kind\":\"turn\""))
+        .count();
+    assert_eq!(kimi_turns, 0, "no kimi turn started");
+    assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "keep me\n");
+    assert!(task_lock_released(&f.repo), "the task lock is released");
+    let _ = std::fs::remove_dir_all(&f.work);
 }

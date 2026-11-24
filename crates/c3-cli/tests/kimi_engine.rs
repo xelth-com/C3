@@ -998,14 +998,39 @@ fn an_untracked_brief_is_staged_and_the_prompt_names_the_uncommitted_paths() {
         ),
         "the prompt carries the isolation paragraph: {body}"
     );
-    // (F11-5) the modified TRACKED path is named; the untracked `.collab/` only counted.
+    // (F11-5) the modified TRACKED path is named; (0.2.5 D1) the untracked `.collab/` - the collab
+    // directory, whose task handoffs are staged into the worktree - is neither named nor counted.
     assert!(
         body.contains("1 tracked path(s) had uncommitted changes") && body.contains(": `app.txt`."),
         "the tracked change is named: {body}"
     );
     assert!(
-        body.contains("1 path(s) that are not in HEAD") && !body.contains("`.collab/`"),
-        "an untracked path is only counted: {body}"
+        !body.contains("path(s) that are not in HEAD") && !body.contains("`.collab/`"),
+        "the collab directory is left out of the list and its count: {body}"
+    );
+    // an untracked path outside the collab directory is still only counted
+    std::fs::write(e.repo.join("confidential-plan.txt"), "n\n").unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            brief_rel,
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    let body2 = e.turns()[0]["prompt_body"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        body2.contains("1 path(s) that are not in HEAD") && !body2.contains("confidential-plan"),
+        "an untracked path is only counted: {body2}"
     );
     assert!(
         body.contains(&format!(
@@ -1274,6 +1299,75 @@ fn a_committed_brief_the_live_tree_cannot_read_is_materialised_from_head() {
             .replace("\r\n", "\n"),
         "# Committed brief\n"
     );
+}
+
+#[test]
+fn a_brief_committed_at_head_but_not_in_the_live_tree_is_taken_from_the_revision() {
+    // (0.2.5 D1, F10-3 / F11-4) the brief is committed at HEAD and DELETED from the live tree: the
+    // entry check no longer refuses the run - the reviewer reads its worktree, where the staging
+    // materialises the committed brief - and the handoff says the brief was taken from the
+    // revision. A brief committed nowhere is still refused before anything starts.
+    let e = setup("brief-from-rev");
+    std::fs::write(e.repo.join("brief.md"), "# Committed brief\n").unwrap();
+    git(&e.repo, &["add", "-A"]);
+    git(&e.repo, &["commit", "-q", "-m", "brief"]);
+    std::fs::remove_file(e.repo.join("brief.md")).unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            "brief.md",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(turns[0]["op_brief_exists"], true, "{:?}", turns[0]);
+    assert_eq!(
+        turns[0]["op_brief_body"]
+            .as_str()
+            .unwrap_or("")
+            .replace("\r\n", "\n"),
+        "# Committed brief\n"
+    );
+    let l = e.last();
+    assert_eq!(l["bridge_outcome"], "usable reply", "{l}");
+    let reply_rel = l["reply"].as_str().unwrap_or("handoffs/01-kimi-reply.md");
+    let handoff = std::fs::read_to_string(e.repo.join(".collab").join("t").join(reply_rel))
+        .unwrap_or_default();
+    assert!(
+        handoff
+            .contains("Taken from the committed revision HEAD (the live tree does not hold it)."),
+        "{handoff}"
+    );
+    assert!(
+        !e.repo.join("brief.md").exists(),
+        "nothing wrote the live brief"
+    );
+    // committed nowhere: the refusal it always was
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            "nowhere.md",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{t}");
+    assert!(t.contains("brief 'nowhere.md' not found"), "{t}");
 }
 
 // ------------------------------------------------------------------ the resume path
