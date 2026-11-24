@@ -180,7 +180,8 @@ and `0f52246` (below). You are their first reader.
   green on both Linux jobs, its Windows job failed once (the launcher probe above; the rerun was
   running when this brief was handed over); `0f52246` and the head were running. The tag waits for
   a green run of the tagged commit. (You have no network: `gh` is not available to you.)
-- The head differs from `0f52246` by this brief and the coordinator's records only.
+- The head differs from `0f52246` by this brief, the coordinator's records and one step of the CI
+  workflow (the Windows job excludes its build and scratch directories from the virus scanner).
 
 ## Questions
 

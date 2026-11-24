@@ -541,6 +541,13 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   form. A dotted Claude id of the published Claude shape is now matched against the closed list and
   the published set in its dash form and sent as they spell it; nothing outside them is ever sent.
   Test: `a_claude_id_spelled_with_dots_is_its_listed_dash_id`.
+- **CI: the Windows job keeps the virus scanner off the build and scratch directories.** The
+  first log of the unsteady Windows job (run 45389095446) showed a fake launcher whose
+  `claude --version` "did not finish within 15 s" - a process start, not a test's logic. The
+  `c3-cli` tests start hundreds of freshly written scripts and binaries, and a real-time scan of
+  each is the first suspect, so the job now excludes the workspace, the temp directories and the
+  toolchain from Defender before it builds (`continue-on-error`: an experiment, not a proven cure;
+  the hangs stay recorded as open).
 - **A hung CI step fails with its log, and the steps after it still run (F38-1).** The per-crate
   test steps of the `ci` workflow ran with `if: success() || failure()` under a job-level limit
   only: a step that hung was cancelled with the whole job, its log was lost and the remaining

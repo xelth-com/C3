@@ -47,6 +47,19 @@ jobs:
             ~/.cargo/git/db
           key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-registry-${{ runner.os }}-
+      # The Windows job is not steady: two hangs without a log and, on 2026-11-24, a fake
+      # launcher's `--version` that "did not finish within 15 s". The c3-cli tests start hundreds
+      # of freshly written scripts and binaries; a real-time scan of each is the first suspect
+      # (on the development machine the scanner even quarantined a test file). An experiment, not
+      # a proven cure: keep the scanner off the build and the scratch directories.
+      - name: Keep the virus scanner off the build and scratch directories (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE", "$env:RUNNER_TEMP", "$env:TEMP", "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+          Add-MpPreference -ExclusionProcess "cargo.exe", "rustc.exe", "c3.exe", "git.exe", "powershell.exe", "pwsh.exe"
+          (Get-MpPreference).ExclusionPath
       - name: Cache target (default features)
         uses: actions/cache@v4
         with:
