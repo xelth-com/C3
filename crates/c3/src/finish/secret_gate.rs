@@ -272,7 +272,8 @@ mod tests {
 
     // (0.2.5) The test-fixture line that refused three commits on 2026-11-22/23 (`auth` followed
     // by a plain word), in a file and inside a saved patch, passes the gate; a key-shaped value
-    // under the same keyword is still refused.
+    // or a passphrase under the same keyword is still refused, and (F46-2/F45-1) a plain word
+    // under `password` is a secret.
     #[test]
     fn a_plain_word_under_auth_passes_the_gate() {
         assert_eq!(
@@ -291,6 +292,25 @@ mod tests {
             scan_staged_text(b"m.entry.auth = \"Xk9fLq2mZp7RtW3vBn8Y\".into();\n").as_deref(),
             Some("assignment")
         );
+        // (R7a) C3's own redaction markers, as a saved `--diff` patch holds them, pass
+        let saved = "diff --git a/p.rs b/p.rs\n\
+--- a/p.rs\n\
++++ b/p.rs\n\
+@@ -1 +1,2 @@\n\
++auth = \"[REDACTED:assignment]\"\n\
++pwd = '[REDACTED:assignment]'\n";
+        assert_eq!(scan_staged_text(saved.as_bytes()), None);
+        for secret in [
+            "auth = \"correct horse battery staple\"\n",
+            "password = \"hunterhunterhunter\"\n",
+            "password = \"troubadour\"\n",
+        ] {
+            assert_eq!(
+                scan_staged_text(secret.as_bytes()).as_deref(),
+                Some("assignment"),
+                "{secret:?} passed the gate"
+            );
+        }
     }
 
     #[test]

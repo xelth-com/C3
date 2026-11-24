@@ -31,19 +31,33 @@ use crate::liveness::proc::ScanProc;
 /// How long the caller of [`within`] waits, after the stop has run, for the worker thread to end.
 const WORKER_GRACE: Duration = Duration::from_millis(1500);
 
-/// How long [`ScanChildren::stop`] waits for the processes it terminated to leave the process table.
+/// How long [`ScanChildren::stop`] waits for the children it killed to exit and for the processes
+/// it terminated to leave the process table (one budget for both).
 const REAP_WAIT: Duration = Duration::from_secs(5);
 
-/// How many times [`ScanChildren::stop`] reads the table and sweeps (a process the tree started
-/// between the read and the kill is caught by the next round).
-const SWEEP_ROUNDS: usize = 3;
+/// How many times, at most, [`ScanChildren::stop`] reads the table and sweeps: it stops at the
+/// first round (after the one that preceded the kills) that finds no live descendant - a process
+/// the tree started between a read and its kill is caught by the next round.
+const SWEEP_ROUNDS: usize = 5;
+
+/// The pause between two sweep rounds.
+const SWEEP_PAUSE: Duration = Duration::from_millis(50);
+
+/// (F45-2) How far before the spawn time the set recorded a descendant of a child whose own start
+/// time could not be read may seem to have started: Linux start times rest on `btime`, which
+/// `/proc/stat` gives in whole seconds.
+const SPAWN_SLACK_SECS: i64 = 2;
 
 /// One child a [`ScanChildren`] set started, as the stop sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StartedChild {
     pub pid: u32,
-    /// Its start time; `None` when it could not be read (its tree is then not swept by pid).
+    /// Its start time; `None` when it could not be read (already a zombie): its tree is then swept
+    /// from `spawned_at`.
     pub start: Option<DateTime<Utc>>,
+    /// (F46-1) When the set started it, by this process's clock - read just before the spawn, so
+    /// never after the child's real start.
+    pub spawned_at: DateTime<Utc>,
     /// When its exit was confirmed and it was reaped; `None` while the set still holds it (its pid
     /// cannot be reused then: the handle - Windows - or the unreaped zombie - Unix - keeps it).
     pub reaped_at: Option<DateTime<Utc>>,
@@ -99,7 +113,8 @@ fn group_of(p: &ScanProc) -> Option<u32> {
 }
 
 /// The processes a stop terminates, from ONE read of the process table (pure): for every child the
-/// set started whose start time is known,
+/// set started - from its start time, or (F46-1: a zombie's cannot be read) from the time the set
+/// spawned it, less [`SPAWN_SLACK_SECS`] -
 ///
 /// * the rows whose parent pid is that child's, started at or after it did - and, for a child
 ///   already reaped, not after it was reaped (a later one has a process that reused the pid for its
@@ -120,7 +135,9 @@ pub(crate) fn tree_to_reap(
     let mut out: Vec<(u32, DateTime<Utc>)> = Vec::new();
     let mut frontier: Vec<(u32, DateTime<Utc>)> = Vec::new();
     for r in roots {
-        let Some(start) = r.start else { continue };
+        let start = r
+            .start
+            .unwrap_or(r.spawned_at - chrono::Duration::seconds(SPAWN_SLACK_SECS));
         let pid_reused = r.reaped_at.is_some() && table.iter().any(|p| p.pid == r.pid);
         for p in table {
             let Some(created) = p.created else { continue };
@@ -147,62 +164,177 @@ pub(crate) fn tree_to_reap(
     out
 }
 
+/// What a [`ScanChildren::stop`] left behind.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StopReport {
+    /// The pids still alive when the stop returned: a registered child that did not exit within
+    /// the wait after its kill, a descendant that did not leave after it was terminated.
+    pub survivors: Vec<u32>,
+    /// Whether any read of the process table succeeded (when none did, descendants were swept only
+    /// through the registered children's pids and process groups).
+    pub table_read: bool,
+    /// Whether a sweep round after the kills found no live descendant (`false`: the rounds ran out
+    /// while one still turned up, or the table was never read).
+    pub finished: bool,
+}
+
+/// The outcome of [`sweep_rounds`].
+#[derive(Debug, Default)]
+struct Sweep {
+    /// Every process terminated, with the start time it was terminated as.
+    terminated: Vec<(u32, DateTime<Utc>)>,
+    /// A round after the first found no live descendant.
+    finished: bool,
+    /// Any read of the table succeeded.
+    read_any: bool,
+}
+
+/// (F46-1) The sweep rounds of a stop, its effects given by the caller (a test drives them): round
+/// 0 uses `first` (the table read before the registered children were killed), every later round
+/// `read`s the table again after [`SWEEP_PAUSE`]; each round takes the trees of `roots`
+/// ([`tree_to_reap`]) - and of every process an earlier round terminated, so a child forked by one
+/// of them just before its end is still found when its parent has left the table - keeps what
+/// still is the process the table showed (`same`), with every terminated process that still is,
+/// and terminates it. The sweep ends at the first round after round 0 that finds nothing alive -
+/// so at least one read follows the kills, and a grandchild forked after one read is caught by the
+/// next - or after [`SWEEP_ROUNDS`] rounds. A round whose read fails finds nothing and does not end
+/// the sweep.
+fn sweep_rounds(
+    roots: &[StartedChild],
+    first: Result<Vec<ScanProc>, String>,
+    mut read: impl FnMut() -> Result<Vec<ScanProc>, String>,
+    group_of: impl Fn(&ScanProc) -> Option<u32>,
+    same: impl Fn(u32, DateTime<Utc>) -> bool,
+    mut terminate: impl FnMut(u32),
+    pause: Duration,
+) -> Sweep {
+    let mut out = Sweep::default();
+    let mut all: Vec<StartedChild> = roots.to_vec();
+    let mut table = first;
+    for round in 0..SWEEP_ROUNDS {
+        if round > 0 {
+            std::thread::sleep(pause);
+            table = read();
+        }
+        let Ok(t) = &table else { continue };
+        out.read_any = true;
+        let mut live: Vec<(u32, DateTime<Utc>)> = tree_to_reap(t, &all, &group_of);
+        live.extend(out.terminated.iter().copied());
+        live.retain(|&(p, c)| same(p, c));
+        if live.is_empty() && round > 0 {
+            out.finished = true;
+            break;
+        }
+        for (pid, created) in live {
+            terminate(pid);
+            if !out.terminated.contains(&(pid, created)) {
+                out.terminated.push((pid, created));
+                // its own children are taken in later rounds: started at or after it, and not
+                // after it was terminated (a later one is a child of a process that reused the pid)
+                all.push(StartedChild {
+                    pid,
+                    start: Some(created),
+                    spawned_at: created,
+                    reaped_at: Some(Utc::now()),
+                });
+            }
+        }
+    }
+    out
+}
+
 impl ScanChildren {
     fn lock(&self) -> std::sync::MutexGuard<'_, ScanChildrenInner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The deadline: refuse every later start; then, in up to [`SWEEP_ROUNDS`] rounds, read the
-    /// process table once, kill every registered child by its handle (first round) and terminate
-    /// every process of the trees of ALL the children the set started ([`tree_to_reap`]) that
-    /// still is the process the table showed; reap the registered children; and wait (at most
-    /// [`REAP_WAIT`]) until everything terminated has left. When the table cannot be read at all,
-    /// each registered child's tree is killed from its pid (`taskkill /T` on Windows, its process
-    /// group elsewhere). Returns when all of that has run.
-    pub fn stop(&self) {
-        let mut g = self.lock();
-        g.stopped = true;
-        let mut terminated: Vec<(u32, DateTime<Utc>)> = Vec::new();
-        for round in 0..SWEEP_ROUNDS {
-            let table = crate::liveness::proc::enumerate_processes_checked();
-            let victims = match &table {
-                Ok(t) => tree_to_reap(t, &g.started, group_of),
-                Err(_) => Vec::new(),
-            };
-            if round == 0 {
-                for (_, child) in g.running.iter_mut() {
-                    if table.is_err() && matches!(child.try_wait(), Ok(None)) {
-                        crate::engines::subprocess::kill_tree_by_pid(child.id());
-                        kill_group(child.id());
-                    }
-                    let _ = child.kill();
+    /// The deadline: refuse every later start and take the registered children out of the set
+    /// (the lock is not held past that); read the process table once, then kill every registered
+    /// child by its handle (on Unix also its process group, which it leads and holds) and sweep the
+    /// trees of ALL the children the set started ([`sweep_rounds`]): round after round, until a
+    /// round after the kills finds no live descendant (at most [`SWEEP_ROUNDS`]). When the table
+    /// cannot be read, each registered child's tree is killed from its pid (`taskkill /T` on
+    /// Windows, its process group elsewhere), and on Unix the group of a child already reaped
+    /// (its orphans keep it) unless another process holds that pid now. Then it waits - at most
+    /// [`REAP_WAIT`], never unbounded - for the killed children to exit (reaping them) and for
+    /// what it terminated to leave, and returns what is still alive ([`StopReport`]).
+    ///
+    /// The remaining limit (F45-2): a descendant that left the child's process group AND was
+    /// re-parented - a daemon made with `setsid` after a double fork - is reachable by neither net
+    /// (parent pid, process group) and is not swept. On Windows a child already reaped leaves no
+    /// net either when the table cannot be read: `taskkill /T` walks only from a live root, and
+    /// the bare pid of an exited child may belong to another process by then.
+    pub fn stop(&self) -> StopReport {
+        let (mut held, roots) = {
+            let mut g = self.lock();
+            g.stopped = true;
+            let held: Vec<(u64, std::process::Child)> = g.running.drain(..).collect();
+            (held, g.started.clone())
+        };
+        // the first read comes before the kills: the tree with its parent links intact
+        let first = crate::liveness::proc::enumerate_processes_checked();
+        for (_, child) in held.iter_mut() {
+            // the pid is held (an unreaped zombie on Unix, the open handle on Windows), so the
+            // group it leads and the tree below it are this child's
+            if first.is_err() {
+                crate::engines::subprocess::kill_tree_by_pid(child.id());
+            }
+            kill_group(child.id());
+            let _ = child.kill();
+        }
+        if first.is_err() {
+            // F45-2: what an exited child left behind - by its group (Unix), while no process
+            // holds the pid again (a group id is not given out while the group has members)
+            for r in roots.iter().filter(|r| r.reaped_at.is_some()) {
+                if crate::liveness::proc::process_start_iso(r.pid).is_none() {
+                    kill_group(r.pid);
                 }
             }
-            let mut any = false;
-            for &(pid, created) in &victims {
-                if still_same(pid, created) {
-                    crate::liveness::proc::terminate_pid(pid);
-                    any = true;
-                    if !terminated.contains(&(pid, created)) {
-                        terminated.push((pid, created));
-                    }
-                }
-            }
-            if !any {
-                break;
-            }
         }
-        let held: Vec<(u64, std::process::Child)> = g.running.drain(..).collect();
-        for (_, mut child) in held {
-            let _ = child.wait();
-            let pid = child.id();
-            g.mark_reaped(pid);
-        }
-        drop(g);
+        let sweep = sweep_rounds(
+            &roots,
+            first,
+            crate::liveness::proc::enumerate_processes_checked,
+            group_of,
+            still_same,
+            crate::liveness::proc::terminate_pid,
+            SWEEP_PAUSE,
+        );
+        // F45-7: the wait for a killed child is bounded and runs without the lock
         let until = std::time::Instant::now() + REAP_WAIT;
-        while terminated.iter().any(|&(p, c)| still_same(p, c)) && std::time::Instant::now() < until
+        let mut survivors: Vec<u32> = Vec::new();
+        for (_, mut child) in held {
+            let exited = loop {
+                match child.try_wait() {
+                    Ok(Some(_)) => break true,
+                    Ok(None) if std::time::Instant::now() < until => {
+                        std::thread::sleep(Duration::from_millis(25))
+                    }
+                    _ => break false,
+                }
+            };
+            if exited {
+                self.lock().mark_reaped(child.id());
+            } else {
+                survivors.push(child.id());
+            }
+        }
+        while sweep.terminated.iter().any(|&(p, c)| still_same(p, c))
+            && std::time::Instant::now() < until
         {
             std::thread::sleep(Duration::from_millis(25));
+        }
+        survivors.extend(
+            sweep
+                .terminated
+                .iter()
+                .filter(|&&(p, c)| still_same(p, c))
+                .map(|&(p, _)| p),
+        );
+        StopReport {
+            survivors,
+            table_read: sweep.read_any,
+            finished: sweep.finished,
         }
     }
 
@@ -262,12 +394,55 @@ fn stopped_error() -> std::io::Error {
 /// is confirmed, and a stop kills it (`Err`); a start after a stop is refused (`Err`, nothing is
 /// started).
 pub(crate) fn run_registered(cmd: Command) -> std::io::Result<Output> {
-    run_registered_with(cmd, true)
+    run_registered_with(cmd, true, None)
+}
+
+/// (F45-5) What a registered child printed so far - stdout, stderr; of each the last
+/// [`SINK_KEEP`] bytes - copied as it is read, so the caller of a deadline that stopped the child
+/// still sees what it printed before.
+pub(crate) type OutputSink = Arc<Mutex<(Vec<u8>, Vec<u8>)>>;
+
+/// How many of the last bytes of each stream an [`OutputSink`] keeps.
+const SINK_KEEP: usize = 64 * 1024;
+
+/// [`run_registered`], its output also copied into `sink` as it is read.
+pub(crate) fn run_registered_into(cmd: Command, sink: OutputSink) -> std::io::Result<Output> {
+    run_registered_with(cmd, true, Some(sink))
+}
+
+/// Read `r` to its end; every chunk is also appended to `sink`'s stdout (`err: false`) or stderr
+/// buffer, which keeps its last [`SINK_KEEP`] bytes.
+fn read_copying(mut r: impl Read, sink: Option<(OutputSink, bool)>) -> Vec<u8> {
+    let mut all = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                all.extend_from_slice(&buf[..n]);
+                if let Some((s, err)) = &sink {
+                    let mut g = s.lock().unwrap_or_else(|e| e.into_inner());
+                    let v = if *err { &mut g.1 } else { &mut g.0 };
+                    v.extend_from_slice(&buf[..n]);
+                    let over = v.len().saturating_sub(SINK_KEEP);
+                    v.drain(..over);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    all
 }
 
 /// [`run_registered`]; `pipes: false` (tests) gives the child no stdout / stderr at all - as a
-/// wrapper that closed both and keeps running looks to the reader.
-fn run_registered_with(mut cmd: Command, pipes: bool) -> std::io::Result<Output> {
+/// wrapper that closed both and keeps running looks to the reader; `sink` gets a copy of the
+/// output as it is read ([`run_registered_into`]).
+fn run_registered_with(
+    mut cmd: Command,
+    pipes: bool,
+    sink: Option<OutputSink>,
+) -> std::io::Result<Output> {
     let Some(set) = SCAN_CHILDREN.with(|s| s.borrow().clone()) else {
         return cmd.output();
     };
@@ -288,6 +463,7 @@ fn run_registered_with(mut cmd: Command, pipes: bool) -> std::io::Result<Output>
             return Err(stopped_error());
         }
         // started under the lock: a stop either sees this child or this start sees the stop
+        let spawned_at = Utc::now();
         let mut child = cmd.spawn()?;
         let out = child.stdout.take();
         let err = child.stderr.take();
@@ -297,6 +473,7 @@ fn run_registered_with(mut cmd: Command, pipes: bool) -> std::io::Result<Output>
         g.started.push(StartedChild {
             pid,
             start: start_of(pid),
+            spawned_at,
             reaped_at: None,
         });
         g.running.push((id, child));
@@ -304,17 +481,11 @@ fn run_registered_with(mut cmd: Command, pipes: bool) -> std::io::Result<Output>
     };
     // stderr on a helper thread, stdout here: both end when the child (and whatever inherited the
     // pipes) closes them, exits or is killed
-    let err_reader = err_pipe.map(|mut e| {
-        std::thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = e.read_to_end(&mut b);
-            b
-        })
-    });
-    let mut stdout = Vec::new();
-    if let Some(mut o) = out_pipe {
-        let _ = o.read_to_end(&mut stdout);
-    }
+    let err_sink = sink.clone().map(|s| (s, true));
+    let err_reader = err_pipe.map(|e| std::thread::spawn(move || read_copying(e, err_sink)));
+    let stdout = out_pipe
+        .map(|o| read_copying(o, sink.map(|s| (s, false))))
+        .unwrap_or_default();
     let stderr = err_reader.and_then(|h| h.join().ok()).unwrap_or_default();
     let status = wait_registered(&set, id)?;
     Ok(Output {
@@ -394,7 +565,19 @@ pub fn within_stopping<T: Send + 'static>(
             None
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            children.stop();
+            let report = children.stop();
+            if !report.survivors.is_empty() {
+                eprintln!(
+                    "c3: the deadline stop could not end {} process(es): pid {}",
+                    report.survivors.len(),
+                    report
+                        .survivors
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
             if rx.recv_timeout(WORKER_GRACE).is_ok() || worker.is_finished() {
                 let _ = worker.join();
             }
@@ -528,7 +711,7 @@ mod tests {
         let t = std::time::Instant::now();
         let out = within_stopping(
             Duration::from_millis(1500),
-            || run_registered_with(sleeper(), false).ok().map(|_| ()),
+            || run_registered_with(sleeper(), false, None).ok().map(|_| ()),
             Arc::clone(&children),
         );
         assert_eq!(out, None);
@@ -635,6 +818,7 @@ mod tests {
         StartedChild {
             pid,
             start: DateTime::from_timestamp(at, 0),
+            spawned_at: DateTime::from_timestamp(at, 0).unwrap(),
             reaped_at: reaped.and_then(|t| DateTime::from_timestamp(t, 0)),
         }
     }
@@ -668,15 +852,172 @@ mod tests {
         let roots = [root(100, 1000, None), root(200, 1500, Some(1600))];
         let got = tree_to_reap(&table, &roots, |_| None);
         assert_eq!(pids(&got), vec![101, 102, 202, 203]);
-        // a child whose start time is unknown is not swept by pid
         let got = tree_to_reap(&table, &[root(100, 0, None)], |_| None);
         assert!(pids(&got).contains(&101));
-        let unknown = StartedChild {
+    }
+
+    // (F46-1, F45-2) A registered child whose start time cannot be read (already a zombie) still
+    // has its tree swept - from the time the set spawned it, less the slack of a whole-second boot
+    // time - and nothing older than that is taken.
+    #[test]
+    fn a_zombie_child_is_swept_from_the_time_it_was_spawned() {
+        let table = vec![
+            row(101, 100, 1001), // its child
+            row(102, 101, 1002), // its grandchild
+            row(103, 100, 999),  // within the slack of the spawn time: taken
+            row(104, 100, 990),  // far older than the spawn: not its child
+            row(301, 1, 1003),   // an orphan in its group (Unix)
+        ];
+        let zombie = StartedChild {
             pid: 100,
             start: None,
+            spawned_at: DateTime::from_timestamp(1000, 0).unwrap(),
             reaped_at: None,
         };
-        assert!(tree_to_reap(&table, &[unknown], |_| None).is_empty());
+        let group = |p: &ScanProc| (p.pid == 301).then_some(100);
+        let got = tree_to_reap(&table, &[zombie], group);
+        assert_eq!(pids(&got), vec![101, 102, 103, 301]);
+    }
+
+    /// A fake process table for [`sweep_rounds`]: what each read returns, in order (the last one
+    /// repeats), with the pids terminated so far left out of every later read.
+    struct FakeTables {
+        reads: Vec<Result<Vec<ScanProc>, String>>,
+        next: usize,
+        killed: Arc<Mutex<Vec<u32>>>,
+    }
+
+    impl FakeTables {
+        fn new(reads: Vec<Result<Vec<ScanProc>, String>>) -> Self {
+            FakeTables {
+                reads,
+                next: 0,
+                killed: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn first(&mut self) -> Result<Vec<ScanProc>, String> {
+            self.read()
+        }
+
+        fn read(&mut self) -> Result<Vec<ScanProc>, String> {
+            let i = self.next.min(self.reads.len() - 1);
+            self.next += 1;
+            let killed = self.killed.lock().unwrap().clone();
+            self.reads[i]
+                .clone()
+                .map(|t| t.into_iter().filter(|p| !killed.contains(&p.pid)).collect())
+        }
+    }
+
+    fn run_sweep(fake: &mut FakeTables, roots: &[StartedChild]) -> Sweep {
+        let first = fake.first();
+        let killed_same = Arc::clone(&fake.killed);
+        let killed_term = Arc::clone(&fake.killed);
+        sweep_rounds(
+            roots,
+            first,
+            || fake.read(),
+            |_| None,
+            move |p, _| !killed_same.lock().unwrap().contains(&p),
+            move |p| killed_term.lock().unwrap().push(p),
+            Duration::from_millis(1),
+        )
+    }
+
+    // (F46-1) A grandchild forked after a read - here: after the read that preceded the kills - is
+    // caught by the next round; the sweep goes on until a round finds no live descendant.
+    #[test]
+    fn a_grandchild_forked_after_a_read_is_caught_by_the_next_round() {
+        let roots = [root(100, 1000, None)];
+        let mut fake = FakeTables::new(vec![
+            Ok(vec![row(101, 100, 1001)]),
+            Ok(vec![row(101, 100, 1001), row(102, 101, 1002)]),
+            Ok(vec![row(102, 101, 1002), row(103, 102, 1003)]),
+            Ok(vec![]),
+        ]);
+        let sweep = run_sweep(&mut fake, &roots);
+        assert_eq!(pids(&sweep.terminated), vec![101, 102, 103]);
+        assert!(sweep.finished && sweep.read_any);
+        assert_eq!(
+            fake.next, 4,
+            "the sweep ends at the first round that finds nothing"
+        );
+        // round 0 found nothing: one more read follows the kills all the same
+        let mut fake = FakeTables::new(vec![Ok(vec![]), Ok(vec![row(101, 100, 1001)]), Ok(vec![])]);
+        let sweep = run_sweep(&mut fake, &roots);
+        assert_eq!(pids(&sweep.terminated), vec![101]);
+        assert!(sweep.finished);
+    }
+
+    // (F46-1) When a descendant still turns up in the last round, the sweep says it did not finish
+    // (the stop reports what is still alive); a round whose table cannot be read finds nothing and
+    // does not end the sweep.
+    #[test]
+    fn the_sweep_says_when_its_rounds_ran_out() {
+        let roots = [root(100, 1000, None)];
+        // every read shows a new descendant
+        let reads = (0..SWEEP_ROUNDS as u32 + 2)
+            .map(|i| Ok(vec![row(101 + i, 100, 1001 + i as i64)]))
+            .collect();
+        let mut fake = FakeTables::new(reads);
+        let sweep = run_sweep(&mut fake, &roots);
+        assert!(!sweep.finished);
+        assert_eq!(sweep.terminated.len(), SWEEP_ROUNDS);
+        // unreadable, then readable
+        let mut fake = FakeTables::new(vec![
+            Err("denied".into()),
+            Err("denied".into()),
+            Ok(vec![row(101, 100, 1001)]),
+            Ok(vec![]),
+        ]);
+        let sweep = run_sweep(&mut fake, &roots);
+        assert_eq!(pids(&sweep.terminated), vec![101]);
+        assert!(sweep.finished);
+        // never readable: not finished, nothing read
+        let mut fake = FakeTables::new(vec![Err("denied".into())]);
+        let sweep = run_sweep(&mut fake, &roots);
+        assert!(!sweep.finished && !sweep.read_any);
+    }
+
+    // (F46-1, Grok's RC2) A running child with a background grandchild: when `within`'s deadline
+    // fires, the grandchild does not outlive it.
+    #[cfg(unix)]
+    #[test]
+    fn a_background_grandchild_of_a_running_child_is_reaped() {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-bounded-rc2-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pid_file = dir.join("bg.pid");
+        let script = format!(
+            "sleep 30 >/dev/null 2>&1 </dev/null & echo $! > '{}'; exec sleep 5",
+            pid_file.display()
+        );
+        let children = Arc::new(ScanChildren::default());
+        let out = within_stopping(
+            Duration::from_secs(1),
+            move || {
+                let mut c = Command::new("sh");
+                c.args(["-c", &script]);
+                run_registered(c).ok().map(|_| ())
+            },
+            Arc::clone(&children),
+        );
+        assert_eq!(out, None);
+        let bg: u32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let alive = still_alive_after_wait(&[bg]);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            alive.is_empty(),
+            "the background sleep {bg} outlived the deadline"
+        );
     }
 
     // (F31-1, Unix) An orphan - re-parented after its parent exited - is found by the child's

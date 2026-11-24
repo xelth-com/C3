@@ -1,0 +1,836 @@
+codex-consult: detached run 177fb994 (detach id 177fb994-da6b-4414-a419-52c310487f34) - pid 21680 on LAPTOP-9SGIHQ03, started 2026-11-24T09:25:59+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-177fb994.status.json
+Panel 90004ff2: 3 of 3 roster entries run, at once (roster C:\Users\Dmytro\AppData\Local\Temp\claude\66aab2698810b170\e97cc6d0-6d1c-45b4-8904-07597e0d378e\scratchpad\rosters\roster-w50.json; panel id 90004ff2-3883-465e-b7e3-4f3426021ce4)
+  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)
+  #1 grok :: grok-4.7 [grok] - member, n=36, handoff 51
+  #2 meta :: muse-spark-1.3-contributor [muse] - member, n=37, handoff 52
+  #3 ZAI-claude :: glm-5.3 [claude] - member, n=38, handoff 53
+Routing: routed by the ratings - size 3 (-PanelAll); seed 6aebebbade81 (nonce 2026-11-24 from date); exploration 0.2 per slot
+  eligible: #1 grok :: grok-4.7 [grok] (lab xai by vendor; score 1.891 purpose of 14), #2 meta :: muse-spark-1.3-contributor [muse] (lab meta by vendor; score 1.854 purpose of 10), #3 ZAI-claude :: glm-5.3 [claude] (lab zhipu by vendor; score 1.611 purpose of 7)
+  picked  : 1. #1 grok :: grok-4.7 [grok] (lab-draw), 2. #2 meta :: muse-spark-1.3-contributor [muse] (lab-draw), 3. #3 ZAI-claude :: glm-5.3 [claude] (lab-draw)
+Concurrency: at once - endpoint groups: grok x1, meta x1, ZAI-claude x1; -PanelConcurrency 0 (no cap)
+Timeout: 2400 s per member (the default of purpose diff-review); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 2 of 3 finished: meta :: muse-spark-1.3-contributor [muse] - usable reply (315.7 s)
+  panel member 3 of 3 finished: ZAI-claude :: glm-5.3 [claude] - usable reply (851.3 s)
+  panel member 1 of 3 finished: grok :: grok-4.7 [grok] - usable reply (1022.5 s)
+
+=== panel 90004ff2 member 1 of 3: grok :: grok-4.7 [grok] (roster #1) ===
+codex-consult: usable reply - grok :: grok-4.7 [grok], mode new, thread 01a20cab-1ed7-7f81-a07f-d70478770589 (source: events), wall 880.9 s
+verdict    : HOLD - An allow-listed agy reader can hide a command under a data-shaped key and stay usable, a --rev brief can be recorded under a hash the worktree did not get, and patch-claim cleanup can delete or replace another run's file.
+findings   : 0 blocker, 4 major, 2 minor, 0 note -> F51-1..F51-6 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 fixed, F10-4 not-checked, F10-5 not-checked, F10-7 still-open, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 fixed, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 fixed, F11-12 fixed, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F13-9 not-checked, F14-1 not-checked, F14-2 not-checked, F14-3 not-checked, F14-4 not-checked, F14-5 not-checked, F15-1 not-checked, F15-2 not-checked, F15-3 not-checked, F15-5 not-checked, F15-6 not-checked, F16-1 not-checked, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-5 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 not-checked, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 fixed, F18-2 not-checked, F18-3 fixed, F18-4 still-open, F18-5 not-checked, F18-6 not-checked, F18-7 not-checked, F19-1 not-checked, F19-2 still-open, F19-3 fixed, F19-4 not-checked, F19-5 not-checked, F19-6 fixed, F20-1 not-checked, F20-2 not-checked, F20-3 fixed, F20-4 not-checked, F20-5 not-checked, F20-6 still-open, F24-1 not-checked, F24-2 fixed, F24-4 fixed, F27-1 not-checked, F27-2 not-checked, F27-3 fixed, F28-1 not-checked, F28-2 fixed, F28-3 fixed, F29-1 not-checked, F29-2 not-checked, F29-3 fixed, F30-1 fixed, F30-2 fixed, F30-3 not-checked, F30-4 fixed, F30-5 not-checked, F30-6 not-checked, F31-1 not-checked, F31-2 not-checked, F31-3 not-checked, F31-4 not-checked, F31-5 not-checked, F31-6 fixed, F32-1 not-checked, F32-2 not-checked, F32-3 fixed, F32-4 not-checked, F32-5 not-checked, F36-1 not-checked, F36-2 not-checked, F36-3 not-checked, F36-4 not-checked, F36-5 not-checked, F36-6 not-checked, F36-7 not-checked, F36-8 not-checked, F38-1 not-checked, F38-2 not-checked, F38-3 not-checked, F38-4 not-checked, F38-5 not-checked, F39-1 not-checked, F39-2 not-checked, F39-4 not-checked, F43-1 fixed, F43-2 fixed, F43-3 still-open, F43-4 not-checked, F43-5 not-checked, F43-6 not-checked, F43-7 not-checked, F43-8 not-checked, F44-1 fixed, F44-2 not-checked, F44-3 not-checked, F45-1 not-checked, F45-2 not-checked, F45-3 not-checked, F45-4 not-checked, F45-5 not-checked, F45-6 not-checked, F45-7 not-checked, F45-8 not-checked, F45-9 not-checked, F46-1 not-checked, F46-2 not-checked, F46-3 not-checked, F46-4 not-checked, F46-5 not-checked, F46-6 not-checked, F46-7 not-checked, F46-8 not-checked, F47-1 not-checked, F47-2 not-checked, F47-3 not-checked, F47-4 not-checked, F48-1 not-checked, F48-2 not-checked, F48-3 not-checked, F48-4 not-checked, F48-5 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\51-grok-reply-grok.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\51-grok-reply-grok.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\51-grok-reply-grok.events.jsonl
+
+## Q1
+Byte hashes, not timestamps, decide a bound-input change (`orchestrate/mod.rs:446`; tree content at `revision.rs:409`). This run's patch is written before `collab_before` (`orchestrate/mod.rs:4055`) and only that file plus its temp name is exempt (`reviewed.rs:1503`). A sibling's other patch is a warning on a worktree and on muse, grok, claude and http; a complete live-tree agy reply with no writing step stays usable. A failed re-read is treated as a change: an empty hash or `missing` fails the reply (`orchestrate/mod.rs:446`). Codex in a worktree is exempt (`tree.rs:345`).
+
+## Q2
+The merge keeps both conflicting values (`agy.rs:470`). On an allow-listed reader only a Scanned string is tested (`tree_check.rs:241`). A key ending in `path`, `file`, `url`, `uri` or `dir` (and the other suffixes), or containing `query`, `pattern`, `regex`, `search`, `glob`, `include` or `exclude`, is data (`tree_check.rs:265`). Values such as `exec_path` = `rm -rf x`, `paths` = `bash -c rm`, `research` = `git clean -fd` (`research` contains `search`) and `global` = `rm -rf x` (`global` contains `glob`) are not writing. Any other tool name still counts as writing, so a complete agy reply is kept.
+
+## Q3
+Equal bytes share one content-addressed name. A crash after the synced temp and before publish leaves the temp, not a half-written final name. Without hard links the name is an empty claim, then a rename (`reviewed.rs:1268`); an empty file unchanged for 60s is taken over (`reviewed.rs:1188`). `drop_own_claim` and the takeover stat the file, then `remove_file` by name (`reviewed.rs:1232`, `reviewed.rs:1412`). A sibling that finishes in that gap is deleted. A live owner stalled past 60s can lose the claim and, where rename replaces, overwrite the other run, so the ledger sha256 is not the file. Excluded paths use a new index in the system temp directory (`reviewed.rs:1033`) via `GIT_INDEX_FILE` (`reviewed.rs:752`) and `GIT_OPTIONAL_LOCKS=0`. I saw no write to the repository index. A kill leaves that temp index in the temp directory.
+
+## Q4
+Without `--diff-tracked-only`, a one-revision patch still contains every untracked, not-ignored file (`reviewed.rs:978`). Gitignore and `.c3ignore` stay out. At most ten names are printed; a backtick or a control character is only counted (`reviewed.rs:1544`) while its bytes stay in the patch. The flag is on the CLI, detach (`detach.rs:220`) and panel members (`panel/run.rs:2290`, `member.rs:250`). MCP `c3_consult` forwards `diff` and has no flag (`mcp/mod.rs:318`, `mcp/mod.rs:971`).
+
+## Q5
+One start-of-run HEAD resolve is `rev_live_head` (`orchestrate/mod.rs:2725`). It withholds priors and is the handoff and ledger live HEAD, or unresolved when empty. Finding `source.base_commit` is the worktree fingerprint (`ledger.rs:51`). A later HEAD move does not change that launch value. A missing brief is hashed by `committed_brief`, which prefers the literal HEAD (`worktree.rs:934`). Staging reads again (`reviewed.rs:435`); drift skips the re-hash when `brief_from_revision` is set (`orchestrate/mod.rs:443`). The handoff can cite HEAD and a sha256 the worktree does not hold.
+
+## Q6
+`explain` elects with `skip_preflight` and `no_network` (`cli/router.rs:264`), reads records and searches PATH, and I saw no child process and no consultation write. Replay reads sessions only. Any invalid `ext.c3.draw` row, including a missing `mult`, drops the whole block (`replay.rs:291`), so a record that used to match on a mix of precise and rounded values can now exit 1. The file is left as it was.
+
+## Q7
+Not executed: a real agy, muse or grok CLI for the bound-input rule; http `--rev` end to end; a no-hardlink crash on the claim; the `remove_file` race; HEAD moving between the two brief reads. The changelog's tests were not run. The README diff, the consult skill reference, and most test bodies were not read.
+
+## Requested checks
+RC1. In `crates/c3`, assert `agy_tool_step_is_writing` for `read_file` with `exec_path` = `rm -rf x` and with `research` = `git clean -fd`. Read-only. Both are false today (finding #1). One unit test.
+RC2. Disposable repo: delete the live brief, differ HEAD from an older commit, run `--rev` of the older commit, compare the handoff brief sha256 with the worktree file. Workspace-write. They differ if HEAD's blob changes after the plan-time read (finding #2). 10 minutes.
+RC3. Two no-hardlink placements of one patch name; pause between `file_state` and `remove_file`. Workspace-write. The finished sibling file is gone (finding #3). One fixture.
+
+### Findings
+
+- **F51-1** [major] `crates/c3/src/engines/tree_check.rs:241`, `crates/c3/src/engines/tree_check.rs:265` - On an allow-listed agy reader, a command is not classified as writing when its key ends in a path/file/url/dir suffix or contains a search fragment such as search or glob, so a complete reply stays usable. Trigger: A read_file (or other AGY_READ_ONLY_TOOLS) step logs parameters such as exec_path = rm -rf x, paths = [bash -c rm], research = git clean -fd, or global = rm -rf x, and the tree check then sees no writing step. Evidence: read-code: Strings are command-scanned only for role Scanned. Write markers are tested first, then any key containing a search marker or ending in path/file/url/uri/dir/folder is Data and never scanned. research contains search; global contains glob.; read-code: An agy run with no writing step and a complete schema-valid reply is warned and the reply is kept even when the tree changed. Verify: RC1. Remedy: Treat only known file-name parameters of each allow-listed reader as data. Scan every other key, and do not use substring matches such as glob inside global or search inside research.
+- **F51-2** [major] `crates/c3/src/engines/worktree.rs:934`, `crates/c3/src/consult/reviewed.rs:435`, `crates/c3/src/consult/orchestrate/mod.rs:443`, `crates/c3/src/consult/orchestrate/render.rs:626` - The brief hash and the 'taken from revision HEAD' line are fixed at plan time, while staging reads the brief again and drift does not re-hash it, so the handoff and ledger can name bytes the reviewer did not read. Trigger: The live brief is missing, committed_brief takes HEAD's blob, and before stage_bytes either the live file appears or HEAD's blob at that path changes. Under --rev the reviewed commit's own brief is skipped whenever HEAD has the path. Evidence: read-code: committed_brief returns the string HEAD plus the blob read at plan time, and only then the reviewed revision.; read-code: Staging calls brief_bytes again, which returns a live file first and otherwise re-reads HEAD.; read-code: When brief_from_revision is set, brief_sha_after is the plan-time hash and brief_changed stays false. Verify: RC2. Remedy: Hash the bytes staging actually wrote, name that commit sha rather than HEAD, and prefer the reviewed revision when --rev is set.
+- **F51-3** [major] `crates/c3/src/consult/reviewed.rs:1232`, `crates/c3/src/consult/reviewed.rs:1412`, `crates/c3/src/consult/reviewed.rs:1291` - Claim cleanup removes the patch name after a stat, so a sibling's finished patch can be deleted, and a live owner stalled more than 60 seconds can later replace the file the other run published. Trigger: No hard links. One placement's rename fails, or an empty claim is older than 60s, and the other placement's rename lands between file_state and remove_file. Or the first process resumes and renames onto the name after the takeover. Evidence: read-code: drop_own_claim unlinks by leaf name once it has seen size 0 and the claim identity. It does not unlink the opened handle.; read-code: The 60s takeover uses the same stat-then-remove_file sequence and treats any unchanged empty file as abandoned, with no check that the owner has exited.; inferred: The owner's dir.rename runs after that window and, on a filesystem where rename replaces, writes its bytes over the name the other run already published. Verify: RC3. Remedy: Unlink only the opened claim handle (or rename over the claim from the same directory handle without a separate delete). Take over a claim only when its owner pid is dead, not merely when the empty file is 60s old. Supersedes: F43-3.
+- **F51-4** [major] `crates/c3/src/consult/orchestrate/mod.rs:446`, `crates/c3/src/consult/orchestrate/mod.rs:457` - A live-tree reply is failed as a changed bound input when the brief or an artifact cannot be re-read, even if the bytes are unchanged. Trigger: At the post-turn re-hash the brief path is locked or otherwise unreadable, or an artifact read fails. brief_sha_after becomes empty, or the artifact after-hash becomes missing. Evidence: read-code: fs::read failure uses unwrap_or_default for the brief and unwrap_or_else missing for artifacts. Any difference from the pre-run hash sets brief_changed or artifacts_changed_paths.; read-code: A non-empty bound-changed list forces outcome failed and clears a usable reply. Verify: Make the brief unreadable at the end of a fake live-tree consult (revoke read for the re-hash only) and read bridge_outcome. Remedy: If the re-read fails, fail with 'could not be re-read' or retry. Do not report a content change unless two successful hashes differ.
+- **F51-5** [minor] `crates/c3/src/mcp/mod.rs:318`, `crates/c3/src/mcp/mod.rs:971` - An MCP consult or panel can pass diff and cannot pass --diff-tracked-only, so a one-revision diff from MCP always embeds untracked file content. Trigger: c3_consult or c3_panel is called with diff set to one revision while the worktree has an untracked, not-ignored file. Evidence: read-code: The forwarded string flags include diff and do not include diff_tracked_only.; read-code: The c3_consult input schema documents diff and has no tracked-only property. Panel and detach paths do thread the CLI flag. Verify: Call the MCP consult tool schema and confirm diff_tracked_only is absent; run a one-revision diff through that builder and inspect the argv. Remedy: Add a boolean diff_tracked_only to the MCP consult and panel schemas and append --diff-tracked-only when it is true.
+- **F51-6** [minor] `crates/c3/src/consult/detach.rs:1404` - When the pending stream's mtime is known and the noted stream's mtime is not, the death record keeps the pending path, which can be the older main stream. Trigger: The status note names a continuation events file that bases.join cannot see as a file, while the pending record still names the main stream and that file's mtime is readable. Evidence: read-code: The comment says the note wins when either time is unknown. The match returns false for (Some pending, None noted), so the pending path is kept. Verify: Build a death record whose note path does not resolve under bases and whose pending path does, and compare events_file with the note. Remedy: If the noted path does not resolve, keep the note when the pending file is the older name, or resolve both paths the same way the events file was stored.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside this commit; not re-read.
+- F02-2 - not-checked - Outside this commit; not re-read.
+- F02-3 - not-checked - Outside this commit; not re-read.
+- F02-4 - not-checked - Outside this commit; not re-read.
+- F02-5 - not-checked - Outside this commit; not re-read.
+- F02-6 - not-checked - Outside this commit; not re-read.
+- F02-7 - not-checked - Outside this commit; not re-read.
+- F02-8 - not-checked - Outside this commit; not re-read.
+- F02-9 - not-checked - Outside this commit; not re-read.
+- F02-10 - not-checked - Outside this commit; not re-read.
+- F02-11 - not-checked - Outside this commit; not re-read.
+- F02-12 - not-checked - Outside this commit; not re-read.
+- F02-13 - not-checked - Outside this commit; not re-read.
+- F02-14 - not-checked - Outside this commit; not re-read.
+- F02-15 - not-checked - Outside this commit; not re-read.
+- F02-16 - not-checked - Outside this commit; not re-read.
+- F02-17 - not-checked - Outside this commit; not re-read.
+- F02-18 - not-checked - Outside this commit; not re-read.
+- F02-19 - not-checked - Outside this commit; not re-read.
+- F02-20 - not-checked - Outside this commit; not re-read.
+- F02-21 - not-checked - Outside this commit; not re-read.
+- F03-1 - not-checked - Outside this commit; not re-read.
+- F03-2 - not-checked - Outside this commit; not re-read.
+- F03-3 - not-checked - Outside this commit; not re-read.
+- F03-4 - not-checked - Outside this commit; not re-read.
+- F03-5 - not-checked - Outside this commit; not re-read.
+- F03-6 - not-checked - Outside this commit; not re-read.
+- F04-1 - not-checked - Outside this commit; not re-read.
+- F04-2 - not-checked - Outside this commit; not re-read.
+- F04-3 - not-checked - Outside this commit; not re-read.
+- F04-4 - not-checked - Outside this commit; not re-read.
+- F04-5 - not-checked - Outside this commit; not re-read.
+- F04-6 - not-checked - Outside this commit; not re-read.
+- F04-7 - not-checked - Outside this commit; not re-read.
+- F04-8 - not-checked - Outside this commit; not re-read.
+- F04-9 - not-checked - Outside this commit; not re-read.
+- F10-1 - not-checked - Outside this commit; not re-read.
+- F10-2 - not-checked - Outside this commit; not re-read.
+- F10-3 - fixed - A live-missing brief is accepted when committed_brief returns bytes (worktree.rs:930). The second read is finding #2.
+- F10-4 - not-checked - Single-run snapshot is taken at start (orchestrate/mod.rs:2696); panel concurrency was not re-tested.
+- F10-5 - not-checked - Outside this commit; not re-read.
+- F10-7 - still-open - note_engine_stream still runs only when panel_member is None (orchestrate/mod.rs:4377 and 6692).
+- F11-1 - not-checked - Classifier merge was read; the empty-ACTIVE write case was not re-run.
+- F11-2 - not-checked - Bound-input withhold now covers every live-tree engine; a mid-run artifact swap was not executed.
+- F11-3 - not-checked - Outside this commit; not re-read.
+- F11-4 - fixed - Same committed_brief acceptance as F10-3. Staging still re-reads (finding #2).
+- F11-5 - not-checked - Collab paths are omitted from the isolation paragraph; other uncommitted names are still listed.
+- F11-6 - not-checked - Single-run judgement uses shown_priors (orchestrate/mod.rs:4950). A live status flip was not executed.
+- F11-7 - not-checked - Outside this commit; not re-read.
+- F11-8 - not-checked - Outside this commit; not re-read.
+- F11-9 - not-checked - Outside this commit; not re-read.
+- F11-10 - not-checked - Outside this commit; not re-read.
+- F11-11 - fixed - A detached single run persists the stream and the reader loads record.stream (detach.rs:1551). Panel members remain F10-7.
+- F11-12 - fixed - reply_outcomes counts a sidecar or partial only while present() sees the file (providers.rs:2781).
+- F12-1 - not-checked - Outside this commit; not re-read.
+- F12-2 - not-checked - Outside this commit; not re-read.
+- F12-3 - not-checked - Outside this commit; not re-read.
+- F12-4 - not-checked - Outside this commit; not re-read.
+- F13-1 - not-checked - Outside this commit; not re-read.
+- F13-2 - not-checked - Outside this commit; not re-read.
+- F13-3 - not-checked - Outside this commit; not re-read.
+- F13-4 - not-checked - Outside this commit; not re-read.
+- F13-5 - not-checked - Outside this commit; not re-read.
+- F13-6 - not-checked - Outside this commit; not re-read.
+- F13-7 - not-checked - Outside this commit; not re-read.
+- F13-8 - not-checked - Outside this commit; not re-read.
+- F13-9 - not-checked - Outside this commit; not re-read.
+- F14-1 - not-checked - Outside this commit; not re-read.
+- F14-2 - not-checked - Outside this commit; not re-read.
+- F14-3 - not-checked - Outside this commit; not re-read.
+- F14-4 - not-checked - Outside this commit; not re-read.
+- F14-5 - not-checked - Outside this commit; not re-read.
+- F15-1 - not-checked - Outside this commit; not re-read.
+- F15-2 - not-checked - Outside this commit; not re-read.
+- F15-3 - not-checked - Outside this commit; not re-read.
+- F15-5 - not-checked - Outside this commit; not re-read.
+- F15-6 - not-checked - Outside this commit; not re-read.
+- F16-1 - not-checked - Outside this commit; not re-read.
+- F16-2 - not-checked - Outside this commit; not re-read.
+- F16-3 - not-checked - Outside this commit; not re-read.
+- F16-4 - not-checked - Outside this commit; not re-read.
+- F16-5 - not-checked - Outside this commit; not re-read.
+- F16-6 - not-checked - Outside this commit; not re-read.
+- F16-7 - not-checked - Outside this commit; not re-read.
+- F16-8 - not-checked - Outside this commit; not re-read.
+- F16-9 - not-checked - Outside this commit; not re-read.
+- F16-10 - not-checked - Outside this commit; not re-read.
+- F17-1 - not-checked - Outside this commit; not re-read.
+- F17-2 - not-checked - Explain availability is now record-only; the seat-mark mismatch was not re-tested.
+- F17-3 - not-checked - The pins-fill-the-panel warning was read (F30-2). The empty-pool case was not re-run.
+- F17-4 - not-checked - Outside this commit; not re-read.
+- F17-5 - not-checked - Outside this commit; not re-read.
+- F17-6 - not-checked - Outside this commit; not re-read.
+- F17-7 - not-checked - Outside this commit; not re-read.
+- F17-8 - not-checked - Outside this commit; not re-read.
+- F17-9 - not-checked - Outside this commit; not re-read.
+- F17-10 - not-checked - Outside this commit; not re-read.
+- F18-1 - fixed - Under --rev, reviewed_info and finding source.base_commit come from the worktree fingerprint (ledger.rs:51).
+- F18-2 - not-checked - git_cmd sets GIT_OPTIONAL_LOCKS=0. ThrowawayWorktree::create was not re-read in this pass.
+- F18-3 - fixed - collab_before is taken after the patch write, and only that patch file is exempt (reviewed.rs:1503).
+- F18-4 - still-open - A one-revision diff still embeds untracked content unless --diff-tracked-only is set (reviewed.rs:978).
+- F18-5 - not-checked - Outside this commit; not re-read.
+- F18-6 - not-checked - Outside this commit; not re-read.
+- F18-7 - not-checked - Outside this commit; not re-read.
+- F19-1 - not-checked - Outside this commit; not re-read.
+- F19-2 - still-open - Same default as F18-4: untracked content is still in the patch. The notice and flag are new.
+- F19-3 - fixed - The patch name includes the content sha8 and place_patch refuses other bytes (reviewed.rs:1604).
+- F19-4 - not-checked - Outside this commit; not re-read.
+- F19-5 - not-checked - Outside this commit; not re-read.
+- F19-6 - fixed - Withholding uses the start-of-run HEAD, and new findings store the worktree base (orchestrate/mod.rs:2725, ledger.rs:51).
+- F20-1 - not-checked - Outside this commit; not re-read.
+- F20-2 - not-checked - Outside this commit; not re-read.
+- F20-3 - fixed - Different bytes get a different content-addressed name (reviewed.rs:1604).
+- F20-4 - not-checked - Outside this commit; not re-read.
+- F20-5 - not-checked - Collab paths are left out of the isolation list. Other uncommitted names are still inserted.
+- F20-6 - still-open - Same default as F18-4. MCP cannot set the new flag (finding #5).
+- F24-1 - not-checked - Outside this commit; not re-read.
+- F24-2 - fixed - When both mtimes resolve, the newer file wins (detach.rs:1403). An unresolvable note loses (finding #6).
+- F24-4 - fixed - merge_parameters recurses into objects and keeps both scalars (agy.rs:447).
+- F27-1 - not-checked - Outside this commit; not re-read.
+- F27-2 - not-checked - Outside this commit; not re-read.
+- F27-3 - fixed - is_run_patch_file matches the written name and a 32-hex temp only (reviewed.rs:1503).
+- F28-1 - not-checked - Placement still removes the temp on the error path; a failed removal is reported. The no-hardlink claim race is finding #3.
+- F28-2 - fixed - Excluded paths go through a temp index. The 500-path refusal is gone (reviewed.rs:873).
+- F28-3 - fixed - Lossy UTF-8 is counted, stored as lossy_utf8, and named in the prompt (reviewed.rs:1600).
+- F29-1 - not-checked - Outside this commit; not re-read.
+- F29-2 - not-checked - Outside this commit; not re-read.
+- F29-3 - fixed - rev_live_head is one resolve at start (orchestrate/mod.rs:2725).
+- F30-1 - fixed - explain sets no_network and skip_preflight before panel_members (cli/router.rs:264).
+- F30-2 - fixed - tier_missed_warning fires when required seats fill k (panel/plan.rs:1251).
+- F30-3 - not-checked - Outside this commit; not re-read.
+- F30-4 - fixed - Any invalid draw row yields Draw::Invalid for the whole block (replay.rs:291).
+- F30-5 - not-checked - Outside this commit; not re-read.
+- F30-6 - not-checked - Outside this commit; not re-read.
+- F31-1 - not-checked - Outside this commit; not re-read.
+- F31-2 - not-checked - Outside this commit; not re-read.
+- F31-3 - not-checked - Outside this commit; not re-read.
+- F31-4 - not-checked - Outside this commit; not re-read.
+- F31-5 - not-checked - Outside this commit; not re-read.
+- F31-6 - fixed - Same explain path as F30-1. seat_order_line names roster versus routed.
+- F32-1 - not-checked - Outside this commit; not re-read.
+- F32-2 - not-checked - Outside this commit; not re-read.
+- F32-3 - fixed - A path-suffix value is not command-scanned, which covers a filename like notes&&draft.md. The rule is wider (finding #1).
+- F32-4 - not-checked - Outside this commit; not re-read.
+- F32-5 - not-checked - Outside this commit; not re-read.
+- F36-1 - not-checked - Outside this commit; not re-read.
+- F36-2 - not-checked - Outside this commit; not re-read.
+- F36-3 - not-checked - Outside this commit; not re-read.
+- F36-4 - not-checked - Outside this commit; not re-read.
+- F36-5 - not-checked - Outside this commit; not re-read.
+- F36-6 - not-checked - Outside this commit; not re-read.
+- F36-7 - not-checked - Outside this commit; not re-read.
+- F36-8 - not-checked - diff_excludes uses **/.c3/** and **/.eck/**. A nested leak was not executed.
+- F38-1 - not-checked - Outside this commit; not re-read.
+- F38-2 - not-checked - Outside this commit; not re-read.
+- F38-3 - not-checked - Outside this commit; not re-read.
+- F38-4 - not-checked - Outside this commit; not re-read.
+- F38-5 - not-checked - Outside this commit; not re-read.
+- F39-1 - not-checked - Outside this commit; not re-read.
+- F39-2 - not-checked - Outside this commit; not re-read.
+- F39-4 - not-checked - Outside this commit; not re-read.
+- F43-1 - fixed - open_patch_dir creates and opens handoffs through Root::open_dir (reviewed.rs:1306).
+- F43-2 - fixed - An empty claim unchanged for 60s is removed and the name is claimed again (reviewed.rs:1188).
+- F43-3 - still-open - The identity check still calls remove_file by name. Finding #3.
+- F43-4 - not-checked - Outside this commit; not re-read.
+- F43-5 - not-checked - Outside this commit; not re-read.
+- F43-6 - not-checked - Outside this commit; not re-read.
+- F43-7 - not-checked - Outside this commit; not re-read.
+- F43-8 - not-checked - Outside this commit; not re-read.
+- F44-1 - fixed - The empty-claim block is replaced by the 60s takeover (reviewed.rs:1188). A live owner can still be overtaken (finding #3).
+- F44-2 - not-checked - Outside this commit; not re-read.
+- F44-3 - not-checked - Outside this commit; not re-read.
+- F45-1 - not-checked - Outside this commit; not re-read.
+- F45-2 - not-checked - Outside this commit; not re-read.
+- F45-3 - not-checked - Outside this commit; not re-read.
+- F45-4 - not-checked - Outside this commit; not re-read.
+- F45-5 - not-checked - Outside this commit; not re-read.
+- F45-6 - not-checked - Outside this commit; not re-read.
+- F45-7 - not-checked - Outside this commit; not re-read.
+- F45-8 - not-checked - Outside this commit; not re-read.
+- F45-9 - not-checked - Outside this commit; not re-read.
+- F46-1 - not-checked - Outside this commit; not re-read.
+- F46-2 - not-checked - Outside this commit; not re-read.
+- F46-3 - not-checked - Outside this commit; not re-read.
+- F46-4 - not-checked - Outside this commit; not re-read.
+- F46-5 - not-checked - Outside this commit; not re-read.
+- F46-6 - not-checked - Outside this commit; not re-read.
+- F46-7 - not-checked - Outside this commit; not re-read.
+- F46-8 - not-checked - Outside this commit; not re-read.
+- F47-1 - not-checked - Outside this commit; not re-read.
+- F47-2 - not-checked - Outside this commit; not re-read.
+- F47-3 - not-checked - Outside this commit; not re-read.
+- F47-4 - not-checked - Outside this commit; not re-read.
+- F48-1 - not-checked - Outside this commit; not re-read.
+- F48-2 - not-checked - Outside this commit; not re-read.
+- F48-3 - not-checked - Outside this commit; not re-read.
+- F48-4 - not-checked - Outside this commit; not re-read.
+- F48-5 - not-checked - Outside this commit; not re-read.
+
+## Verdict: HOLD
+
+An allow-listed agy reader can hide a command under a data-shaped key and stay usable, a --rev brief can be recorded under a hash the worktree did not get, and patch-claim cleanup can delete or replace another run's file.
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, not-checked) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+- **F32-1** (prior, not-checked) `crates/c3/src/engines/worktree.rs:248` - Stage creation and publication use pathnames after validation, so a replaced directory component can send staged bytes outside the worktree and leave a temporary file there.
+
+### Unproven scenarios
+
+- No test in this review was executed. The changelog's library, panel, kimi and compat counts were not reproduced.
+- A real agy, muse or grok CLI was not run against a bound input that changes mid-review.
+- http --rev was not run end to end.
+- The no-hardlink claim race and a kill during place_without_link were not executed.
+- HEAD moving between committed_brief and stage_bytes was not executed.
+- Whether a split index rewrites .git/sharedindex while GIT_INDEX_FILE points at the temp index was not checked.
+- README.md and plugin/skills/consult/reference.md diffs were not read.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 90004ff2 member 2 of 3: meta :: muse-spark-1.3-contributor [muse] (roster #2) ===
+codex-consult: usable reply - meta :: muse-spark-1.3-contributor [muse], mode new, thread 01a20cab-1a81-72d1-8134-bcf5cca1e035 (source: events), wall 138.6 s
+warning    : muse: warning: rules file at \\?\C:\Users\Dmytro\AppData\Local\Temp\c3-kimi-wt-8f64f73aadfd4a5fb7ca44cae9c08d91\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules
+warning    : muse: warning: project MCP servers from .mcp.json, if any, are not loaded because the workspace is untrusted; restart with --trust-workspace to load them
+verdict    : HOLD - Residual classifier bypass and patch-claim/anchor races remain; otherwise the bridge-debt fixes read sound.
+findings   : 0 blocker, 2 major, 1 minor, 1 note -> F52-1..F52-4 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 not-checked, F10-4 not-checked, F10-5 not-checked, F10-7 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 not-checked, F11-12 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F13-9 not-checked, F14-1 not-checked, F14-2 not-checked, F14-3 not-checked, F14-4 not-checked, F14-5 not-checked, F15-1 not-checked, F15-2 not-checked, F15-3 not-checked, F15-5 not-checked, F15-6 not-checked, F16-1 not-checked, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-5 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 not-checked, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 not-checked, F18-2 not-checked, F18-3 not-checked, F18-4 not-checked, F18-5 not-checked, F18-6 not-checked, F18-7 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F19-4 not-checked, F19-5 not-checked, F19-6 not-checked, F20-1 not-checked, F20-2 not-checked, F20-3 not-checked, F20-4 not-checked, F20-5 not-checked, F20-6 not-checked, F24-1 not-checked, F24-2 not-checked, F24-4 not-checked, F27-1 not-checked, F27-2 not-checked, F27-3 not-checked, F28-1 not-checked, F28-2 not-checked, F28-3 not-checked, F29-1 not-checked, F29-2 not-checked, F29-3 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F30-4 not-checked, F30-5 not-checked, F30-6 not-checked, F31-1 not-checked, F31-2 not-checked, F31-3 not-checked, F31-4 not-checked, F31-5 not-checked, F31-6 not-checked, F32-1 not-checked, F32-2 not-checked, F32-3 not-checked, F32-4 not-checked, F32-5 not-checked, F36-1 not-checked, F36-2 not-checked, F36-3 not-checked, F36-4 not-checked, F36-5 not-checked, F36-6 not-checked, F36-7 not-checked, F36-8 not-checked, F38-1 not-checked, F38-2 not-checked, F38-3 not-checked, F38-4 not-checked, F38-5 not-checked, F39-1 not-checked, F39-2 not-checked, F39-4 not-checked, F43-1 not-checked, F43-2 not-checked, F43-3 not-checked, F43-4 not-checked, F43-5 not-checked, F43-6 not-checked, F43-7 not-checked, F43-8 not-checked, F44-1 not-checked, F44-2 not-checked, F44-3 not-checked, F45-1 not-checked, F45-2 not-checked, F45-3 not-checked, F45-4 not-checked, F45-5 not-checked, F45-6 not-checked, F45-7 not-checked, F45-8 not-checked, F45-9 not-checked, F46-1 not-checked, F46-2 not-checked, F46-3 not-checked, F46-4 not-checked, F46-5 not-checked, F46-6 not-checked, F46-7 not-checked, F46-8 not-checked, F47-1 not-checked, F47-2 not-checked, F47-3 not-checked, F47-4 not-checked, F48-1 not-checked, F48-2 not-checked, F48-3 not-checked, F48-4 not-checked, F48-5 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\52-muse-reply-meta.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\52-muse-reply-meta.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\52-muse-reply-meta.events.jsonl
+
+## Q1. Outcomes
+Bound-input rule now covers live-tree muse/grok/claude/kimi/codex plus agy; worktree reads are exempt and codex re-hashes after last turn. Residual: timestamp-only change still withholds (hash unchanged? no — mtime-only does not change hash, so no false withhold seen). Bridge writes are narrowly exempt (own patch + tmp, own handoff prefixes); sibling patch with same stem but different diff can still collide via shared patch name — ledger sha binds file written last.
+
+## Q2. agy classifier
+Recursive merge keeps both conflicting values; path/search keys are data. Residual bypass is `command_shaped`: first-word allow-list misses `sudo/env/nohup/su/doas/start`, pipe `|`/`$()`/backticks, so `sudo rm -rf x` under unknown key stays reader (finding #1).
+
+## Q3. Patch placement
+Handle-based handoffs dir, empty-claim 60 s takeover, own-claim-only removal, temp-index for excludes all read sound. Residual: 60 s takeover can steal a live stalled owner; outside-repo collab anchor is `create_dir_all` by path (finding #2–3).
+
+## Q4. What leaves the machine
+One-rev patch still carries untracked contents by default; stderr + ledger list up to ten names, backtick/control names counted-not-shown; `--diff-tracked-only` leaves them out and is plumbed to detached + panel members. No ignored-content path seen; redaction is still value-shaped only.
+
+## Q5. `--rev` records
+One HEAD resolution decides withhold + `live_head`; unresolvable withholds with `live_head_unresolved`; brief-from-revision skips live re-hash and handoff says so. No wrong-revision record seen; mtime-tie in death record is the residual (finding #4).
+
+## Q6. Router
+`explain` now sets `no_network`, cache-only budgets, recorded-health availability, panel-order flag + `seats:` line; replay treats any invalid draw row as absent. No spawn/network path seen in read code.
+
+## Q7. Untested
+Author notes http+`--rev` unit-only, live-tree half of bound rule vs real agy/muse/grok, no-hardlink FS via hook only. Add: wrapper-command classifier, slow-owner claim race, outside-collab anchor link, coarse-mtime death tie.
+
+## Requested checks
+RC1: unit-test `agy_params_show_write` on `sudo rm -rf x` under unknown key (read-only, seconds). RC2: two `place_without_link` on one name with first held >60 s at `patch-claim`, then compare survivor bytes (workspace-write, minutes). RC3: `--diff` with `--collab-dir` outside repo under a link parent, list where handoffs lands (workspace-write, minutes).
+
+### Findings
+
+- **F52-1** [major] `crates/c3/src/engines/tree_check.rs:306` - Agy reader classification misses commands whose first word is a launcher wrapper (sudo, env, nohup, su, doas, start) and pipe-only chains: command_shaped requires the first whitespace word to be in AGY_COMMAND_WORDS and only treats &&, ||, ;, > as chaining, so a Scanned string such as 'sudo rm -rf x' or 'cat f | sh' under an unknown key is judged not-writing. Trigger: An allow-listed reader logs a parameter under an unknown key with value 'sudo rm -rf x' or 'cat f | sh' and the tree changes. Evidence: read-code: command_shaped checks first_word against AGY_COMMAND_WORDS (rm, git, powershell, ...) and chaining only for &&, ||, ' > ', '>>', ';' + command word; sudo/env/nohup absent, single '|' absent. Verify: Unit-test agy_params_show_write on those two strings under an unknown key and assert true. Remedy: Normalize launcher prefixes (strip sudo/env/nohup/doas/su/runas/start) before first-word test and treat '|'/$()/backticks as chaining, or scan every whitespace word for a command word.
+- **F52-2** [major] `crates/c3/src/consult/reviewed.rs:1125`, `crates/c3/src/consult/reviewed.rs:1258` - No-hardlink patch placement can take over a live owner's claim: an EMPTY claim unchanged for 60 s is Abandoned and removed/re-claimed, but a live owner stalled >60 s between exclusive create and rename (AV, suspend, slow FS) still holds its tmp; the taker's rename then wins and the owner's later rename replaces or fails against the taker's file. Trigger: Two concurrent --diff placements on one patch name where the first stalls >60 s between claim create and rename. Evidence: read-code: reuse_patch returns Abandoned for empty file with mtime age >= claim_stale_after (60 s); place_without_link claims via create_new then rename; drop_own_claim only protects the failing renamer, not the stalled owner whose rename runs second. Verify: Hold patch-claim race point >60 s in one process, start a second placement, then release the first and inspect which bytes survive. Remedy: Hold the claim open (keep the create_new handle alive until rename) or re-check identity after rename; extend the 60 s window and log both pids.
+- **F52-3** [minor] `crates/c3/src/consult/reviewed.rs:1319` - open_patch_dir creates the outside-repo collab anchor by pathname before any handle check: when the collab root lies outside the repo, create_dir_all(collab_root) follows links above it, so a link above the anchor defeats the contained-from-handle guarantee that covers the in-repo case. Trigger: --collab-dir outside the repo whose parent chain contains a symlink/junction when a --diff patch is placed. Evidence: read-code: open_patch_dir: in-repo branch anchors on repo_root; outside branch does std::fs::create_dir_all(collab_root) by path, then Root::open_anchor(collab_root); only components below the anchor are opened without following. Verify: Point --collab-dir at an outside path under a swapped link parent and trace where the handoffs dir is created. Remedy: Resolve/create the outside anchor through handles too (create missing parents via Root or refuse when the anchor or a parent is a link).
+- **F52-4** [note] `crates/c3/src/consult/detach.rs:1206` - Death-record newest-stream rule decides by filesystem mtime with second-granularity ties broken toward the note: on filesystems with coarse mtime or equal timestamps the pending main stream can still win over a newer continuation, and a missing noted file falls back to the note even when the pending file is the newer evidence. Trigger: Main and continuation streams created within one mtime tick, or the noted continuation file already pruned. Evidence: read-code: noted_stream_wins compares mtime(pending) vs mtime(noted), n>=p wins; (Some,None)=>false, _=>true; tie goes to note; test sleeps 50 ms to separate mtimes. Verify: Create both streams with identical mtimes and check which events_file the death record keeps. Remedy: Compare (mtime, size/hash) or sequence numbers from the status note instead of mtime alone; document tie behavior.
+
+### Prior findings
+
+- F02-1 - not-checked - Read-only review, no commands run.
+- F02-2 - not-checked - Read-only review, no commands run.
+- F02-3 - not-checked - Read-only review, no commands run.
+- F02-4 - not-checked - Read-only review, no commands run.
+- F02-5 - not-checked - Read-only review, no commands run.
+- F02-6 - not-checked - Read-only review, no commands run.
+- F02-7 - not-checked - Read-only review, no commands run.
+- F02-8 - not-checked - Read-only review, no commands run.
+- F02-9 - not-checked - Read-only review, no commands run.
+- F02-10 - not-checked - Read-only review, no commands run.
+- F02-11 - not-checked - Read-only review, no commands run.
+- F02-12 - not-checked - Read-only review, no commands run.
+- F02-13 - not-checked - Read-only review, no commands run.
+- F02-14 - not-checked - Read-only review, no commands run.
+- F02-15 - not-checked - Read-only review, no commands run.
+- F02-16 - not-checked - Read-only review, no commands run.
+- F02-17 - not-checked - Read-only review, no commands run.
+- F02-18 - not-checked - Read-only review, no commands run.
+- F02-19 - not-checked - Read-only review, no commands run.
+- F02-20 - not-checked - Read-only review, no commands run.
+- F02-21 - not-checked - Read-only review, no commands run.
+- F03-1 - not-checked - Read-only review, no commands run.
+- F03-2 - not-checked - Read-only review, no commands run.
+- F03-3 - not-checked - Read-only review, no commands run.
+- F03-4 - not-checked - Read-only review, no commands run.
+- F03-5 - not-checked - Read-only review, no commands run.
+- F03-6 - not-checked - Read-only review, no commands run.
+- F04-1 - not-checked - Read-only review, no commands run.
+- F04-2 - not-checked - Read-only review, no commands run.
+- F04-3 - not-checked - Read-only review, no commands run.
+- F04-4 - not-checked - Read-only review, no commands run.
+- F04-5 - not-checked - Read-only review, no commands run.
+- F04-6 - not-checked - Read-only review, no commands run.
+- F04-7 - not-checked - Read-only review, no commands run.
+- F04-8 - not-checked - Read-only review, no commands run.
+- F04-9 - not-checked - Read-only review, no commands run.
+- F10-1 - not-checked - Read-only review, no commands run.
+- F10-2 - not-checked - Read-only review, no commands run.
+- F10-3 - not-checked - Read-only review, no commands run.
+- F10-4 - not-checked - Read-only review, no commands run.
+- F10-5 - not-checked - Read-only review, no commands run.
+- F10-7 - not-checked - Read-only review, no commands run.
+- F11-1 - not-checked - Read-only review, no commands run.
+- F11-2 - not-checked - Read-only review, no commands run.
+- F11-3 - not-checked - Read-only review, no commands run.
+- F11-4 - not-checked - Read-only review, no commands run.
+- F11-5 - not-checked - Read-only review, no commands run.
+- F11-6 - not-checked - Read-only review, no commands run.
+- F11-7 - not-checked - Read-only review, no commands run.
+- F11-8 - not-checked - Read-only review, no commands run.
+- F11-9 - not-checked - Read-only review, no commands run.
+- F11-10 - not-checked - Read-only review, no commands run.
+- F11-11 - not-checked - Read-only review, no commands run.
+- F11-12 - not-checked - Read-only review, no commands run.
+- F12-1 - not-checked - Read-only review, no commands run.
+- F12-2 - not-checked - Read-only review, no commands run.
+- F12-3 - not-checked - Read-only review, no commands run.
+- F12-4 - not-checked - Read-only review, no commands run.
+- F13-1 - not-checked - Read-only review, no commands run.
+- F13-2 - not-checked - Read-only review, no commands run.
+- F13-3 - not-checked - Read-only review, no commands run.
+- F13-4 - not-checked - Read-only review, no commands run.
+- F13-5 - not-checked - Read-only review, no commands run.
+- F13-6 - not-checked - Read-only review, no commands run.
+- F13-7 - not-checked - Read-only review, no commands run.
+- F13-8 - not-checked - Read-only review, no commands run.
+- F13-9 - not-checked - Read-only review, no commands run.
+- F14-1 - not-checked - Read-only review, no commands run.
+- F14-2 - not-checked - Read-only review, no commands run.
+- F14-3 - not-checked - Read-only review, no commands run.
+- F14-4 - not-checked - Read-only review, no commands run.
+- F14-5 - not-checked - Read-only review, no commands run.
+- F15-1 - not-checked - Read-only review, no commands run.
+- F15-2 - not-checked - Read-only review, no commands run.
+- F15-3 - not-checked - Read-only review, no commands run.
+- F15-5 - not-checked - Read-only review, no commands run.
+- F15-6 - not-checked - Read-only review, no commands run.
+- F16-1 - not-checked - Read-only review, no commands run.
+- F16-2 - not-checked - Read-only review, no commands run.
+- F16-3 - not-checked - Read-only review, no commands run.
+- F16-4 - not-checked - Read-only review, no commands run.
+- F16-5 - not-checked - Read-only review, no commands run.
+- F16-6 - not-checked - Read-only review, no commands run.
+- F16-7 - not-checked - Read-only review, no commands run.
+- F16-8 - not-checked - Read-only review, no commands run.
+- F16-9 - not-checked - Read-only review, no commands run.
+- F16-10 - not-checked - Read-only review, no commands run.
+- F17-1 - not-checked - Read-only review, no commands run.
+- F17-2 - not-checked - Read-only review, no commands run.
+- F17-3 - not-checked - Read-only review, no commands run.
+- F17-4 - not-checked - Read-only review, no commands run.
+- F17-5 - not-checked - Read-only review, no commands run.
+- F17-6 - not-checked - Read-only review, no commands run.
+- F17-7 - not-checked - Read-only review, no commands run.
+- F17-8 - not-checked - Read-only review, no commands run.
+- F17-9 - not-checked - Read-only review, no commands run.
+- F17-10 - not-checked - Read-only review, no commands run.
+- F18-1 - not-checked - Read-only review, no commands run.
+- F18-2 - not-checked - Read-only review, no commands run.
+- F18-3 - not-checked - Read-only review, no commands run.
+- F18-4 - not-checked - Read-only review, no commands run.
+- F18-5 - not-checked - Read-only review, no commands run.
+- F18-6 - not-checked - Read-only review, no commands run.
+- F18-7 - not-checked - Read-only review, no commands run.
+- F19-1 - not-checked - Read-only review, no commands run.
+- F19-2 - not-checked - Read-only review, no commands run.
+- F19-3 - not-checked - Read-only review, no commands run.
+- F19-4 - not-checked - Read-only review, no commands run.
+- F19-5 - not-checked - Read-only review, no commands run.
+- F19-6 - not-checked - Read-only review, no commands run.
+- F20-1 - not-checked - Read-only review, no commands run.
+- F20-2 - not-checked - Read-only review, no commands run.
+- F20-3 - not-checked - Read-only review, no commands run.
+- F20-4 - not-checked - Read-only review, no commands run.
+- F20-5 - not-checked - Read-only review, no commands run.
+- F20-6 - not-checked - Read-only review, no commands run.
+- F24-1 - not-checked - Read-only review, no commands run.
+- F24-2 - not-checked - Read-only review, no commands run.
+- F24-4 - not-checked - Read-only review, no commands run.
+- F27-1 - not-checked - Read-only review, no commands run.
+- F27-2 - not-checked - Read-only review, no commands run.
+- F27-3 - not-checked - Read-only review, no commands run.
+- F28-1 - not-checked - Read-only review, no commands run.
+- F28-2 - not-checked - Read-only review, no commands run.
+- F28-3 - not-checked - Read-only review, no commands run.
+- F29-1 - not-checked - Read-only review, no commands run.
+- F29-2 - not-checked - Read-only review, no commands run.
+- F29-3 - not-checked - Read-only review, no commands run.
+- F30-1 - not-checked - Read-only review, no commands run.
+- F30-2 - not-checked - Read-only review, no commands run.
+- F30-3 - not-checked - Read-only review, no commands run.
+- F30-4 - not-checked - Read-only review, no commands run.
+- F30-5 - not-checked - Read-only review, no commands run.
+- F30-6 - not-checked - Read-only review, no commands run.
+- F31-1 - not-checked - Read-only review, no commands run.
+- F31-2 - not-checked - Read-only review, no commands run.
+- F31-3 - not-checked - Read-only review, no commands run.
+- F31-4 - not-checked - Read-only review, no commands run.
+- F31-5 - not-checked - Read-only review, no commands run.
+- F31-6 - not-checked - Read-only review, no commands run.
+- F32-1 - not-checked - Read-only review, no commands run.
+- F32-2 - not-checked - Read-only review, no commands run.
+- F32-3 - not-checked - Read-only review, no commands run.
+- F32-4 - not-checked - Read-only review, no commands run.
+- F32-5 - not-checked - Read-only review, no commands run.
+- F36-1 - not-checked - Read-only review, no commands run.
+- F36-2 - not-checked - Read-only review, no commands run.
+- F36-3 - not-checked - Read-only review, no commands run.
+- F36-4 - not-checked - Read-only review, no commands run.
+- F36-5 - not-checked - Read-only review, no commands run.
+- F36-6 - not-checked - Read-only review, no commands run.
+- F36-7 - not-checked - Read-only review, no commands run.
+- F36-8 - not-checked - Read-only review, no commands run.
+- F38-1 - not-checked - Read-only review, no commands run.
+- F38-2 - not-checked - Read-only review, no commands run.
+- F38-3 - not-checked - Read-only review, no commands run.
+- F38-4 - not-checked - Read-only review, no commands run.
+- F38-5 - not-checked - Read-only review, no commands run.
+- F39-1 - not-checked - Read-only review, no commands run.
+- F39-2 - not-checked - Read-only review, no commands run.
+- F39-4 - not-checked - Read-only review, no commands run.
+- F43-1 - not-checked - Read-only review, no commands run.
+- F43-2 - not-checked - Read-only review, no commands run.
+- F43-3 - not-checked - Read-only review, no commands run.
+- F43-4 - not-checked - Read-only review, no commands run.
+- F43-5 - not-checked - Read-only review, no commands run.
+- F43-6 - not-checked - Read-only review, no commands run.
+- F43-7 - not-checked - Read-only review, no commands run.
+- F43-8 - not-checked - Read-only review, no commands run.
+- F44-1 - not-checked - Read-only review, no commands run.
+- F44-2 - not-checked - Read-only review, no commands run.
+- F44-3 - not-checked - Read-only review, no commands run.
+- F45-1 - not-checked - Read-only review, no commands run.
+- F45-2 - not-checked - Read-only review, no commands run.
+- F45-3 - not-checked - Read-only review, no commands run.
+- F45-4 - not-checked - Read-only review, no commands run.
+- F45-5 - not-checked - Read-only review, no commands run.
+- F45-6 - not-checked - Read-only review, no commands run.
+- F45-7 - not-checked - Read-only review, no commands run.
+- F45-8 - not-checked - Read-only review, no commands run.
+- F45-9 - not-checked - Read-only review, no commands run.
+- F46-1 - not-checked - Read-only review, no commands run.
+- F46-2 - not-checked - Read-only review, no commands run.
+- F46-3 - not-checked - Read-only review, no commands run.
+- F46-4 - not-checked - Read-only review, no commands run.
+- F46-5 - not-checked - Read-only review, no commands run.
+- F46-6 - not-checked - Read-only review, no commands run.
+- F46-7 - not-checked - Read-only review, no commands run.
+- F46-8 - not-checked - Read-only review, no commands run.
+- F47-1 - not-checked - Read-only review, no commands run.
+- F47-2 - not-checked - Read-only review, no commands run.
+- F47-3 - not-checked - Read-only review, no commands run.
+- F47-4 - not-checked - Read-only review, no commands run.
+- F48-1 - not-checked - Read-only review, no commands run.
+- F48-2 - not-checked - Read-only review, no commands run.
+- F48-3 - not-checked - Read-only review, no commands run.
+- F48-4 - not-checked - Read-only review, no commands run.
+- F48-5 - not-checked - Read-only review, no commands run.
+
+## Verdict: HOLD
+
+Residual classifier bypass and patch-claim/anchor races remain; otherwise the bridge-debt fixes read sound.
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, not-checked) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+- **F32-1** (prior, not-checked) `crates/c3/src/engines/worktree.rs:248` - Stage creation and publication use pathnames after validation, so a replaced directory component can send staged bytes outside the worktree and leave a temporary file there.
+
+### Unproven scenarios
+
+- Whether sibling same-stem different-diff collision is reachable in a real panel given per-member reply names.
+- Whether coarse-mtime death-record tie occurs on the release filesystems.
+- Whether a live owner really stalls >60 s between claim and rename.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 90004ff2 member 3 of 3: ZAI-claude :: glm-5.3 [claude] (roster #3) ===
+WARNING: ACCEPT with 11 unchecked prior blocker(s) (F02-1, F02-2, F02-16, F02-19, F02-21, F03-1, F11-3, F11-7, F13-1, F19-1, F32-1).
+codex-consult: usable reply - ZAI-claude :: glm-5.3 [claude], mode new, thread 3f52d842-81f9-47eb-a70e-bb50ed6bed03 (source: events), wall 689.5 s
+verdict    : ACCEPT - The commit soundly closes the 24 claimed debt items (verified in the patch and the code at 2ffa02a); the residual defects I found are minor prompt-accuracy, disclosure and narrow-race issues, none of which damages a machine, a repository or a consultation record.
+findings   : 0 blocker, 0 major, 4 minor, 3 note -> F53-1..F53-7 in findings.json
+prior      : F02-1 not-checked, F02-2 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F02-9 not-checked, F02-10 not-checked, F02-11 not-checked, F02-12 not-checked, F02-13 not-checked, F02-14 not-checked, F02-15 not-checked, F02-16 not-checked, F02-17 not-checked, F02-18 not-checked, F02-19 not-checked, F02-20 not-checked, F02-21 not-checked, F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F03-6 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F04-9 not-checked, F10-1 not-checked, F10-2 not-checked, F10-3 fixed, F10-4 not-checked, F10-5 not-checked, F10-7 fixed, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 fixed, F11-5 not-checked, F11-6 not-checked, F11-7 not-checked, F11-8 not-checked, F11-9 not-checked, F11-10 not-checked, F11-11 fixed, F11-12 fixed, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F12-4 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F13-7 not-checked, F13-8 not-checked, F13-9 not-checked, F14-1 not-checked, F14-2 not-checked, F14-3 not-checked, F14-4 not-checked, F14-5 not-checked, F15-1 not-checked, F15-2 not-checked, F15-3 not-checked, F15-5 not-checked, F15-6 not-checked, F16-1 not-checked, F16-2 not-checked, F16-3 not-checked, F16-4 not-checked, F16-5 not-checked, F16-6 not-checked, F16-7 not-checked, F16-8 not-checked, F16-9 not-checked, F16-10 not-checked, F17-1 not-checked, F17-2 not-checked, F17-3 not-checked, F17-4 not-checked, F17-5 not-checked, F17-6 not-checked, F17-7 not-checked, F17-8 not-checked, F17-9 not-checked, F17-10 not-checked, F18-1 not-checked, F18-2 fixed, F18-3 fixed, F18-4 fixed, F18-5 not-checked, F18-6 not-checked, F18-7 not-checked, F19-1 not-checked, F19-2 fixed, F19-3 fixed, F19-4 not-checked, F19-5 not-checked, F19-6 not-checked, F20-1 not-checked, F20-2 fixed, F20-3 fixed, F20-4 not-checked, F20-5 fixed, F20-6 fixed, F24-1 not-checked, F24-2 fixed, F24-4 fixed, F27-1 not-checked, F27-2 not-checked, F27-3 fixed, F28-1 fixed, F28-2 fixed, F28-3 fixed, F29-1 not-checked, F29-2 not-checked, F29-3 fixed, F30-1 fixed, F30-2 fixed, F30-3 not-checked, F30-4 fixed, F30-5 not-checked, F30-6 not-checked, F31-1 not-checked, F31-2 not-checked, F31-3 not-checked, F31-4 not-checked, F31-5 not-checked, F31-6 fixed, F32-1 not-checked, F32-2 not-checked, F32-3 fixed, F32-4 not-checked, F32-5 not-checked, F36-1 not-checked, F36-2 not-checked, F36-3 not-checked, F36-4 not-checked, F36-5 not-checked, F36-6 not-checked, F36-7 not-checked, F36-8 not-checked, F38-1 not-checked, F38-2 not-checked, F38-3 not-checked, F38-4 not-checked, F38-5 not-checked, F39-1 not-checked, F39-2 not-checked, F39-4 not-checked, F43-1 fixed, F43-2 fixed, F43-3 fixed, F43-4 not-checked, F43-5 not-checked, F43-6 not-checked, F43-7 still-open, F43-8 not-checked, F44-1 fixed, F44-2 not-checked, F44-3 not-checked, F45-1 not-checked, F45-2 not-checked, F45-3 not-checked, F45-4 not-checked, F45-5 not-checked, F45-6 not-checked, F45-7 not-checked, F45-8 not-checked, F45-9 not-checked, F46-1 not-checked, F46-2 not-checked, F46-3 not-checked, F46-4 not-checked, F46-5 not-checked, F46-6 not-checked, F46-7 not-checked, F46-8 not-checked, F47-1 not-checked, F47-2 not-checked, F47-3 not-checked, F47-4 not-checked, F48-1 not-checked, F48-2 not-checked, F48-3 not-checked, F48-4 not-checked, F48-5 not-checked
+reply file : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\53-claudecode-reply-zai-claude.md
+reply json : C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\53-claudecode-reply-zai-claude.reply.json
+events file: C:\Users\Dmytro\C3\.collab\release-0.2.5\handoffs\53-claudecode-reply-zai-claude.events.jsonl
+
+**Q1.** No false withhold from the bridge's own writes or a sibling's patch: the reply prefix and `panel_ignore_prefixes` (`<task>/handoffs/<nn>-`, `tree_check.rs:435`) cover siblings' patches; `compare_collab` compares content hashes, so mtime-only changes are invisible. Two residual paths: a single run whose findings-store read fails at its start snapshots zero priors (`shown_priors`, `mod.rs:2694`) and its reply's prior report is then rejected at finish although the store was readable by then (finding 3); and kimi/claude-HEAD worktree reviewers with a clean-except-collab tree lose the whole isolation paragraph (finding 1). No still-usable-after-change gap found: `bound_inputs_withhold` covers every live-tree engine plus codex's finish re-hash; http reads only its pack. An A→B→A brief edit mid-run is invisible to any end-hash (unproven).
+
+**Q2.** The recursive merge and key roles close F24-4/F32-3; nested keys are re-judged by their own names, unknown tools stay writing, arrays take the key's role. Remaining: any value under a key ending in path/file/dir/uri is never scanned — including a second conflicting value the merge keeps as an array under that key (`{"Path":"a.md"}` then `{"Path":"del b.rs"}`), so a write executed through a path-keyed parameter of an allow-listed reader is classified as a reader (finding 2, minor).
+
+**Q3.** The final name never holds partial bytes (claim-then-rename is atomic), and same-name implies the same sha8 prefix, so a 60 s takeover of a live-but-stalled owner's claim ends in a byte-identical replace. Residuals: `drop_own_claim` checks identity/size and then removes by name, so a sibling completing the name in that microsecond gap loses its patch while its ledger says placed (finding 6); a hard crash leaves the handoffs tmp file and the OS-temp `c3-diff-index-*` index (and its `.lock`) unreaped (finding 4). The temp index never touches the real one: every index-writing git call passes `GIT_INDEX_FILE=tmp` and `git_cmd` sets `GIT_OPTIONAL_LOCKS=0` (`reviewed.rs:749`, `worktree.rs:34`); the test asserts the real index and its skip-worktree flags are untouched.
+
+**Q4.** Ignored/excluded content cannot reach the patch (`check-ignore` + `hide_in_index` on the temp index). Untracked content still does by design and is now disclosed: the ten names filter backticks and control characters, but bidi/zero-width format characters are not `is_control()` (finding 5). `--diff-tracked-only` reaches panels (`build_spec`), detached runs (`DetachArgs`) and members — but not MCP callers, and in detached/MCP runs the stderr notice lands in a log, not the operator's terminal (finding 7).
+
+**Q5.** One HEAD resolution (`mod.rs:2712`) decides withholding, `live_head` and the unresolved marker; the handoff and ledger say what was read, and a revision-sourced brief is hashed from the committed bytes with "Taken from the committed revision". No wrong record found; a HEAD that moves after launch is still labelled "at launch", which is true.
+
+**Q6.** `explain` is now pure: skip-preflight election, `no_network`, cache-only `multipliers_for`/`plan_windows`/`entry_reserve_hold`/`member_inputs` (all `network=false` branches verified), PATH-scan launcher, records-only `recorded_availability` — no process, network or writes. `replay` writes nothing but can now exit 1 on a record whose draw block has an invalid row that it previously replayed clean — intended strictness, reported with the reason.
+
+**Q7.** Untested beyond the author's list (http+--rev e2e, live-tree bound-input against real agy/muse/grok CLIs, real no-hardlink FS): `hide_in_index` on a SHA-256 repository or gitlink/submodule hidden paths; the takeover and `drop_own_claim` races on a genuinely stalled filesystem; the clean-tree isolation regression — no test asserts the paragraph survives when the only uncommitted paths are collab paths (the updated kimi test asserts the opposite direction).
+
+### Findings
+
+- **F53-1** [minor] `crates/c3/src/engines/worktree.rs:1168`, `crates/c3/src/consult/orchestrate/mod.rs:2878` - A worktree reviewer whose live tree is clean outside the collab directory now gets no isolation paragraph at all: the notice that its working directory is a throwaway worktree of HEAD (not the live checkout) and that the brief was copied in disappear, because the collab paths that used to make the paragraph non-empty are skipped. Trigger: A kimi or claude diff-review/acceptance run in a repository whose only uncommitted or untracked paths are under the collab directory (the common case: untracked .collab or a modified tracked state.md). Evidence: read-code: isolation_prompt returns String::new() when uncommitted_paths_outside is empty; before this commit the untracked .collab directory made new_paths >= 1 so the paragraph always printed.; read-code: the updated test asserts the paragraph no longer mentions 'path(s) that are not in HEAD' when only .collab was untracked, and no test covers the fully-clean case. Verify: Run a fake-kimi consult in a clean scratch repo whose only untracked path is .collab/ and check whether the prompt contains the 'Isolation: your working directory is a throwaway git worktree' sentence. Remedy: Print the isolation sentence (worktree-of-HEAD and brief-copied) whenever a throwaway worktree of HEAD is used, regardless of the uncommitted-path counts; keep the collab skip only for the path list and counts.
+- **F53-2** [minor] `crates/c3/src/engines/tree_check.rs:265`, `crates/c3/src/engines/agy.rs:429` - A command-shaped value under a key whose folded name ends in a path/file/dir/uri word is never scanned, including a second conflicting value that the recursive merge keeps as an array under that key, so a writing step executed through a path-keyed parameter of an allow-listed reader is classified as a reader. Trigger: An agy read_file step logs ACTIVE parameters {"Path":"a.md"} and DONE parameters {"Path":"del b.rs"} (or any command string under a key ending in file/path/dir/uri) while the tree changes. Evidence: read-code: agy_param_role maps any key ending in an AGY_DATA_PARAM_SUFFIXES word to Data, and walk only scans strings whose role is Scanned.; read-code: merge_parameters keeps two different non-empty scalars as an array under the same key, so the conflicting value inherits the key's Data role.; read-code: write markers are checked before data suffixes, so keys like OverwriteFile still write; the hole is only a command value under a data-suffixed key. Verify: Add the table row ("read_file", [("ACTIVE", "{\"Path\":\"a.md\"}"), ("DONE", "{\"Path\":\"del b.rs\"}")], false) to agy_steps_merge_at_every_depth and observe the classifier reports the step as not writing. Remedy: For an allow-listed reader, scan command-shaped strings under a data-role key when they arrive as conflicting merged values (arrays with 2+ entries) while keeping single values data, or at minimum count a merged conflicting value under a path key as writing.
+- **F53-3** [minor] `crates/c3/src/consult/orchestrate/mod.rs:2694` - A single run whose findings-store read fails at its start (file locked or unreadable) takes an empty shown_priors snapshot, so a reply that reports a real prior finding is rejected at finish as not reportable, although the store was readable by then; before this change the finish re-read the live store. Trigger: The task's findings.json is transiently unreadable exactly when build_context reads it (another process holding it, antivirus), and the reviewer's reply names an open prior finding. Evidence: read-code: shown_priors for a single run is store.read_findings(&task).ok().flatten().map(listed_findings).unwrap_or_default() - a read error becomes an empty immutable snapshot.; read-code: member_prior_view now judges reportable ids against ctx.shown_priors, never a finish-time store read. Verify: Make findings.json unreadable (exclusive open) only during build_context of a scratch single run whose reply reports an open finding, and observe the reply fail prior-report validation. Remedy: Distinguish a failed store read from an absent store: on read error, refuse the run's start (or fall back to the finish-time live read for a single run) instead of freezing an empty snapshot.
+- **F53-4** [note] `crates/c3/src/consult/reviewed.rs:1033`, `crates/c3/src/consult/reviewed.rs:1038` - A hard crash leaves debris that nothing reaps: the temporary index c3-diff-index-<uuid> (and its .lock) stays in the system temp directory, and a crash between the tmp write and the hard link leaves a full <stem>.<sha8>.<uuid>.tmp file in the task's handoffs (remove_temp_index and remove_tmp run only on handled error paths). Trigger: The process is killed (or the machine crashes) during render_patch_with, or between the temp-file write and the placement; no sweep exists for either location. Evidence: read-code: remove_temp_index/remove_tmp are called only on the function's normal and error returns; a killed process skips both, and no later run removes foreign c3-diff-index-* or *.tmp names. Verify: Kill a --diff run mid render and list %TEMP%/c3-diff-index-* and the task handoffs/*.tmp afterwards. Remedy: Reap c3-diff-index-* files older than a day in the OS temp dir at the start of a --diff render, and reap stale <uuid>.tmp files under the task's handoffs when placing a patch.
+- **F53-5** [note] `crates/c3/src/consult/reviewed.rs:1540` - A printed or ledger-recorded untracked file name may contain non-control format characters (bidi overrides such as U+202E, zero-width joiners): is_control() is false for category Cf, so the name is shown on stderr in backticks and stored in the ledger's untracked list, allowing visual spoofing. Trigger: An untracked file whose name carries a bidi override or zero-width character is carried by a one-revision --diff patch. Evidence: read-code: untracked_named filters only chars equal to '`' or is_control(); Rust's char::is_control covers Cc only, not Cf. Verify: Create an untracked file named with a leading U+202E and run --diff HEAD; observe the name printed verbatim in the notice and stored in the ledger. Remedy: Also withhold names containing category-Cf characters (count them instead), matching the CI-title treatment of earlier waves.
+- **F53-6** [note] `crates/c3/src/consult/reviewed.rs:1224` - drop_own_claim reads the file's identity and size on a handle and then removes by name, so a sibling that completes the patch name in the window between the check and the remove_file loses its finished patch while its ledger records it as placed. Trigger: Two concurrent no-hardlink placements on the same patch name where this call's rename fails and a sibling finishes the name in the microseconds between file_state and remove_file. Evidence: read-code: the identity+size check is immediately followed by dir.remove_file(leaf) by name; the removal is not tied to the checked handle.; inferred: the same name implies the same sha8 prefix, so the removed file would generically hold identical bytes; the composite race is extremely narrow. Verify: Interleave a sibling rename exactly between drop_own_claim's file_state and remove_file (race-point hook) and confirm the sibling's completed patch survives. Remedy: Remove the claim through the handle it was checked on (open, verify size 0, delete via the handle where the platform allows) or re-check size after acquiring the right to remove.
+- **F53-7** [minor] `crates/c3/src/mcp/mod.rs:318`, `crates/c3/src/consult/reviewed.rs:1564` - The untracked-content disclosure does not reach MCP callers or detached-run operators: the MCP surface has no diff_tracked_only parameter, and the untracked notice is printed on the run process's stderr, which for a detached run or an MCP server is a log file rather than the operator's terminal - so an MCP-triggered one-revision diff still ships untracked file content with no operator-visible notice. Trigger: A consult started through the MCP tool with diff set to a single revision while the checkout holds untracked non-ignored files. Evidence: read-code: the MCP consult tool accepts diff (syntax-checked) but exposes no tracked-only option.; read-code: the notice is emitted with eprintln in prepare_review_inputs, i.e. on whatever process runs the bridge. Verify: Call the MCP consult tool with a one-revision diff in a scratch repo with an untracked file and inspect where the notice appears and whether the patch bytes contain the file. Remedy: Add a diff_tracked_only field to the MCP consult tool's input, and surface the untracked count in the MCP tool's reply text (or the detached run's status) in addition to stderr.
+
+### Prior findings
+
+- F02-1 - not-checked - outside this commit's delta; not re-verified
+- F02-2 - not-checked - outside this commit's delta; not re-verified
+- F02-3 - not-checked - outside this commit's delta; not re-verified
+- F02-4 - not-checked - outside this commit's delta; not re-verified
+- F02-5 - not-checked - outside this commit's delta; not re-verified
+- F02-6 - not-checked - outside this commit's delta; not re-verified
+- F02-7 - not-checked - outside this commit's delta; not re-verified
+- F02-8 - not-checked - outside this commit's delta; not re-verified
+- F02-9 - not-checked - outside this commit's delta; not re-verified
+- F02-10 - not-checked - outside this commit's delta; not re-verified
+- F02-11 - not-checked - outside this commit's delta; not re-verified
+- F02-12 - not-checked - outside this commit's delta; not re-verified
+- F02-13 - not-checked - outside this commit's delta; not re-verified
+- F02-14 - not-checked - outside this commit's delta; not re-verified
+- F02-15 - not-checked - outside this commit's delta; not re-verified
+- F02-16 - not-checked - outside this commit's delta; not re-verified
+- F02-17 - not-checked - outside this commit's delta; not re-verified
+- F02-18 - not-checked - outside this commit's delta; not re-verified
+- F02-19 - not-checked - outside this commit's delta; not re-verified
+- F02-20 - not-checked - outside this commit's delta; not re-verified
+- F02-21 - not-checked - outside this commit's delta; not re-verified
+- F03-1 - not-checked - outside this commit's delta; not re-verified
+- F03-2 - not-checked - outside this commit's delta; not re-verified
+- F03-3 - not-checked - outside this commit's delta; not re-verified
+- F03-4 - not-checked - outside this commit's delta; not re-verified
+- F03-5 - not-checked - outside this commit's delta; not re-verified
+- F03-6 - not-checked - outside this commit's delta; not re-verified
+- F04-1 - not-checked - outside this commit's delta; not re-verified
+- F04-2 - not-checked - outside this commit's delta; not re-verified
+- F04-3 - not-checked - outside this commit's delta; not re-verified
+- F04-4 - not-checked - outside this commit's delta; not re-verified
+- F04-5 - not-checked - outside this commit's delta; not re-verified
+- F04-6 - not-checked - outside this commit's delta; not re-verified
+- F04-7 - not-checked - outside this commit's delta; not re-verified
+- F04-8 - not-checked - outside this commit's delta; not re-verified
+- F04-9 - not-checked - outside this commit's delta; not re-verified
+- F10-1 - not-checked - outside this commit's delta; not re-verified
+- F10-2 - not-checked - outside this commit's delta; not re-verified
+- F10-3 - fixed - committed_brief accepted in build_context and materialised from HEAD/rev; handoff says 'Taken from the committed revision' (render.rs)
+- F10-4 - not-checked - outside this commit's delta; not re-verified
+- F10-5 - not-checked - outside this commit's delta; not re-verified
+- F10-7 - fixed - noted_stream_wins prefers the newer events file (detach.rs:1375)
+- F11-1 - not-checked - outside this commit's delta; not re-verified
+- F11-2 - not-checked - outside this commit's delta; not re-verified
+- F11-3 - not-checked - outside this commit's delta; not re-verified
+- F11-4 - fixed - brief committed at HEAD or the reviewed revision accepted when a worktree is planned; committed bytes hashed
+- F11-5 - not-checked - outside this commit's delta; not re-verified
+- F11-6 - not-checked - outside this commit's delta; not re-verified
+- F11-7 - not-checked - outside this commit's delta; not re-verified
+- F11-8 - not-checked - outside this commit's delta; not re-verified
+- F11-9 - not-checked - outside this commit's delta; not re-verified
+- F11-10 - not-checked - outside this commit's delta; not re-verified
+- F11-11 - fixed - covered by noted_stream_wins (F24-2)
+- F11-12 - fixed - KeptReplyFiles counts a kept reply as failed_reply_gone when its file is gone (providers.rs)
+- F12-1 - not-checked - outside this commit's delta; not re-verified
+- F12-2 - not-checked - outside this commit's delta; not re-verified
+- F12-3 - not-checked - outside this commit's delta; not re-verified
+- F12-4 - not-checked - outside this commit's delta; not re-verified
+- F13-1 - not-checked - outside this commit's delta; not re-verified
+- F13-2 - not-checked - outside this commit's delta; not re-verified
+- F13-3 - not-checked - outside this commit's delta; not re-verified
+- F13-4 - not-checked - outside this commit's delta; not re-verified
+- F13-5 - not-checked - outside this commit's delta; not re-verified
+- F13-6 - not-checked - outside this commit's delta; not re-verified
+- F13-7 - not-checked - outside this commit's delta; not re-verified
+- F13-8 - not-checked - outside this commit's delta; not re-verified
+- F13-9 - not-checked - outside this commit's delta; not re-verified
+- F14-1 - not-checked - outside this commit's delta; not re-verified
+- F14-2 - not-checked - outside this commit's delta; not re-verified
+- F14-3 - not-checked - outside this commit's delta; not re-verified
+- F14-4 - not-checked - outside this commit's delta; not re-verified
+- F14-5 - not-checked - outside this commit's delta; not re-verified
+- F15-1 - not-checked - outside this commit's delta; not re-verified
+- F15-2 - not-checked - outside this commit's delta; not re-verified
+- F15-3 - not-checked - outside this commit's delta; not re-verified
+- F15-5 - not-checked - outside this commit's delta; not re-verified
+- F15-6 - not-checked - outside this commit's delta; not re-verified
+- F16-1 - not-checked - outside this commit's delta; not re-verified
+- F16-2 - not-checked - outside this commit's delta; not re-verified
+- F16-3 - not-checked - outside this commit's delta; not re-verified
+- F16-4 - not-checked - outside this commit's delta; not re-verified
+- F16-5 - not-checked - outside this commit's delta; not re-verified
+- F16-6 - not-checked - outside this commit's delta; not re-verified
+- F16-7 - not-checked - outside this commit's delta; not re-verified
+- F16-8 - not-checked - outside this commit's delta; not re-verified
+- F16-9 - not-checked - outside this commit's delta; not re-verified
+- F16-10 - not-checked - outside this commit's delta; not re-verified
+- F17-1 - not-checked - outside this commit's delta; not re-verified
+- F17-2 - not-checked - outside this commit's delta; not re-verified
+- F17-3 - not-checked - outside this commit's delta; not re-verified
+- F17-4 - not-checked - outside this commit's delta; not re-verified
+- F17-5 - not-checked - outside this commit's delta; not re-verified
+- F17-6 - not-checked - outside this commit's delta; not re-verified
+- F17-7 - not-checked - outside this commit's delta; not re-verified
+- F17-8 - not-checked - outside this commit's delta; not re-verified
+- F17-9 - not-checked - outside this commit's delta; not re-verified
+- F17-10 - not-checked - outside this commit's delta; not re-verified
+- F18-1 - not-checked - not re-verified against this commit's records; live_head now comes from the one start resolution
+- F18-2 - fixed - verified: ThrowawayWorktree::create runs git status with --no-optional-locks (worktree.rs:137-139)
+- F18-3 - fixed - collab_before is taken after the patch write and the run's own patch is exempted via is_run_patch_file
+- F18-4 - fixed - untracked files named on stderr, recorded in the ledger, and --diff-tracked-only leaves them out
+- F18-5 - not-checked - outside this commit's delta; not re-verified
+- F18-6 - not-checked - outside this commit's delta; not re-verified
+- F18-7 - not-checked - outside this commit's delta; not re-verified
+- F19-1 - not-checked - outside this commit's delta; not re-verified
+- F19-2 - fixed - disclosure + --diff-tracked-only (same item as F18-4)
+- F19-3 - fixed - patch names are content-addressed (<sha8>) and place_patch never overwrites other bytes
+- F19-4 - not-checked - outside this commit's delta; not re-verified
+- F19-5 - not-checked - outside this commit's delta; not re-verified (MCP rev/diff unchanged)
+- F19-6 - not-checked - outside this commit's delta; not re-verified
+- F20-1 - not-checked - outside this commit's delta; not re-verified
+- F20-2 - fixed - verified: create uses --no-optional-locks status (worktree.rs:137-139)
+- F20-3 - fixed - content-addressed name plus never-overwrite placement binds the ledger sha to the file
+- F20-4 - not-checked - outside this commit's delta; not re-verified
+- F20-5 - fixed - collab paths are left out of the isolation list and both counts
+- F20-6 - fixed - same as F18-4
+- F24-1 - not-checked - outside this commit's delta; not re-verified
+- F24-2 - fixed - noted_stream_wins picks the newer stream of the run's own handoff
+- F24-4 - fixed - merge_parameters is recursive and keeps conflicting values; roles read nested keys by name
+- F27-1 - not-checked - outside this commit's delta; not re-verified
+- F27-2 - not-checked - outside this commit's delta; not re-verified
+- F27-3 - fixed - only the run's own patch file and its 32-hex tmp name are exempt (is_run_patch_file)
+- F28-1 - fixed - the no-hardlink fallback claims, renames and cleans up under the handle; final name never partial
+- F28-2 - fixed - excluded paths go through a temporary index (hide_in_index), no path limit; test with 501 paths
+- F28-3 - fixed - lossy sequences counted, ledger lossy_utf8, prompt line says the patch is not byte-exact
+- F29-1 - not-checked - outside this commit's delta; not re-verified
+- F29-2 - not-checked - outside this commit's delta; not re-verified
+- F29-3 - fixed - one HEAD resolution (rev_live_head) decides withholding and live_head; unresolvable withholds
+- F30-1 - fixed - explain: skip-preflight election, no_network, cache-only budget, no process
+- F30-2 - fixed - tier_missed_warning warns when the required entries fill every seat
+- F30-3 - not-checked - outside this commit's delta; not re-verified
+- F30-4 - fixed - an invalid ext.c3.draw row makes the whole block Invalid, treated as absent
+- F30-5 - not-checked - outside this commit's delta; not re-verified
+- F30-6 - not-checked - outside this commit's delta; not re-verified
+- F31-1 - not-checked - outside this commit's delta; not re-verified
+- F31-2 - not-checked - outside this commit's delta; not re-verified
+- F31-3 - not-checked - outside this commit's delta; not re-verified
+- F31-4 - not-checked - outside this commit's delta; not re-verified
+- F31-5 - not-checked - outside this commit's delta; not re-verified
+- F31-6 - fixed - explain starts nothing: recorded health only, [availability not checked], seat-order line
+- F32-1 - not-checked - outside this commit's delta; not re-verified
+- F32-2 - not-checked - outside this commit's delta; not re-verified
+- F32-3 - fixed - path/file/dir/uri-keyed values of an allow-listed reader are data; residual hole filed as a new finding
+- F32-4 - not-checked - outside this commit's delta; not re-verified
+- F32-5 - not-checked - outside this commit's delta; not re-verified
+- F36-1 - not-checked - outside this commit's delta; not re-verified
+- F36-2 - not-checked - outside this commit's delta; not re-verified
+- F36-3 - not-checked - outside this commit's delta; not re-verified
+- F36-4 - not-checked - outside this commit's delta; not re-verified
+- F36-5 - not-checked - outside this commit's delta; not re-verified
+- F36-6 - not-checked - outside this commit's delta; not re-verified
+- F36-7 - not-checked - outside this commit's delta; not re-verified
+- F36-8 - not-checked - outside this commit's delta; not re-verified
+- F38-1 - not-checked - outside this commit's delta; not re-verified
+- F38-2 - not-checked - outside this commit's delta; not re-verified
+- F38-3 - not-checked - outside this commit's delta; not re-verified
+- F38-4 - not-checked - outside this commit's delta; not re-verified
+- F38-5 - not-checked - outside this commit's delta; not re-verified
+- F39-1 - not-checked - outside this commit's delta; not re-verified
+- F39-2 - not-checked - outside this commit's delta; not re-verified
+- F39-4 - not-checked - outside this commit's delta; not re-verified
+- F43-1 - fixed - open_patch_dir reaches handoffs through handles from the repo/collab anchor; a link above refuses
+- F43-2 - fixed - empty claim unchanged 60 s is taken over; residual stall-vs-takeover benign (same sha8 name)
+- F43-3 - fixed - drop_own_claim removes only the identity-checked empty claim; a check-then-remove microsecond window remains (filed as a note)
+- F43-4 - not-checked - outside this commit's delta; not re-verified
+- F43-5 - not-checked - outside this commit's delta; not re-verified
+- F43-6 - not-checked - outside this commit's delta; not re-verified
+- F43-7 - still-open - crash temp-index and handoffs tmp leftovers still have no reaper, and Root::open_anchor still follows the repo root; the new takeover removes only the empty claim
+- F43-8 - not-checked - outside this commit's delta; not re-verified
+- F44-1 - fixed - the 60 s empty-claim takeover resolves the abandoned-claim block
+- F44-2 - not-checked - outside this commit's delta; not re-verified
+- F44-3 - not-checked - outside this commit's delta; not re-verified
+- F45-1 - not-checked - outside this commit's delta; not re-verified
+- F45-2 - not-checked - outside this commit's delta; not re-verified
+- F45-3 - not-checked - outside this commit's delta; not re-verified
+- F45-4 - not-checked - outside this commit's delta; not re-verified
+- F45-5 - not-checked - outside this commit's delta; not re-verified
+- F45-6 - not-checked - outside this commit's delta; not re-verified
+- F45-7 - not-checked - outside this commit's delta; not re-verified
+- F45-8 - not-checked - outside this commit's delta; not re-verified
+- F45-9 - not-checked - outside this commit's delta; not re-verified
+- F46-1 - not-checked - outside this commit's delta; not re-verified
+- F46-2 - not-checked - outside this commit's delta; not re-verified
+- F46-3 - not-checked - outside this commit's delta; not re-verified
+- F46-4 - not-checked - outside this commit's delta; not re-verified
+- F46-5 - not-checked - outside this commit's delta; not re-verified
+- F46-6 - not-checked - outside this commit's delta; not re-verified
+- F46-7 - not-checked - outside this commit's delta; not re-verified
+- F46-8 - not-checked - outside this commit's delta; not re-verified
+- F47-1 - not-checked - outside this commit's delta; not re-verified
+- F47-2 - not-checked - outside this commit's delta; not re-verified
+- F47-3 - not-checked - outside this commit's delta; not re-verified
+- F47-4 - not-checked - outside this commit's delta; not re-verified
+- F48-1 - not-checked - outside this commit's delta; not re-verified
+- F48-2 - not-checked - outside this commit's delta; not re-verified
+- F48-3 - not-checked - outside this commit's delta; not re-verified
+- F48-4 - not-checked - outside this commit's delta; not re-verified
+- F48-5 - not-checked - outside this commit's delta; not re-verified
+
+## Verdict: ACCEPT
+
+The commit soundly closes the 24 claimed debt items (verified in the patch and the code at 2ffa02a); the residual defects I found are minor prompt-accuracy, disclosure and narrow-race issues, none of which damages a machine, a repository or a consultation record.
+
+**WARNING: ACCEPT with 11 unchecked prior blocker(s) (F02-1, F02-2, F02-16, F02-19, F02-21, F03-1, F11-3, F11-7, F13-1, F19-1, F32-1).**
+
+### Blockers
+
+- **F02-1** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:149` - Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.
+- **F02-2** (prior, not-checked) `crates/c3/src/setup/repo_models.rs:167` - An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.
+- **F02-16** (prior, not-checked) `crates/c3/src/maintain/mod.rs:1324` - A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.
+- **F02-19** (prior, not-checked) `crates/c3/src/c3config.rs:329` - Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.
+- **F02-21** (prior, not-checked) `crates/c3/src/engines/kimi.rs:210` - Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.
+- **F03-1** (prior, not-checked) `crates/c3-core/src/claude.rs:313` - The claude engine's allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.
+- **F11-3** (prior, not-checked) `crates/c3/src/engines/kimi.rs:279` - The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.
+- **F11-7** (prior, not-checked) `crates/c3/src/maintain/smoke.rs:328` - Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.
+- **F13-1** (prior, not-checked) `crates/c3/src/setup/branches.rs:825` - c3 doctor --fix can classify a temp path named c3-kimi-wt-<32 hex> as a stale throwaway when that path is a symlink or junction, because staleness follows the target with std::fs::metadata and does not require the path itself to be a real directory. Removal then always runs git worktree remove --force and remove_dir_all after a best-effort unlink, which can delete the link target.
+- **F19-1** (prior, not-checked) `crates/c3/src/consult/reviewed.rs:103` - c3 consult --rev with the http engine warns but still sends a pack of the live working tree to a remote model, while the operator asked for a frozen revision.
+- **F32-1** (prior, not-checked) `crates/c3/src/engines/worktree.rs:248` - Stage creation and publication use pathnames after validation, so a replaced directory component can send staged bytes outside the worktree and leave a temporary file there.
+
+### Unproven scenarios
+
+- A brief or artifact changed to other bytes and back during a live-tree run is invisible to the end-of-run re-hash (no engine records intermediate reads).
+- The live-tree bound-input rule against real agy/muse/grok CLIs (author's own NOT-covered list; fakes only).
+- A real file system without hard links for patch placement (only the test hook forces that path).
+- An end-to-end http engine run under --rev (unit level only, per the brief).
+- hide_in_index on a SHA-256 repository (64-hex zero padding) and with gitlink/submodule modes among the hidden paths.
+- The composite takeover / drop_own_claim races on a genuinely stalled filesystem (finding on drop_own_claim).
+- Router explain on a real multi-entry roster: no process or network spawn was verified statically only, not by tracing a live run.
+
+### First-run checklist (observable)
+
+_(none)_
+
+Panel 90004ff2: 3 of 3 entries ran (asked 3, started 3, usable 3; wall clock 1022.7 s; at once)
+  grok :: grok-4.7 [grok]                    HOLD     0 blocker, 4 major, 2 minor          prior: 23 fixed, 5 still-open, 170 not-checked  880.9 s  handoffs/51-grok-reply-grok.md
+  meta :: muse-spark-1.3-contributor [muse]  HOLD     0 blocker, 2 major, 1 minor, 1 note  prior: 198 not-checked                          138.6 s  handoffs/52-muse-reply-meta.md
+  ZAI-claude :: glm-5.3 [claude]             ACCEPT   0 blocker, 0 major, 4 minor, 3 note  prior: 30 fixed, 1 still-open, 167 not-checked  689.5 s  handoffs/53-claudecode-reply-zai-claude.md

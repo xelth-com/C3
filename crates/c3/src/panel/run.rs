@@ -2288,6 +2288,7 @@ fn build_spec(
         "rev": b.rev_sha,
         "diff": o.diff,
         "diff_tracked_only": o.diff_tracked_only,
+        "diff_untracked": o.diff_untracked,
         "reply_name": s.reply_name,
         "artifact": o.artifacts,
         // (M11) `--peer`/`--peers` reach a reviewer only through a pack, which only the http engine

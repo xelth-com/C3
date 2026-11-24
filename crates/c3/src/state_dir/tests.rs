@@ -248,6 +248,36 @@ fn collab_paths_are_normalised_before_they_are_classified() {
         cfg!(any(windows, target_os = "macos")),
         "the case rule of the file system"
     );
+    // (R7b, F47-3) trailing dots and spaces name the same entry on Windows - and another one
+    // elsewhere
+    for spelling in [
+        ".eck./collab",
+        ".eck /collab",
+        ".eck. ./collab",
+        ".eck/collab.",
+    ] {
+        let want = if cfg!(windows) {
+            legacy.clone()
+        } else if spelling.starts_with(".eck/") {
+            Some((StateName::Legacy, "collab.".to_string()))
+        } else {
+            None
+        };
+        assert_eq!(split_state_path(&r, &r.join(spelling)), want, "{spelling}");
+        assert_eq!(
+            split_state_path(&r, Path::new(spelling)),
+            want,
+            "{spelling}"
+        );
+    }
+    assert_eq!(
+        split_state_path(&r, Path::new(".c3 /collab")),
+        if cfg!(windows) {
+            Some((StateName::Current, "collab".to_string()))
+        } else {
+            None
+        }
+    );
     let _ = std::fs::remove_dir_all(&r);
 }
 
@@ -415,7 +445,7 @@ fn the_leftovers_are_relocated_inside_the_old_folder_idempotently() {
     let r = scratch("leftovers");
     seed_eck(&r);
     let eck = legacy_path(&r);
-    let rel = relocate_leftovers(&eck, LEGACY_STATE_DIR);
+    let rel = relocate_leftovers(&handle(&eck), LEGACY_STATE_DIR);
     assert_eq!(rel.blocked, None);
     assert!(rel.report);
     for n in LEGACY_LEFTOVERS {
@@ -430,11 +460,11 @@ fn the_leftovers_are_relocated_inside_the_old_folder_idempotently() {
         "OLD-REPORT\n"
     );
     // again: nothing left to do
-    let again = relocate_leftovers(&eck, LEGACY_STATE_DIR);
+    let again = relocate_leftovers(&handle(&eck), LEGACY_STATE_DIR);
     assert!(again.moved.is_empty() && !again.report && again.left.is_empty());
     // the old tool wrote a new anchor meanwhile: both are kept
     std::fs::write(eck.join("anchor"), "newer\n").unwrap();
-    let third = relocate_leftovers(&eck, LEGACY_STATE_DIR);
+    let third = relocate_leftovers(&handle(&eck), LEGACY_STATE_DIR);
     assert_eq!(third.moved, vec!["anchor".to_string()]);
     assert_eq!(
         std::fs::read_to_string(eck.join(LEGACY_SUBDIR).join("anchor")).unwrap(),
@@ -448,7 +478,7 @@ fn the_leftovers_are_relocated_inside_the_old_folder_idempotently() {
 }
 
 // (F36-2) A `.c3/` an S1 build left half done (the old tool's `update_seq` at its top) is finished;
-// a `.c3/` whose only `anchor` is C3's own is left alone.
+// (R7b, F48-3) a `.c3/` marked finished keeps its `anchor` - C3's own.
 #[test]
 fn a_half_done_folder_is_finished_and_c3s_own_anchor_is_kept() {
     let r = scratch("halfdone");
@@ -468,8 +498,10 @@ fn a_half_done_folder_is_finished_and_c3s_own_anchor_is_kept() {
         notes.iter().any(|n| n.starts_with("finished the move")),
         "{notes:?}"
     );
+    assert!(is_finished(&c3), "the finished folder is marked");
     let r2 = scratch("halfdone-own");
     std::fs::create_dir_all(path(&r2)).unwrap();
+    std::fs::write(path(&r2).join(LAYOUT_MARKER), LAYOUT_BODY).unwrap();
     std::fs::write(path(&r2).join("anchor"), "c3-own\n").unwrap();
     assert!(finish_half_done(&r2).is_empty());
     assert_eq!(
@@ -478,6 +510,289 @@ fn a_half_done_folder_is_finished_and_c3s_own_anchor_is_kept() {
     );
     let _ = std::fs::remove_dir_all(&r);
     let _ = std::fs::remove_dir_all(&r2);
+}
+
+// (R7b, F48-3) A `.c3/` holding only the old tool's `anchor` and no marker is unfinished: no anchor
+// is read from it, the next writing command sends that `anchor` to `legacy/` and marks the folder;
+// a cache `anchor` moved in afterwards (C3's own) stays and is read. A fresh `.c3/` is marked at
+// once.
+#[test]
+fn a_folder_without_its_marker_sends_a_lone_anchor_to_legacy() {
+    let r = scratch("lone-anchor");
+    let c3 = path(&r);
+    std::fs::create_dir_all(&c3).unwrap();
+    std::fs::write(c3.join("anchor"), "old-tool-anchor\n").unwrap();
+    assert_eq!(crate::pack::snapshot::read_anchor(&c3), None, "no marker");
+    let collab = r.join(".collab");
+    std::fs::create_dir_all(collab.join(STATE_DIR)).unwrap();
+    std::fs::write(collab.join(STATE_DIR).join("anchor"), "c3-cache-anchor\n").unwrap();
+    let e = ensure(&r, Some(&collab)).unwrap();
+    assert!(!e.new_folder);
+    assert_eq!(
+        std::fs::read_to_string(c3.join(LEGACY_SUBDIR).join("anchor")).unwrap(),
+        "old-tool-anchor\n",
+        "{:?}",
+        e.moved
+    );
+    assert!(is_finished(&c3));
+    assert_eq!(
+        crate::pack::snapshot::read_anchor(&c3).as_deref(),
+        Some("c3-cache-anchor"),
+        "{:?}",
+        e.moved
+    );
+    // nothing more to finish: C3's own anchor stays
+    assert!(finish_half_done(&r).is_empty());
+    assert!(c3.join("anchor").is_file());
+    // a fresh folder carries the marker from its creation
+    let r2 = scratch("fresh-marker");
+    assert!(ensure(&r2, None).unwrap().new_folder);
+    assert!(is_finished(&path(&r2)));
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&r2);
+}
+
+/// A handle on the directory `p` (a test opens the folder `relocate_leftovers` works in).
+fn handle(p: &Path) -> Dir {
+    Dir::open_ambient_dir(p, cap_std::ambient_authority()).unwrap()
+}
+
+// (R7b, F47-2) `legacy/` inside `.eck/` swapped for a link between its check and the relocation
+// (`state-relocate`): no leftover reaches the link's target. On Windows the swap is refused while C3
+// holds the directory's handle; elsewhere the leftovers land in the directory that was opened.
+#[test]
+fn a_directory_in_the_old_folder_swapped_for_a_link_takes_nothing_outside() {
+    let r = scratch("race-relocate");
+    seed_eck(&r);
+    let outside = r.with_extension("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let legacy = legacy_path(&r).join(LEGACY_SUBDIR);
+    let hook = c3_core::test_hooks::set_thread_hook(
+        contain::RACE_HOOK,
+        &format!("state-relocate|{}|{}", legacy.display(), outside.display()),
+    );
+    let m = migrate_legacy(&r);
+    drop(hook);
+    assert!(
+        std::fs::read_dir(&outside).unwrap().next().is_none(),
+        "nothing outside: {m:?}"
+    );
+    let folder = if m.moved { path(&r) } else { legacy_path(&r) };
+    assert!(
+        std::fs::symlink_metadata(folder.join("anchor")).is_err(),
+        "{m:?}"
+    );
+    let kept = [LEGACY_SUBDIR, "legacy.c3-race-orig"]
+        .iter()
+        .any(|d| folder.join(d).join("anchor").is_file());
+    assert!(
+        kept,
+        "the anchor is in the directory that was opened: {m:?}"
+    );
+    drop_link(&folder.join(LEGACY_SUBDIR));
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
+// (R7b, F47-2) `.c3` swapped for a link between `ensure` and a write (`state-write-create`, after
+// the write's own checks): nothing is written outside - on Windows the swap is refused while C3
+// holds the folder's handle, elsewhere the file lands in the directory that was opened.
+#[test]
+fn the_folder_swapped_for_a_link_before_a_write_never_writes_outside() {
+    let r = scratch("race-write");
+    let outside = r.with_extension("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    ensure(&r, None).unwrap();
+    let c3 = path(&r);
+    let hook = c3_core::test_hooks::set_thread_hook(
+        contain::RACE_HOOK,
+        &format!("state-write-create|{}|{}", c3.display(), outside.display()),
+    );
+    let w = write_in(&r, &c3, "JOURNAL.md", |_, _| Ok(b"entry\n".to_vec()));
+    drop(hook);
+    assert!(
+        std::fs::read_dir(&outside).unwrap().next().is_none(),
+        "nothing outside: {w:?}"
+    );
+    let aside = r.join(".c3.c3-race-orig");
+    let landed = if aside.exists() { aside } else { c3.clone() };
+    assert_eq!(
+        std::fs::read_to_string(landed.join("JOURNAL.md")).unwrap(),
+        "entry\n",
+        "{w:?}"
+    );
+    if r.join(".c3.c3-race-orig").exists() {
+        drop_link(&c3);
+    }
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
+// (R7b, F48-1) `--collab-dir .c3/collab` (and `.eck/collab`) with the folder a junction (a symlink
+// elsewhere): the run start refuses with one line, before and after the path was resolved through
+// the link, and nothing is created in the target; a reader does not read through a linked `.eck`.
+#[test]
+fn a_collab_directory_under_a_linked_folder_refuses_the_run_and_creates_nothing() {
+    let r = scratch("linked-collab");
+    let outside = r.with_extension("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    if !dir_link(&path(&r), &outside) {
+        eprintln!("skipped: the platform made no directory link");
+        return;
+    }
+    let resolved = crate::providers::resolve_collab_root(&r, ".c3/collab");
+    for given in [r.join(".c3").join("collab"), resolved] {
+        let err = begin_run(&r, &given).unwrap_err();
+        assert!(
+            err.contains(".c3 is a link") && err.contains("nothing was started"),
+            "{err}"
+        );
+    }
+    std::fs::create_dir_all(outside.join("collab")).unwrap();
+    let err = begin_run(&r, &outside.join("collab")).unwrap_err();
+    assert!(
+        err.contains("never reads or writes through a link"),
+        "{err}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&outside).unwrap().count(),
+        1,
+        "only the test's own"
+    );
+    drop_link(&path(&r));
+    // a linked `.eck`: refused for a writer, not read by a reader
+    assert!(dir_link(&legacy_path(&r), &outside));
+    assert!(begin_run(&r, &legacy_path(&r).join("collab")).is_err());
+    assert_eq!(read_path(&r), None);
+    drop_link(&legacy_path(&r));
+    let _ = std::fs::remove_dir_all(&r);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
+// (R7b, F48-2) A writer that lost the lock to a mover held inside the move (the hold hook) goes on
+// with `.eck/` for its run; once the mover renamed, its write lands in `.c3/` and no `.eck/` is
+// created again.
+#[test]
+fn a_writer_that_lost_the_lock_ends_in_the_new_folder_and_no_old_folder_returns() {
+    let r = scratch("lost-lock");
+    seed_eck(&r);
+    let release = r.with_extension("release");
+    let mut held = release.clone().into_os_string();
+    held.push(".held");
+    let held = PathBuf::from(held);
+    let (r2, rel2) = (r.clone(), release.clone());
+    let mover = std::thread::spawn(move || {
+        let _h = c3_core::test_hooks::set_thread_hook(MOVE_HOLD_HOOK, &rel2.to_string_lossy());
+        migrate_legacy(&r2)
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !held.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(held.exists(), "the mover never reached the hold");
+    let ensured = {
+        let _h = c3_core::test_hooks::set_thread_hook(LOCK_WAIT_HOOK, "100");
+        ensure(&r, None).unwrap()
+    };
+    assert!(ensured.deferred.is_some(), "{:?}", ensured.moved);
+    assert!(same_place(&ensured.dir, &legacy_path(&r)));
+    std::fs::write(&release, "go").unwrap();
+    let m = mover.join().unwrap();
+    assert!(m.moved, "{m:?}");
+    let f = write_in(&r, &ensured.dir, LAST_REPORT, |_, _| {
+        Ok(b"report\n".to_vec())
+    })
+    .unwrap();
+    assert!(same_place(&f, &path(&r).join(LAST_REPORT)), "{f:?}");
+    let d = prepare_dir(&r, &ensured.dir.join("explains")).unwrap();
+    assert!(same_place(&d, &path(&r).join("explains")), "{d:?}");
+    assert!(
+        std::fs::symlink_metadata(legacy_path(&r)).is_err(),
+        "no new .eck/"
+    );
+    let _ = std::fs::remove_file(&release);
+    let _ = std::fs::remove_file(&held);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+// (R7b, F48-2) The move lock of an owner alive on this machine is not taken over, however old; a
+// dead owner's is, and another host's once it is old.
+#[test]
+fn a_live_owners_old_lock_is_not_taken_over() {
+    let r = scratch("live-lock");
+    std::fs::create_dir_all(r.join(".git")).unwrap();
+    let p = lock_path(&r);
+    let me = std::process::id();
+    let write_old = |rec: &LockRec| {
+        std::fs::write(&p, serde_json::to_vec(rec).unwrap()).unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
+        let old = std::time::SystemTime::now() - Duration::from_secs(LOCK_STALE_SECS + 120);
+        f.set_modified(old).unwrap();
+    };
+    let live = LockRec {
+        pid: me,
+        start_time: crate::liveness::proc::process_start_iso(me).unwrap_or_default(),
+        host: c3_core::host::machine_name(),
+        created: "2026-01-01T00:00:00Z".into(),
+        purpose: "move".into(),
+        token: "live".into(),
+    };
+    write_old(&live);
+    let held = MoveLock::acquire_within(&r, "test", Duration::from_millis(150)).unwrap_err();
+    assert!(held.contains("held by c3 pid"), "{held}");
+    assert_eq!(read_lock(&p).unwrap().token, "live");
+    // another host's old lock: its owner cannot be shown alive
+    write_old(&LockRec {
+        host: "some-other-host".into(),
+        token: "foreign".into(),
+        ..live.clone()
+    });
+    let taken = MoveLock::acquire_within(&r, "test", Duration::from_millis(0)).unwrap();
+    drop(taken);
+    let _ = std::fs::remove_dir_all(&r);
+}
+
+// (R7b, F48-4) A collab path is classified by identity too: an alias that is a link to `.eck`
+// resolves to the folder (and refuses a writer), and on Windows the 8.3 short name of `.eck`
+// (`ECK~1`) does (skipped where the volume makes no short names).
+#[test]
+fn short_names_and_aliases_resolve_to_the_folder() {
+    let r = scratch("identity");
+    seed_eck(&r);
+    let alias = r.join("alias");
+    if dir_link(&alias, &legacy_path(&r)) {
+        assert_eq!(
+            split_state_path(&r, &alias.join("collab")),
+            Some((StateName::Legacy, "collab".to_string()))
+        );
+        let why = begin_run(&r, &alias.join("collab")).unwrap_err();
+        assert!(why.contains("alias is a link"), "{why}");
+        drop_link(&alias);
+    } else {
+        eprintln!("skipped the alias half: the platform made no directory link");
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let out = std::process::Command::new("cmd")
+            .raw_arg(format!(
+                "/c for %I in (\"{}\") do @echo %~snxI",
+                legacy_path(&r).display()
+            ))
+            .output()
+            .unwrap();
+        let short = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if short.is_empty() || short.eq_ignore_ascii_case(LEGACY_STATE_DIR) {
+            eprintln!("skipped the short-name half: no 8.3 name for .eck ({short:?})");
+        } else {
+            assert_eq!(
+                split_state_path(&r, &r.join(&short).join("collab")),
+                Some((StateName::Legacy, "collab".to_string())),
+                "{short}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&r);
 }
 
 // (F36-3) Inside `.eck/`: a linked `legacy` stops the move (the anchor stays, the target is
@@ -570,7 +885,10 @@ fn writes_and_the_cache_move_never_go_through_a_link() {
     }
     let err = prepare_dir(&r, &path(&r).join("scouts")).unwrap_err();
     assert!(err.contains("never writes through a link"), "{err}");
-    let err = write_in(&r, &path(&r).join("scouts"), "x.md", |_| Ok(b"x".to_vec())).unwrap_err();
+    let err = write_in(&r, &path(&r).join("scouts"), "x.md", |_, _| {
+        Ok(b"x".to_vec())
+    })
+    .unwrap_err();
     assert!(err.contains("never writes through a link"), "{err}");
     assert!(!outside.join("x.md").exists());
     // the cache under a linked collab directory stays where it is

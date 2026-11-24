@@ -454,6 +454,12 @@ const REAL_REMOVAL: RemovalOps = RemovalOps {
 /// ([`contain::remove_root`]: the entry must still be the same directory) all go through it; then
 /// `git worktree prune` drops the registration. No `git worktree remove --force` and no
 /// `remove_dir_all` on a path name any more.
+///
+/// (0.2.5 R7b, F43-6) An entry that cannot be removed (a locked file, a denied delete) does not
+/// stop the removal: everything else is removed, `Err` names up to ten entries left by their
+/// worktree-relative paths, the worktree's `.git` file is kept (removed last, only when nothing
+/// else is left - so `c3 doctor` still lists the half-removed worktree and `--fix` finishes it once
+/// the obstacle is gone), and the registration is pruned only when the directory is gone.
 fn remove_worktree_dir(
     repo: &Path,
     path: &Path,
@@ -476,7 +482,7 @@ fn remove_worktree_dir(
     if !pass.errors.is_empty() {
         return Err(pass.summary());
     }
-    contain::remove_contents(&root, ops.unlink)?;
+    contain::remove_contents(&root, ops.unlink, Some(OsStr::new(".git")))?;
     contain::remove_root(root)?;
     let _ = (ops.git)(repo, &["worktree", "prune"]);
     Ok(())
@@ -889,55 +895,74 @@ fn read_live_source(repo: &Path, p: &Path) -> LiveSource {
     }
 }
 
+/// (0.2.5 R8, F51-2) The bytes of the brief as the staging read them, and where it took them from:
+/// `from_revision` is `None` for the live file, else the full sha of the commit whose regular file
+/// was materialised.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BriefSource {
+    pub bytes: Vec<u8>,
+    pub from_revision: Option<String>,
+}
+
 /// (F11-4) The bytes of the brief as the reviewer's worktree gets them: the live file when it can
-/// be read, else the regular file committed at the live checkout's `HEAD` (materialised from HEAD),
-/// else the one committed at `rev` (the worktree's own revision). `Err` names why none is there.
-/// (R5, F18-5) A live brief that is a link, or reached through one, is an `Err` at once - never
-/// read, and not replaced by a committed copy either. (0.2.5 D4) The live file is read through
-/// handles ([`read_live_source`]).
+/// be read, else the regular file committed at a revision ([`committed_brief`]: (0.2.5 R8, F51-2)
+/// `rev` - the worktree's own revision, under `--rev` the reviewed one - first, then the live
+/// checkout's `HEAD`), with where they came from. `Err` names why none is there. (R5, F18-5) A live
+/// brief that is a link, or reached through one, is an `Err` at once - never read, and not replaced
+/// by a committed copy either. (0.2.5 D4) The live file is read through handles
+/// ([`read_live_source`]).
 pub fn brief_bytes(
     repo: &Path,
     brief_ref: &str,
     brief_path: Option<&Path>,
     rev: &str,
-) -> Result<Vec<u8>, String> {
+) -> Result<BriefSource, String> {
     let live_err = match brief_path {
         Some(p) => match read_live_source(repo, p) {
-            LiveSource::Bytes(b) => return Ok(b),
+            LiveSource::Bytes(bytes) => {
+                return Ok(BriefSource {
+                    bytes,
+                    from_revision: None,
+                })
+            }
             LiveSource::Linked(why) => return Err(why),
             LiveSource::Unreadable(e) => e,
         },
         None => "no brief file was resolved".to_string(),
     };
-    if let Some(b) = committed_blob(repo, "HEAD", brief_ref) {
-        return Ok(b);
-    }
-    if rev != "HEAD" {
-        if let Some(b) = committed_blob(repo, rev, brief_ref) {
-            return Ok(b);
-        }
+    if let Some((sha, bytes)) = committed_brief(repo, brief_ref, rev) {
+        return Ok(BriefSource {
+            bytes,
+            from_revision: Some(sha),
+        });
     }
     Err(format!(
-        "it cannot be read ({live_err}) and no regular file of that path is committed at HEAD"
+        "it cannot be read ({live_err}) and no regular file of that path is committed at HEAD or at the reviewed revision"
     ))
 }
 
 /// (0.2.5 D1, F10-3 / F11-4) Where the staging takes a brief from when the live tree does not hold
-/// it: the revision whose regular file at `brief_ref` it materialises - `HEAD` first, else `rev`
-/// (the worktree's own revision), in [`brief_bytes`]'s order - with those bytes. `None` when the
-/// reference is empty, absolute or leaves the repository, or neither revision commits a regular
-/// file there.
+/// it: the commit whose regular file at `brief_ref` it materialises - (0.2.5 R8, F51-2) `rev` (the
+/// worktree's own revision: under `--rev` the reviewed one, whose own copy of the brief wins) first,
+/// else the live checkout's `HEAD` - as its FULL sha (resolved once, the blob read at that sha), with
+/// those bytes. `None` when the reference is empty, absolute or leaves the repository, or neither
+/// revision commits a regular file there.
 pub fn committed_brief(repo: &Path, brief_ref: &str, rev: &str) -> Option<(String, Vec<u8>)> {
     if brief_ref.is_empty() || Path::new(brief_ref).is_absolute() || !stageable_rel(brief_ref) {
         return None;
     }
-    if let Some(b) = committed_blob(repo, "HEAD", brief_ref) {
-        return Some(("HEAD".to_string(), b));
-    }
-    if rev != "HEAD" {
-        if let Some(b) = committed_blob(repo, rev, brief_ref) {
-            return Some((rev.to_string(), b));
+    let mut tried: Vec<String> = Vec::new();
+    for r in [rev, "HEAD"] {
+        let Ok(sha) = resolve_commit(repo, r) else {
+            continue;
+        };
+        if tried.contains(&sha) {
+            continue;
         }
+        if let Some(b) = committed_blob(repo, &sha, brief_ref) {
+            return Some((sha, b));
+        }
+        tried.push(sha);
     }
     None
 }
@@ -1113,15 +1138,14 @@ fn prompt_safe_path(p: &str) -> Option<String> {
 /// [`UNCOMMITTED_PATHS_SHOWN`] named, each as data - [`prompt_safe_path`] - the rest counted), the
 /// COUNT of paths HEAD does not hold (never their names: an untracked file's name can be
 /// confidential and is outside the revision under review), and that the brief was copied in.
-/// `""` when the tree was clean (nothing is missing).
+/// (0.2.5 R8, F53-1) The paragraph is ALWAYS there for an isolated run - the reviewer is told its
+/// working directory is a throwaway worktree of HEAD, not the live checkout, and that the brief was
+/// copied in; only the list and the counts of uncommitted paths depend on the live tree.
 pub fn isolation_prompt_line(
     head_short: &str,
     uncommitted: &Uncommitted,
     brief_ref: &str,
 ) -> String {
-    if uncommitted.is_empty() {
-        return String::new();
-    }
     let mut l = format!(
         "Isolation: your working directory is a throwaway git worktree of the committed HEAD {head_short}, not the live checkout."
     );
@@ -1161,14 +1185,11 @@ pub fn isolation_prompt_line(
 }
 
 /// (A1) [`isolation_prompt_line`] for the live tree at `repo` now (its uncommitted paths and short
-/// HEAD). `""` when the tree is clean. (0.2.5 D1) Every path under the collab directory
-/// (`collab_rel`, repo-relative; the task's handoffs are staged into the worktree) is left out of
-/// the list and out of its count.
+/// HEAD) - (0.2.5 R8, F53-1) also when the tree is clean. (0.2.5 D1) Every path under the collab
+/// directory (`collab_rel`, repo-relative; the task's handoffs are staged into the worktree) is left
+/// out of the list and out of its count.
 pub fn isolation_prompt(repo: &Path, brief_ref: &str, collab_rel: Option<&str>) -> String {
     let paths = uncommitted_paths_outside(repo, collab_rel);
-    if paths.is_empty() {
-        return String::new();
-    }
     let head = git_capture(repo, &["rev-parse", "--short=12", "HEAD"]).unwrap_or_default();
     isolation_prompt_line(&head, &paths, brief_ref)
 }
@@ -2252,9 +2273,12 @@ mod tests {
         // the live source cannot be read: HEAD's bytes
         let b = brief_bytes(&repo, "docs/brief.md", Some(&missing), &first).unwrap();
         assert_eq!(
-            String::from_utf8_lossy(&b).replace("\r\n", "\n"),
+            String::from_utf8_lossy(&b.bytes).replace("\r\n", "\n"),
             "# committed brief\n"
         );
+        // (0.2.5 R8, F51-2) named by the full sha of the commit it came from
+        let head_sha = git_capture(&repo, &["rev-parse", "HEAD"]).unwrap();
+        assert_eq!(b.from_revision.as_deref(), Some(head_sha.trim()));
         assert!(isolated_brief_refusal(
             &repo,
             "kimi",
@@ -2289,7 +2313,32 @@ mod tests {
             "# committed brief\n",
             "the worktree of the older revision got HEAD's brief"
         );
+        // (0.2.5 R8, F51-2) the record names the bytes the staging wrote and where it took them
+        let staged = tree.staged_brief().unwrap();
+        assert_eq!(
+            staged.0,
+            c3_core::sha256_hex(&std::fs::read(tree.path().join("docs").join("brief.md")).unwrap())
+        );
+        assert_eq!(staged.1.as_deref(), Some(head_sha.trim()));
         drop(tree);
+        // under --rev the reviewed revision's own copy wins over HEAD's
+        std::fs::write(repo.join("docs").join("brief.md"), "# newer brief\n").unwrap();
+        git_capture(&repo, &["commit", "-q", "-am", "newer brief"]).unwrap();
+        let older = head_sha.trim().to_string();
+        let b = brief_bytes(&repo, "docs/brief.md", Some(&missing), &older).unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&b.bytes).replace("\r\n", "\n"),
+            "# committed brief\n"
+        );
+        assert_eq!(b.from_revision.as_deref(), Some(older.as_str()));
+        // a live file is staged as it is, with no revision named
+        let live = repo.join("docs").join("brief.md");
+        let b = brief_bytes(&repo, "docs/brief.md", Some(&live), &older).unwrap();
+        assert_eq!(b.from_revision, None);
+        assert_eq!(
+            String::from_utf8_lossy(&b.bytes).replace("\r\n", "\n"),
+            "# newer brief\n"
+        );
         // neither live nor committed: refused
         let r = brief_bytes(&repo, "docs/none.md", Some(&missing), "HEAD").unwrap_err();
         assert!(
@@ -2312,9 +2361,11 @@ mod tests {
     // its code span is counted, never shown.
     #[test]
     fn the_isolation_prompt_names_tracked_changes_and_counts_the_rest() {
+        // (0.2.5 R8, F53-1) a clean live tree: the reviewer is still told where it is, and that the
+        // brief was copied in - only the path list is left out
         assert_eq!(
             isolation_prompt_line("abc", &Uncommitted::default(), "b.md"),
-            ""
+            "Isolation: your working directory is a throwaway git worktree of the committed HEAD abc, not the live checkout. The brief `b.md` was copied into your worktree at that path."
         );
         let tracked: Vec<String> = (0..25).map(|i| format!("src/f{i:02}.rs")).collect();
         let u = Uncommitted {
@@ -2355,7 +2406,12 @@ mod tests {
         // from a live repo (the reviewer's Verify): a modified tracked file is named, a
         // confidential untracked file is only counted.
         let repo = brief_repo("iso");
-        assert_eq!(isolation_prompt(&repo, "", None), "");
+        let clean = isolation_prompt(&repo, "", None);
+        assert!(
+            clean.starts_with("Isolation: your working directory is a throwaway git worktree of the committed HEAD ")
+                && clean.ends_with(", not the live checkout."),
+            "{clean}"
+        );
         std::fs::write(repo.join("committed.md"), "# changed\n").unwrap();
         std::fs::write(repo.join("secret-acquisition-plan.txt"), "n\n").unwrap();
         assert_eq!(

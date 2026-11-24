@@ -248,6 +248,7 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         rev: s("rev"),
         diff: s("diff"),
         diff_tracked_only: b("diff_tracked_only"),
+        diff_untracked: b("diff_untracked"),
         reply_name: s("reply_name"),
         artifacts: list("artifact"),
         raw: b("raw"),

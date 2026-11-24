@@ -1622,8 +1622,10 @@ fn is_within(inner: &Path, outer: &Path) -> bool {
 /// cherry`); `git branch -d` itself must accept it (merged into its upstream when it has one, else
 /// into this checkout's HEAD - checked first, so nothing is half done). Its worktree, when it has
 /// one, must not be the start folder nor the checkout C3 runs in, not locked, not gone (prunable),
-/// free of links that lead outside it ([`links_leading_outside`]) and clean (`git status
-/// --porcelain`: no change, no untracked file). Then `git worktree remove` WITHOUT `--force` and
+/// free of links that lead outside it ([`links_leading_outside`]) and hold nothing outside the
+/// committed tree (`git status --porcelain --ignored --untracked-files=all`: no change, no
+/// untracked file, no ignored file - F46-3: `git worktree remove` deletes ignored files unlisted;
+/// a refusal names how many and the first few). Then `git worktree remove` WITHOUT `--force` and
 /// `git branch -d`. Anything else is refused with the reason; nothing is ever forced. Refused inside
 /// a C3 child.
 pub fn close_branch(repo: &Path, branch: &str) -> Result<Closed, String> {
@@ -1720,10 +1722,29 @@ pub fn close_branch(repo: &Path, branch: &str) -> Result<Closed, String> {
                     "holds links that lead outside it ({})",
                     name_list(&links.iter().map(String::as_str).collect::<Vec<_>>(), 5)
                 )),
-                Ok(_) => match git_out(path, &["status", "--porcelain"]) {
+                // F46-3/F45-8: every file outside the committed tree counts - an ignored one
+                // (`.env`, build output) too, which `git worktree remove` would delete unlisted
+                Ok(_) => match git_out(
+                    path,
+                    &[
+                        "status",
+                        "--porcelain",
+                        "--ignored",
+                        "--untracked-files=all",
+                    ],
+                ) {
                     None => Some("cannot be read by git status".to_string()),
                     Some(s) if !s.trim().is_empty() => {
-                        Some("has uncommitted changes or untracked files".to_string())
+                        let names: Vec<&str> = s
+                            .lines()
+                            .filter(|l| l.len() > 3)
+                            .map(|l| l[3..].trim())
+                            .collect();
+                        Some(format!(
+                            "holds {} file(s) outside the committed tree - changed, untracked or ignored ({})",
+                            names.len(),
+                            name_list(&names, 5)
+                        ))
                     }
                     Some(_) => None,
                 },
@@ -1738,20 +1759,27 @@ pub fn close_branch(repo: &Path, branch: &str) -> Result<Closed, String> {
         let out = git_run(repo, &["worktree", "remove", &w.path])
             .map_err(|e| format!("git worktree remove: {e}; nothing removed"))?;
         if !out.status.success() {
+            // git refuses before it deletes anything; a failure part-way leaves no `.git` file
+            let what = if path.join(".git").exists() {
+                "nothing removed"
+            } else {
+                "the worktree may be partly removed; the branch is kept"
+            };
             return Err(format!(
-                "git worktree remove refused {}: {}; nothing removed",
+                "git worktree remove refused {}: {}; {what}",
                 w.path,
                 String::from_utf8_lossy(&out.stderr).trim()
             ));
         }
         removed = Some(w.path.clone());
     }
-    let out = git_run(repo, &["branch", "-d", branch]).map_err(|e| format!("git branch: {e}"))?;
+    let done = match &removed {
+        Some(p) => format!("its worktree {p} was removed, but "),
+        None => String::new(),
+    };
+    let out = git_run(repo, &["branch", "-d", branch])
+        .map_err(|e| format!("{done}git branch could not run: {e}"))?;
     if !out.status.success() {
-        let done = match &removed {
-            Some(p) => format!("its worktree {p} was removed, but "),
-            None => String::new(),
-        };
         return Err(format!(
             "{done}git branch -d refused '{branch}': {}",
             String::from_utf8_lossy(&out.stderr).trim()

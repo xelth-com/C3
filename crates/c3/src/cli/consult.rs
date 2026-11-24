@@ -72,16 +72,21 @@ pub struct ConsultArgs {
     #[arg(long, default_value = "")]
     pub rev: String,
     /// Hand the reviewer the change as a patch: `git diff <range>` (base..head, base...head, or one
-    /// revision against the working tree with new files) is written into the task's handoffs as
+    /// revision against the working tree: its tracked changes, new files with `--diff-untracked`) is
+    /// written into the task's handoffs as
     /// `<stem>.<sha8>.patch` (.collab/, .c3/ and ignored or .c3ignore'd files left out,
     /// secret-shaped values redacted) and named in the prompt (an http reviewer gets it in its
     /// pack); the ledger records the range, the patch's sha256 and the redaction count.
     #[arg(long, default_value = "")]
     pub diff: String,
-    /// With a one-revision `--diff`: leave the untracked files out of the patch (tracked changes
-    /// only). Without it such a patch carries every untracked, not ignored file with its content.
+    /// With a one-revision `--diff`: the patch holds the tracked changes only - the default, which
+    /// this flag only names (the untracked files left out are named before the reviewer starts).
     #[arg(long)]
     pub diff_tracked_only: bool,
+    /// With a one-revision `--diff`: carry the untracked, not ignored files in the patch too, with
+    /// their content (through the redactor).
+    #[arg(long)]
+    pub diff_untracked: bool,
     /// The handoff base name (a slug); default `reply`.
     #[arg(long, default_value = "")]
     pub reply_name: String,
@@ -289,6 +294,7 @@ pub fn run(args: ConsultArgs) -> i32 {
         rev: args.rev,
         diff: args.diff,
         diff_tracked_only: args.diff_tracked_only,
+        diff_untracked: args.diff_untracked,
         reply_name: args.reply_name,
         artifacts: args.artifact,
         raw: args.raw,

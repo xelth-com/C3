@@ -1513,3 +1513,61 @@ fn diff_hands_the_reviewer_a_patch_and_a_named_range_without_it_is_warned() {
         "{tz}"
     );
 }
+
+/// (0.2.5 R8, F18-4 / F19-2 / F20-6, F51-5 / F53-7) a one-revision `--diff` carries the tracked
+/// changes only: the untracked file stays out of the patch and the run says so before the reviewer
+/// starts - on stderr, in the handoff's warnings and in the ledger (`untracked_left_out`);
+/// `--diff-untracked` carries it.
+#[test]
+fn a_one_revision_diff_leaves_untracked_files_out_and_says_so() {
+    let e = setup("diffuntracked");
+    std::fs::write(e.repo.join("app.txt"), "two\n").unwrap();
+    std::fs::write(e.repo.join("scratch-notes.txt"), "PRIVATE-NOTES\n").unwrap();
+    let base = [
+        "--engine",
+        "claude",
+        "--model",
+        "sonnet",
+        "--purpose",
+        "framing",
+        "--diff",
+        "HEAD",
+    ];
+    let x = e.consult(&base, &[]);
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(0), "{t}");
+    let notice = "the -Diff patch holds the tracked changes only: 1 untracked file(s) were left out: `scratch-notes.txt`";
+    assert!(t.contains(notice), "{t}");
+    let l = e.last();
+    assert_eq!(l["diff"]["untracked_left_out_count"], 1, "{l}");
+    assert!(l["diff"].get("untracked").is_none(), "{l}");
+    assert!(
+        strs(&l["warnings"]).iter().any(|w| w.contains(notice)),
+        "{l}"
+    );
+    let patch = std::fs::read_to_string(e.repo.join(l["diff"]["patch"].as_str().unwrap())).unwrap();
+    assert!(
+        patch.contains("+two") && !patch.contains("PRIVATE-NOTES"),
+        "{patch}"
+    );
+    let handoff =
+        std::fs::read_to_string(e.repo.join(".collab/t").join(l["reply"].as_str().unwrap()))
+            .unwrap();
+    assert!(handoff.contains(notice), "{handoff}");
+    // --diff-untracked: the file is in the patch, and the run names it as carried
+    let mut asked = base.to_vec();
+    asked.push("--diff-untracked");
+    let y = e.consult(&asked, &[]);
+    let ty = text(&y);
+    assert_eq!(y.status.code(), Some(0), "{ty}");
+    let l = e.last();
+    assert_eq!(l["diff"]["untracked_count"], 1, "{l}");
+    let patch = std::fs::read_to_string(e.repo.join(l["diff"]["patch"].as_str().unwrap())).unwrap();
+    assert!(patch.contains("+PRIVATE-NOTES"), "{patch}");
+    assert!(
+        ty.contains(
+            "the -Diff patch includes 1 untracked file(s) with their content (--diff-untracked;"
+        ),
+        "{ty}"
+    );
+}

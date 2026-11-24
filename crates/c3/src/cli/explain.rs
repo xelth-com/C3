@@ -95,19 +95,13 @@ pub fn run(args: ExplainArgs) -> i32 {
     // The default output goes into C3's folder: make sure it is in place first (and write into the
     // folder it settled on - the legacy one for a run whose move had to wait).
     let mut out = out;
+    let mut in_state: Option<(PathBuf, String)> = None;
     if into_state_dir {
         match crate::state_dir::ensure(&state_repo, Some(&state_collab)) {
             Ok(e) => {
                 crate::state_dir::print_notes("c3 explain", &e.notes(), true);
-                if let Some(name) = out.file_name().map(|n| n.to_os_string()) {
-                    // (S2, F36-1/F36-3) `explains/` at the folder's place now, never through a link
-                    match crate::state_dir::prepare_dir(&state_repo, &e.dir.join("explains")) {
-                        Ok(d) => out = d.join(name),
-                        Err(why) => {
-                            eprintln!("c3 explain: {why}");
-                            return 1;
-                        }
-                    }
+                if let Some(name) = out.file_name().map(|n| n.to_string_lossy().to_string()) {
+                    in_state = Some((e.dir.join("explains"), name));
                 }
             }
             Err(e) => {
@@ -117,7 +111,25 @@ pub fn run(args: ExplainArgs) -> i32 {
         }
     }
 
-    match explain::write(&pack, &out) {
+    // (S2, F36-1/F36-3; 0.2.5 R7b, F48-2) into C3's folder the file is written through
+    // `write_in` at the write itself: `explains/` at the folder's place NOW (a legacy path the
+    // move carried is taken to `.c3/`, a legacy folder that is gone is never created again), never
+    // through a link
+    let written = match &in_state {
+        Some((dir, name)) => {
+            match crate::state_dir::write_in(&state_repo, dir, name, |_, _| {
+                Ok(pack.content.as_bytes().to_vec())
+            }) {
+                Ok(p) => {
+                    out = p;
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+        None => explain::write(&pack, &out),
+    };
+    match written {
         Ok(()) => {
             println!("Explainer pack: {}", out.display());
             0

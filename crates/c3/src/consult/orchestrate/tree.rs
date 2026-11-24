@@ -1,6 +1,7 @@
 //! The **read-only tree / collab drift check** of a `c3 consult` run: after a turn, decide whether
 //! the working tree changed and, if so, whether the change can be the reviewer's (write-disabled
-//! engines WARN, agy FAILS). Driven by [`super::finish`] via [`engine_tree_check`]; the outcome is
+//! engines WARN; agy and kimi FAIL on a write in their throwaway worktree). Driven by
+//! [`super::finish`] via [`engine_tree_check`]; the outcome is
 //! computed by [`engine_tree_outcome`]. Pure decision logic over two collab snapshots and a
 //! [`super::Drift`], so it is unit-testable without a process. (B1) A reviewer that ran in a
 //! throwaway worktree is judged on that worktree's own changes; the live tree only warns
@@ -58,8 +59,8 @@ fn engine_write_disabled(engine: &str) -> bool {
     // Read,Grep,Glob --permission-mode dontAsk (proven by each turn's init event) so its own tools
     // cannot have written; the http reviewer receives only a pack and never touches the machine at
     // all — so any tree change during such a run is not the reviewer's, and the check WARNS instead
-    // of failing (D9). agy is NOT here: it enforces no read-only sandbox, so its fail/warn decision
-    // turns on whether its event stream shows a writing tool call (see engine_tree_check).
+    // of failing (D9). agy is NOT here: it enforces no read-only sandbox, so (0.2.5 R8) it reviews a
+    // throwaway worktree and a change there fails the run.
     engine == "muse" || engine == "grok" || engine == "http" || engine == "claude"
 }
 
@@ -67,11 +68,10 @@ fn engine_write_disabled(engine: &str) -> bool {
 /// tree, the collab directory (this run's own handoff prefix, another task's directory, and this
 /// task's control/ledger/state files ignored — see `compare_collab`), the brief and the artifacts.
 /// A write-disabled engine (muse/grok/http/claude) WARNS (`outcome = "warned"`, the reply stays
-/// usable). agy FAILS (`outcome = "failed"`, `problem` set, forced class `permission`) when its own
-/// tool log shows a call that may have written (A1: decided per step from the log, see
-/// [`crate::engines::tree_check::agy_tool_step_is_writing`]); otherwise a change WARNS when the
-/// reply is complete and schema-valid ("reply kept", A1) or the stream shows at least one tool call,
-/// and FAILS only when the stream names no tool call AND the reply is not complete.
+/// usable). (0.2.5 R8) agy reviews a throwaway worktree like kimi: a change of THAT worktree FAILS
+/// the run (`outcome = "failed"`, `problem` set, forced class `permission`) with or without a
+/// writing tool in its log; a writing tool in its log (by the tool's name,
+/// [`crate::engines::tree_check::agy_tool_step_is_writing`]) beside a clean worktree is a warning.
 /// `outcome = "clean"` when nothing changed.
 pub(super) struct EngineTreeCheck {
     pub(super) outcome: String,
@@ -156,7 +156,6 @@ pub(super) fn engine_tree_check(
     collab_after: &std::collections::HashMap<String, String>,
     agy: &AgyToolLog,
     claude_init: &ClaudeInit,
-    reply_complete: bool,
     worktree_changes: Option<&[String]>,
 ) -> EngineTreeCheck {
     let mut why: Vec<String> = Vec::new();
@@ -168,16 +167,13 @@ pub(super) fn engine_tree_check(
     // The per-engine suffix on each warning line (the change is not the reviewer's).
     let not_mine = if ctx.engine == "agy" {
         let names = distinct(&agy.names);
-        // (A1) a complete, schema-valid reply is kept whatever changed around it.
-        let kept = if reply_complete { " - reply kept" } else { "" };
         // (F11-1) agy runs without a write sandbox: a change its tool log does not explain is
         // UNATTRIBUTED (a write can be missing from the log), never "someone else's".
         if names.is_empty() {
-            // only reached as a warning when the reply is complete and schema-valid.
-            format!("agy's event stream named no tool call, the change is unattributed{kept}")
+            "agy's event stream named no tool call, the change is unattributed".to_string()
         } else {
             format!(
-                "agy's tool log shows no writing step ({}), the change is unattributed{kept}",
+                "agy's tool log names {}, the change is unattributed",
                 names.join(", ")
             )
         }
@@ -330,7 +326,6 @@ pub(super) fn engine_tree_check(
         &ctx.engine,
         agy,
         write_disabled,
-        reply_complete,
         claude_note.as_deref(),
         TreeChanges { why, warn, files },
     );
@@ -395,21 +390,16 @@ pub(super) fn with_bound_input_change(
 /// Decide the tree-check outcome from the collected change reasons (`why`), their warning form
 /// (`warn`) and the changed paths (`files`). Pulled out of [`engine_tree_check`] so the fail/warn
 /// rules are unit-testable without building a whole `Context`:
-///   * agy whose own tool log shows a call that may have written → `failed` naming it, even when
-///     nothing monitored changed (its write may have landed in an ignored path);
-///   * nothing changed → `clean`;
+///   * nothing changed → `clean`; (0.2.5 R8) for agy whose tool log names a writing tool (by its
+///     name) beside an unchanged throwaway worktree → `warned`, the tool named - the worktree's own
+///     comparison is the evidence, the log only a record;
 ///   * a write-disabled engine (muse/grok/http/claude) → `warned` (D9, decision 1);
-///   * agy enforces no read-only sandbox, so its decision turns on its own tool log: no writing call
-///     and a complete, schema-valid reply (`reply_complete`) → `warned`, the reply kept (A1: a
-///     failure is "no usable reply", never a change somebody else made); no writing call and at
-///     least one tool call → `warned`; no tool call at all and no complete reply → `failed`
-///     reporting that (decision 3);
-///   * any other engine → `failed`.
+///   * any other engine - agy and kimi, whose `why` holds their throwaway worktree's own changes -
+///     → `failed` (agy's problem names the writing tools its log shows, if any).
 pub(super) fn engine_tree_outcome(
     engine: &str,
     agy: &AgyToolLog,
     write_disabled: bool,
-    reply_complete: bool,
     note_override: Option<&str>,
     changes: TreeChanges,
 ) -> EngineTreeCheck {
@@ -419,43 +409,30 @@ pub(super) fn engine_tree_outcome(
     } else {
         Vec::new()
     };
-    // (BLOCKER, Muse review-2026-10-30) A writing tool call by agy FAILS the run even when the
-    // monitored compare is clean: agy's write may have landed in a path the compare ignores (a
-    // sibling's handoff, this task's stores, an untracked scratch file), and a write that the check
-    // cannot attribute to someone else must not pass. Decided BEFORE the "nothing changed" early
-    // return below.
-    if !agy_writing.is_empty() {
-        let why = if why.is_empty() {
+    if why.is_empty() {
+        // (0.2.5 R8, F51-1 / F52-1 / F53-2) a writing tool in agy's log while its throwaway
+        // worktree stayed unchanged: recorded and said, the reply kept
+        let warnings = if agy_writing.is_empty() {
+            Vec::new()
+        } else {
             vec![format!(
-                "agy called a writing tool during the run ({}); its write may fall outside the monitored paths",
+                "agy's tool log names a writing tool ({}), but its throwaway worktree is unchanged - reply kept",
                 agy_writing.join(", ")
             )]
-        } else {
-            why
         };
         return EngineTreeCheck {
-            outcome: "failed".into(),
-            problem: format!(
-                "{} - {} (a writing tool was called: {})",
-                why.join("; "),
-                engine_tree_note(engine),
-                agy_writing.join(", ")
-            ),
-            warnings: Vec::new(),
-            files,
-        };
-    }
-    if why.is_empty() {
-        return EngineTreeCheck {
-            outcome: "clean".into(),
+            outcome: if warnings.is_empty() {
+                "clean"
+            } else {
+                "warned"
+            }
+            .into(),
             problem: String::new(),
-            warnings: Vec::new(),
+            warnings,
             files,
         };
     }
-    let agy_no_tools = agy.names.is_empty();
-    let agy_warns = engine == "agy" && (reply_complete || !agy_no_tools);
-    if write_disabled || agy_warns {
+    if write_disabled {
         EngineTreeCheck {
             outcome: "warned".into(),
             problem: String::new(),
@@ -463,14 +440,15 @@ pub(super) fn engine_tree_outcome(
             files,
         }
     } else {
-        // FAIL. A caller-supplied note (claude's init proof) wins; else, for agy (no tool call and
-        // no complete reply), say the stream named no tool call.
+        // FAIL. A caller-supplied note (claude's init proof) wins; else agy's names the writing
+        // tools its log shows, if any.
         let note = if let Some(n) = note_override {
             n.to_string()
-        } else if engine == "agy" {
+        } else if !agy_writing.is_empty() {
             format!(
-                "{} (its event stream named no tool call)",
-                engine_tree_note(engine)
+                "{} (its tool log names a writing tool: {})",
+                engine_tree_note(engine),
+                agy_writing.join(", ")
             )
         } else {
             engine_tree_note(engine)

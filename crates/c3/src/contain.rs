@@ -209,17 +209,26 @@ pub(crate) fn open_child(dir: &Dir, name: &OsStr, create: bool) -> Result<Dir, S
     }
 }
 
-/// The options of a read-only open that does not follow the final component.
+/// The options of a read-only open that does not follow the final component. (0.2.5 R7b, F44-3)
+/// On Unix the open does not block either (`O_NONBLOCK`): a FIFO swapped in after the kind check
+/// opens at once instead of waiting for a writer, and the handle check refuses it before any read
+/// (on a regular file the flag changes nothing). Windows needs nothing: a named pipe lives in its
+/// own namespace, never as an entry of a directory.
 fn nofollow_read() -> OpenOptions {
     let mut o = OpenOptions::new();
     o.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_fs_ext::OpenOptionsSyncExt;
+        o.nonblock(true);
+    }
     o
 }
 
 /// Open the file `name` of `dir` for reading WITHOUT following it; the handle is checked to be a
-/// regular file (not a link, not a reparse point, not a directory or device). A name that is not a
-/// regular file when read without following it is refused BEFORE it is opened (so a FIFO is never
-/// opened); the handle check catches an entry swapped in between.
+/// regular file (not a link, not a reparse point, not a directory, device or FIFO). A name that is
+/// not a regular file when read without following it is refused BEFORE it is opened; an entry
+/// swapped in between is opened without blocking and refused on its handle ([`open_checked`]).
 pub(crate) fn open_file_in(dir: &Dir, name: &OsStr) -> Result<File, Step> {
     match entry(dir, name) {
         Ok(None) => return Err(Step::Missing),
@@ -228,6 +237,13 @@ pub(crate) fn open_file_in(dir: &Dir, name: &OsStr) -> Result<File, Step> {
         Ok(Some(_)) => return Err(Step::NotFile),
         Err(e) => return Err(Step::Io(e)),
     }
+    open_checked(dir, name)
+}
+
+/// The open of [`open_file_in`] after its kind check: without following the name and without
+/// blocking ([`nofollow_read`]), then the HANDLE's metadata decides - only a regular file is
+/// returned, so nothing else (a FIFO, a device, a link) is ever read.
+fn open_checked(dir: &Dir, name: &OsStr) -> Result<File, Step> {
     let f = dir
         .open_with(name, &nofollow_read())
         .map_err(|e| classify(dir, name, e, false))?;
@@ -745,60 +761,148 @@ pub(crate) fn walk_links(
 /// The unlink function of a removal: [`remove_link`] in production; a test injects a failure.
 pub(crate) type UnlinkFn = fn(&Dir, &OsStr, bool) -> io::Result<()>;
 
-/// Remove EVERYTHING below `root` through handles: a link is unlinked with `unlink` (never
-/// followed), a file removed relative to its directory's handle, a subdirectory opened relative to
-/// its parent's handle without following it, emptied the same way and then removed relative to the
-/// parent's handle (a directory that became a link meanwhile is unlinked instead). The first error
-/// stops it: `Err` names it and what is left stays. `root` itself is not removed ([`remove_root`]).
-pub(crate) fn remove_contents(root: &Root, unlink: UnlinkFn) -> Result<(), String> {
-    fn empty(dir: &Dir, shown: &Path, unlink: UnlinkFn) -> Result<(), String> {
-        let names = list(dir).map_err(|e| format!("{} cannot be listed ({e})", shown.display()))?;
-        for name in names {
-            let at = shown.join(&name);
-            let kind = match entry(dir, &name) {
-                Ok(Some(k)) => k,
-                Ok(None) => continue,
-                Err(e) => return Err(format!("{} cannot be read ({e})", at.display())),
+/// (0.2.5 R7b, F43-6) At most this many entries a removal could not remove are named in its error.
+pub(crate) const MAX_NAMED_FAILURES: usize = 10;
+
+/// What a removal could not remove: the first [`MAX_NAMED_FAILURES`] root-relative paths with why,
+/// and how many in all.
+#[derive(Debug, Default)]
+struct Failures {
+    named: Vec<String>,
+    total: usize,
+}
+
+impl Failures {
+    fn add(&mut self, rel: &Path, why: String) {
+        self.total += 1;
+        if self.named.len() < MAX_NAMED_FAILURES {
+            let shown: Vec<String> = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .collect();
+            let shown = if shown.is_empty() {
+                ".".to_string()
+            } else {
+                shown.join("/")
             };
-            let link = match kind {
-                Kind::Link { dir: d, .. } => Some(d),
-                Kind::Dir => {
-                    race_point("walk-descend");
-                    match open_child(dir, &name, false) {
-                        Ok(sub) => {
-                            empty(&sub, &at, unlink)?;
-                            drop(sub);
-                            dir.remove_dir(&name).map_err(|e| {
-                                format!("the directory {} could not be removed ({e})", at.display())
-                            })?;
-                            None
+            self.named.push(format!("{shown}: {why}"));
+        }
+    }
+}
+
+/// Remove EVERYTHING below `root` through handles: a link is unlinked with `unlink` (never
+/// followed), a file removed relative to its directory's handle (on Windows a read-only file has
+/// its attribute cleared once and is tried again), a subdirectory opened relative to its parent's
+/// handle without following it, emptied the same way and then removed relative to the parent's
+/// handle (a directory that became a link meanwhile is unlinked instead). `root` itself is not
+/// removed ([`remove_root`]).
+///
+/// (0.2.5 R7b, F43-6) An entry that cannot be removed (a locked file, a denied delete) does not stop
+/// it: the walk goes on and removes everything it can; a directory that keeps such an entry is left
+/// (it cannot be empty). `Err` then names up to [`MAX_NAMED_FAILURES`] of the entries left, by their
+/// root-relative paths, and how many there are. The root-level entry `last` (a worktree's `.git`
+/// file) is removed only once everything else is gone - a half-removed worktree stays one that git
+/// and `c3 doctor` recognise, and `c3 doctor --fix` finishes it when the obstacle is gone.
+pub(crate) fn remove_contents(
+    root: &Root,
+    unlink: UnlinkFn,
+    last: Option<&OsStr>,
+) -> Result<(), String> {
+    fn remove_entry(dir: &Dir, rel: &Path, name: &OsStr, unlink: UnlinkFn, fails: &mut Failures) {
+        let at = rel.join(name);
+        let kind = match entry(dir, name) {
+            Ok(Some(k)) => k,
+            Ok(None) => return,
+            Err(e) => {
+                fails.add(&at, format!("cannot be read ({e})"));
+                return;
+            }
+        };
+        let link = match kind {
+            Kind::Link { dir: d, .. } => Some(d),
+            Kind::Dir => {
+                race_point("walk-descend");
+                match open_child(dir, name, false) {
+                    Ok(sub) => {
+                        let before = fails.total;
+                        empty(&sub, &at, unlink, None, fails);
+                        drop(sub);
+                        if fails.total == before {
+                            if let Err(e) = dir.remove_dir(name) {
+                                fails.add(&at, format!("the directory could not be removed ({e})"));
+                            }
                         }
-                        Err(Step::Link { .. }) => Some(match entry(dir, &name) {
-                            Ok(Some(Kind::Link { dir: d, .. })) => d,
-                            _ => true,
-                        }),
-                        Err(Step::Missing) => None,
-                        Err(why) => return Err(format!("{} {why}", at.display())),
+                        None
+                    }
+                    Err(Step::Link { .. }) => Some(match entry(dir, name) {
+                        Ok(Some(Kind::Link { dir: d, .. })) => d,
+                        _ => true,
+                    }),
+                    Err(Step::Missing) => None,
+                    Err(why) => {
+                        fails.add(&at, why.to_string());
+                        None
                     }
                 }
-                _ => {
-                    remove_file_in(dir, &name).map_err(|e| {
-                        format!("the file {} could not be removed ({e})", at.display())
-                    })?;
-                    None
+            }
+            _ => {
+                if let Err(e) = remove_file_in(dir, name) {
+                    fails.add(&at, format!("the file could not be removed ({e})"));
                 }
-            };
-            if let Some(dir_attr) = link {
-                unlink(dir, &name, dir_attr)
-                    .map_err(|e| format!("the link {} could not be removed ({e})", at.display()))?;
-                if entry(dir, &name).ok().flatten().is_some() {
-                    return Err(format!("the link {} is still there", at.display()));
+                None
+            }
+        };
+        if let Some(dir_attr) = link {
+            match unlink(dir, name, dir_attr) {
+                Err(e) => fails.add(&at, format!("the link could not be removed ({e})")),
+                Ok(()) if entry(dir, name).ok().flatten().is_some() => {
+                    fails.add(&at, "the link is still there".to_string())
                 }
+                Ok(()) => {}
             }
         }
-        Ok(())
     }
-    empty(root.dir(), root.path(), unlink)
+    fn empty(dir: &Dir, rel: &Path, unlink: UnlinkFn, last: Option<&OsStr>, fails: &mut Failures) {
+        let names = match list(dir) {
+            Ok(n) => n,
+            Err(e) => {
+                fails.add(rel, format!("cannot be listed ({e})"));
+                return;
+            }
+        };
+        let mut deferred: Option<OsString> = None;
+        for name in names {
+            if last.is_some_and(|l| l == name.as_os_str()) {
+                deferred = Some(name);
+                continue;
+            }
+            remove_entry(dir, rel, &name, unlink, fails);
+        }
+        if let Some(name) = deferred {
+            if fails.total == 0 {
+                remove_entry(dir, rel, &name, unlink, fails);
+            }
+        }
+    }
+    let mut fails = Failures::default();
+    empty(root.dir(), Path::new(""), unlink, last, &mut fails);
+    if fails.total == 0 {
+        return Ok(());
+    }
+    let more = fails.total - fails.named.len();
+    Err(format!(
+        "{} entr{} below {} could not be removed and {} still there: {}{}",
+        fails.total,
+        if fails.total == 1 { "y" } else { "ies" },
+        root.path().display(),
+        if fails.total == 1 { "is" } else { "are" },
+        fails.named.join("; "),
+        if more > 0 {
+            format!("; and {more} more")
+        } else {
+            String::new()
+        }
+    ))
 }
 
 /// Remove the (emptied, [`remove_contents`]) root directory itself: its parent is opened, the
@@ -1114,7 +1218,7 @@ pub(crate) mod tests {
         std::fs::set_permissions(&ro, perm).unwrap();
         junction_or_symlink(&root_p.join("out"), &outside);
         let root = Root::open(&root_p).unwrap();
-        remove_contents(&root, remove_link).unwrap();
+        remove_contents(&root, remove_link, None).unwrap();
         assert!(names(&root_p).is_empty());
         remove_root(root).unwrap();
         assert!(std::fs::symlink_metadata(&root_p).is_err());
@@ -1135,7 +1239,7 @@ pub(crate) mod tests {
     fn the_root_swapped_for_a_link_before_its_removal_is_never_followed() {
         let (base, root_p, outside) = scratch("rootrace");
         let root = Root::open(&root_p).unwrap();
-        remove_contents(&root, remove_link).unwrap();
+        remove_contents(&root, remove_link, None).unwrap();
         let hook = c3_core::test_hooks::set_thread_hook(
             RACE_HOOK,
             &format!("remove-root|{}|{}", root_p.display(), outside.display()),
@@ -1246,6 +1350,106 @@ pub(crate) mod tests {
         assert_eq!(f.with_cleanup("x".into()), "x");
         drop(dir);
         drop(root);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An injected unlink failure (a link held open, a denied delete).
+    fn failing_unlink(_dir: &Dir, _name: &OsStr, _dir_attr: bool) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "injected unlink failure",
+        ))
+    }
+
+    // (0.2.5 R7b, F43-6) A removal that meets entries it cannot remove goes on: everything else is
+    // removed, a directory that keeps such an entry stays, the error names the first ten left by
+    // their root-relative paths and counts the rest, and the root-level `last` entry (a worktree's
+    // `.git`) is kept while anything is left. Once the obstacle is gone the same removal finishes,
+    // `last` included.
+    #[test]
+    fn a_failed_removal_removes_what_it_can_and_names_what_is_left() {
+        let (base, root_p, outside) = scratch("partial");
+        std::fs::write(root_p.join(".git"), "gitdir: elsewhere\n").unwrap();
+        std::fs::write(root_p.join("top.txt"), "x\n").unwrap();
+        std::fs::create_dir_all(root_p.join("clean").join("deep")).unwrap();
+        std::fs::write(root_p.join("clean").join("deep").join("f.txt"), "x\n").unwrap();
+        std::fs::create_dir_all(root_p.join("held")).unwrap();
+        std::fs::write(root_p.join("held").join("own.txt"), "x\n").unwrap();
+        for i in 0..12 {
+            junction_or_symlink(&root_p.join("held").join(format!("l{i:02}")), &outside);
+        }
+        let root = Root::open(&root_p).unwrap();
+        let why = remove_contents(&root, failing_unlink, Some(OsStr::new(".git"))).unwrap_err();
+        assert!(
+            why.starts_with("12 entries below ") && why.contains("could not be removed"),
+            "{why}"
+        );
+        assert!(
+            why.contains("held/l00: the link could not be removed"),
+            "{why}"
+        );
+        assert!(
+            why.contains("held/l09:") && !why.contains("held/l10:"),
+            "{why}"
+        );
+        assert!(why.ends_with("; and 2 more"), "{why}");
+        // what could be removed is gone; the held directory, its links and `.git` stay
+        assert_eq!(names(&root_p), vec![".git".to_string(), "held".to_string()]);
+        assert_eq!(names(&root_p.join("held")).len(), 12);
+        assert_eq!(
+            names(&outside),
+            vec!["sentinel.txt".to_string(), "x".to_string()]
+        );
+        // the obstacle gone: the same removal finishes, `.git` last
+        remove_contents(&root, remove_link, Some(OsStr::new(".git"))).unwrap();
+        assert!(names(&root_p).is_empty());
+        remove_root(root).unwrap();
+        assert!(std::fs::symlink_metadata(&root_p).is_err());
+        assert_eq!(
+            names(&outside),
+            vec!["sentinel.txt".to_string(), "x".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // (0.2.5 R7b, F44-3) A FIFO swapped in after the kind check is opened without blocking and
+    // refused on its handle - never read, never waited on. (Unix only: Windows keeps named pipes
+    // out of the file system.)
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_swapped_in_after_the_kind_check_is_refused_without_blocking() {
+        let (base, root_p, _outside) = scratch("fifo");
+        let fifo = root_p.join("inner").join("pipe");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !made {
+            eprintln!("skipped: mkfifo is not available");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+        let root = Root::open(&root_p).unwrap();
+        let dir = root.open_dir(Path::new("inner"), false).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // the open right after a kind check that saw a regular file
+            let r = open_checked(&dir, OsStr::new("pipe")).map(|_| ());
+            let _ = tx.send(format!("{r:?}"));
+        });
+        let got = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the open of a FIFO blocked");
+        assert!(got.contains("NotFile"), "{got}");
+        // the full path refuses it before it is opened
+        assert!(matches!(
+            root.read(Path::new("inner/pipe")),
+            Err(StepError {
+                why: Step::NotFile,
+                ..
+            })
+        ));
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -312,7 +312,7 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
     e.tree_check = if ctx.is_codex() || sec.tree_check_outcome.is_empty() {
         Some(None)
     } else {
-        Some(Some(c3_core::ledger::TreeCheck {
+        let mut t = c3_core::ledger::TreeCheck {
             outcome: sec.tree_check_outcome.clone(),
             files: sec
                 .tree_check_files
@@ -320,7 +320,16 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
                 .map(|f| serde_json::Value::String(f.clone()))
                 .collect(),
             ..Default::default()
-        }))
+        };
+        // (0.2.5 R8) the writing tools an agy run's log names (by the tool's name): a record, the
+        // throwaway worktree's comparison decided the outcome
+        if !sec.tree_check_writing.is_empty() {
+            t.extra.insert(
+                "writing_tools".into(),
+                serde_json::json!(sec.tree_check_writing),
+            );
+        }
+        Some(Some(t))
     };
     // (B1) the revision a reviewer in a throwaway worktree read (`{reason, rev, sha}`: `--rev`, the
     // kimi engine, a claude diff-review / acceptance) and the `--diff` patch it was handed

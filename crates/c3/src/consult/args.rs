@@ -50,10 +50,14 @@ pub struct Options {
     /// engine and a claude diff-review / acceptance still get a frozen worktree of HEAD).
     pub rev: String,
     /// (B1) `--diff <range>`: `git diff <range>` (a single revision: against the working tree,
-    /// new files included) is written into the task's handoffs as a patch the prompt names.
+    /// (0.2.5 R8) new files only with `--diff-untracked`) is written into the task's handoffs as a
+    /// patch the prompt names.
     pub diff: String,
-    /// (0.2.5 D1) `--diff-tracked-only`: a one-revision `--diff` leaves the untracked files out.
+    /// (0.2.5 D1) `--diff-tracked-only`: a one-revision `--diff` leaves the untracked files out -
+    /// (0.2.5 R8) the default, which the flag only names.
     pub diff_tracked_only: bool,
+    /// (0.2.5 R8) `--diff-untracked`: a one-revision `--diff` carries the untracked files too.
+    pub diff_untracked: bool,
     pub reply_name: String,
     pub artifacts: Vec<String>,
     pub raw: bool,
@@ -290,6 +294,14 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
     }
     if o.diff_tracked_only && o.diff.is_empty() {
         return Err("--diff-tracked-only goes with --diff (it leaves the untracked files out of a one-revision patch).".into());
+    }
+    if o.diff_untracked && o.diff.is_empty() {
+        return Err("--diff-untracked goes with --diff (it carries the untracked files in a one-revision patch).".into());
+    }
+    if o.diff_untracked && o.diff_tracked_only {
+        return Err(
+            "--diff-untracked and --diff-tracked-only contradict each other (give one).".into(),
+        );
     }
     if o.sandbox == "danger-full-access" {
         return Err("-Sandbox danger-full-access is refused: consultations run without write access to your machine.".into());

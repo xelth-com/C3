@@ -353,10 +353,7 @@ fn take_over_if_stale(path: &Path) -> bool {
         Ok(rec) => {
             let dead = rec.pid != std::process::id()
                 && !crate::liveness::proc::pid_alive(rec.pid, &rec.start_time);
-            let too_old = DateTime::parse_from_rfc3339(&rec.created)
-                .map(|t| (Utc::now() - t.with_timezone(&Utc)).num_hours() >= LOCK_STALE_HOURS)
-                .unwrap_or(false);
-            dead || too_old
+            dead || lock_too_old(&rec)
         }
         Err(_) => true, // unparsable garbage: never a live owner
     };
@@ -1880,12 +1877,23 @@ fn may_spawn() -> bool {
         .unwrap_or(false)
 }
 
-/// Whether a live pass holds the lock (a dead pid's lock does not count).
+/// Whether a lock is older than [`LOCK_STALE_HOURS`] (an unreadable time is not).
+fn lock_too_old(rec: &LockRec) -> bool {
+    DateTime::parse_from_rfc3339(&rec.created)
+        .map(|t| (Utc::now() - t.with_timezone(&Utc)).num_hours() >= LOCK_STALE_HOURS)
+        .unwrap_or(false)
+}
+
+/// Whether a live pass holds the lock (a dead pid's lock does not count; F46-7: nor one older than
+/// [`LOCK_STALE_HOURS`], which a pass would take over - an owner whose identity cannot be read
+/// does not hold it longer than that).
 fn lock_held(dir: &Path) -> bool {
     let path = dir.join("lock");
     match std::fs::read(&path) {
         Ok(bytes) => match serde_json::from_slice::<LockRec>(&bytes) {
-            Ok(rec) => crate::liveness::proc::pid_alive(rec.pid, &rec.start_time),
+            Ok(rec) => {
+                crate::liveness::proc::pid_alive(rec.pid, &rec.start_time) && !lock_too_old(&rec)
+            }
             Err(_) => false,
         },
         Err(_) => false,
@@ -2268,6 +2276,28 @@ mod tests {
         std::fs::write(dir.join("lock"), b"not json").unwrap();
         let lock = acquire_lock(&dir).expect("an unreadable lock is taken over");
         drop(lock);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (F46-7) An owner that reads as alive - here this very process, with no start time recorded
+    // (an identity that cannot be confirmed) - holds the lock against a new spawn only until the
+    // lock is older than LOCK_STALE_HOURS, the bound a pass takes it over at.
+    #[test]
+    fn an_owner_that_cannot_be_told_dead_holds_the_lock_only_until_it_is_stale() {
+        let dir = lock_dir("held");
+        let write = |age: chrono::Duration| {
+            let rec = LockRec {
+                pid: std::process::id(),
+                start_time: String::new(),
+                host: "here".into(),
+                created: rfc3339(Utc::now() - age),
+            };
+            std::fs::write(dir.join("lock"), serde_json::to_vec(&rec).unwrap()).unwrap();
+        };
+        write(chrono::Duration::minutes(5));
+        assert!(lock_held(&dir));
+        write(chrono::Duration::hours(LOCK_STALE_HOURS + 1));
+        assert!(!lock_held(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -33,7 +33,8 @@ brief, the reviewer's reply verbatim, a JSON ledger, **findings tracked by id** 
 verify and move yourself), and a **panel** runs several reviewers in parallel and
 reconciles them. Reviewers are subscriptions the user already has: the ChatGPT plan through
 the Codex CLI, z.ai GLM, Xiaomi MiMo or any Responses-API provider through a
-`[model_providers.<name>]` table, Gemini through Google's Antigravity CLI `agy`, Meta Muse
+`[model_providers.<name>]` table, Gemini through Google's Antigravity CLI `agy` (its turns run in
+a throwaway git worktree of HEAD: its sandbox restricts the terminal only), Meta Muse
 through the Muse Code CLI, Claude through Claude Code headless (`claude -p`; the subscription,
 an API key, or a coding plan's Anthropic-compatible endpoint), Grok through the Grok Build
 CLI `grok` (a read-only reviewer on the SuperGrok subscription), and Kimi through the Kimi Code
@@ -694,8 +695,12 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
   `.c3/`. Inside `.eck/` the old tool's files C3 never reads (`anchor`, `update_seq`,
   `telemetry_queue.json`) first go to `legacy/` and `lastsnapshot/AnswerToSA.md` becomes
   `last-report.md`; the rename of the folder is the last step, so an interrupted move never leaves
-  the old tool's `anchor` at the top of `.c3/` (a `.c3/` an earlier build left that way is put right
-  by the next writing command). `.c3/` is added to `.gitignore` (the `.eck/` line stays). When the
+  the old tool's `anchor` at the top of `.c3/`. A finished `.c3/` carries a marker file (`layout`),
+  written last by its creation or by the move; a `.c3/` without it - one an earlier build left - is
+  unfinished: no snapshot anchor is read from it, and the next writing command sends the old tool's
+  files at its top, a lone `anchor` included, to `legacy/` and then writes the marker (C3's own cache
+  `anchor` is moved in only after that). `.c3/` is added to `.gitignore` (the `.eck/` line stays). A
+  move lock whose owner is alive is never taken over; one whose owner is gone is. When the
   move cannot be made now (a run may be live under `.eck/`, the lock is held, a leftover cannot be
   relocated, the rename fails), the command says why and uses `.eck/` for that run
   (`c3 doctor --fix` reports "not moved"); a legacy folder that is gone is never created again. A
@@ -709,9 +714,13 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
   under `.eck/` is still used as given.
 - **`.c3` must be a real directory.** C3 never writes, reads or moves through a link: a `.c3` that
   is a symlink, junction or other reparse point is refused by every writing command (nothing is
-  written, nothing is created beside it) and reported by `c3 doctor`; a `legacy/`, `lastsnapshot/`
-  or collab directory reached through a link stops that step of the move and is reported, never
-  followed.
+  written, nothing is created beside it) and reported by `c3 doctor`; a consultation, panel or work
+  run whose collab directory lies in a linked `.c3` or `.eck` - or reaches the folder through
+  another link - is refused at its start and creates nothing, and the read-only commands read
+  neither; a `legacy/`, `lastsnapshot/` or collab directory reached through a link stops that step
+  of the move and is reported (by name - remove the link and the move goes on), never followed.
+  What C3 writes and moves inside the folder goes through directory handles, so a directory
+  swapped for a link meanwhile cannot redirect it.
 - **A collab directory inside the folder follows the move.** With `--collab-dir .eck/collab` (or the
   MCP `collab_dir`) on a repository whose folder already moved, the records are read and written at
   `.c3/collab` (one line on stderr says so; a collab path never creates a new `.eck/`). A path is
@@ -739,20 +748,24 @@ git-ignored as a whole. It holds the manifests (`CONTEXT.md`, `ARCHITECTURE.md`,
 - **The secret gate reads values, not words.** Before it commits, `c3 finish` scans the lines the
   commit adds with the pack redactor and refuses a secret-shaped value (naming the file and the
   kind, never the value); `--allow-secret <path>` (MCP: `"allow_secret": [paths]`) lets a reviewed
-  file through, never the commit message. A keyword assignment counts only with a value that can be
-  a secret: a single dictionary-shaped word (`auth = "endpoint"`) never does, and under the bare
-  keyword `auth` only a key-shaped value (16+ characters, no space, two kinds of character) does.
+  file through, never the commit message. A keyword assignment (`password`, `secret`, `token`,
+  `api_key`, ...) with a quoted value of 8 or more characters is a secret, a plain word too; the
+  one exception is the bare keyword `auth` followed by one single word of letters (`auth =
+  "endpoint"`), which names a mode. A passphrase or a key under `auth` is still refused.
 - **Kept out of what leaves the machine.** Reviewer packs, snapshots, `c3 fetch` and `--diff`
   patches leave out a `.c3/` or `.eck/` directory at any depth (compared case-insensitively on
   Windows and macOS). The
   project's "never put in AI context" list is `.c3ignore` (gitignore syntax, per directory); a
   directory without one still has its `.eckignore` read.
 - **What a one-revision `--diff` sends.** `c3 consult --diff <rev>` (one revision, diffed against
-  the working tree) puts the content of every untracked, not ignored file into the patch; the
-  redactor only replaces values that look like secrets. Before the reviewer starts, stderr says how
-  many untracked files the patch carries and names up to ten (the ledger's `diff` record keeps the
-  same `untracked` list and `untracked_count`). To bound it: commit first, diff a `base..head`
-  range, or pass `--diff-tracked-only`, which leaves the untracked files out.
+  the working tree) puts the tracked changes into the patch and leaves untracked files out. Before
+  the reviewer starts the run says how many untracked files were left out and names up to ten (a
+  name with a control or format character is counted, not shown) - on stderr, in the handoff's
+  warnings and in the ledger's `diff` record (`untracked_left_out`, `untracked_left_out_count`).
+  `--diff-untracked` (MCP: `diff_untracked`) puts the content of every untracked, not ignored file
+  into the patch as well; the redactor only replaces values that look like secrets, and the run
+  names those files the same way (`untracked`, `untracked_count`). `--diff-tracked-only` is still
+  accepted and names the default.
 - **Old rule text.** `c3 doctor` reports a C3-written rules file that still has an old template
   sentence naming `.eck/`, and `c3 doctor --fix` replaces exactly that line with the current one;
   a sentence the user rewrote is reported and left alone.
@@ -851,8 +864,11 @@ one session's memory. C3 keeps the state in the repository and checks it.
   `--fix` only ever appends the section and changes no existing byte, and a file without that line
   is only reported.
 - **C3's own throwaway worktree.** Before the `kimi` engine removes the worktree its reviewer ran in,
-  every symlink and junction inside it is unlinked without being followed, so a forced removal can
-  never empty a checkout a link points into. Such a worktree (directly in the system temp directory,
+  every symlink and junction inside it is unlinked without being followed, and the rest is removed
+  through directory handles, so the removal can never empty a checkout a link points into. A
+  removal that meets an entry it cannot remove (a locked file) removes everything else, names up to
+  ten entries left and keeps the worktree's `.git` file, so the worktree stays listed for
+  `c3 doctor --fix`, which finishes it once the obstacle is gone. Such a worktree (directly in the system temp directory,
   named exactly `c3-kimi-wt-<32 hex digits>`) is never a finding while its run lives: the run
   records its process in the worktree's git admin directory, and a worktree whose record cannot be
   written is not used. Once that process is gone, or the worktree's folder is gone (git calls it

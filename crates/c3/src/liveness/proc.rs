@@ -1596,18 +1596,21 @@ mod imp {
         rest.split_whitespace().next() == Some("Z")
     }
 
-    /// (0.2.5, F12-1) The answer for a `/proc/<pid>/stat` that could not be read (`kind`): gone
-    /// (`None`) only when there is no `/proc/<pid>` and `/proc` hides no pid (`hides`: mounted with
-    /// `hidepid=2` / `invisible`), or - when it does - `kill -0` reports no such process; otherwise
-    /// the process may exist: "cannot tell" (`Some("")`).
+    /// (0.2.5, F12-1) The answer for a `/proc/<pid>/stat` that could not be read: "cannot tell"
+    /// (`Some("")`) for a `/proc/<pid>` that exists (permission, `hidepid=1`, a read error). (F46-7)
+    /// When there is no `/proc/<pid>` - whatever error the read gave (`_kind`) - the process is gone
+    /// (`None`), unless `/proc` hides pids (`hides`: mounted with `hidepid=2` / `invisible`); then
+    /// `kill -0` decides - no such process is gone, anything else is "cannot tell". A failure to
+    /// tell whether the directory exists is "cannot tell" too.
     pub(super) fn unreadable_stat(
         pid: u32,
-        kind: std::io::ErrorKind,
+        _kind: std::io::ErrorKind,
         hides: bool,
     ) -> Option<String> {
-        let dir_exists = std::fs::symlink_metadata(format!("/proc/{pid}")).is_ok();
-        if kind != std::io::ErrorKind::NotFound || dir_exists {
-            return Some(String::new());
+        match std::fs::symlink_metadata(format!("/proc/{pid}")) {
+            Ok(_) => return Some(String::new()),
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Some(String::new()),
+            Err(_) => {}
         }
         if !hides {
             return None;
@@ -1697,7 +1700,8 @@ mod imp {
         }
 
         // (0.2.5, F12-1) A `/proc/<pid>` that exists but cannot be read is "cannot tell", never
-        // "gone"; a missing one is gone unless `/proc` hides pids.
+        // "gone"; (F46-7) a missing one is gone, whatever the read's error, unless `/proc` hides
+        // pids.
         #[test]
         fn an_unreadable_proc_entry_is_cannot_tell_never_gone() {
             use std::io::ErrorKind;
@@ -1717,10 +1721,13 @@ mod imp {
                 super::unreadable_stat(none, ErrorKind::NotFound, false),
                 None
             );
+            // (F46-7) whatever the error: no `/proc/<pid>` and nothing hidden is gone, never
+            // "cannot tell" - an unknown answer would keep a dead holder's lock or record alive
             assert_eq!(
-                super::unreadable_stat(none, ErrorKind::PermissionDenied, false).as_deref(),
-                Some("")
+                super::unreadable_stat(none, ErrorKind::PermissionDenied, false),
+                None
             );
+            assert_eq!(super::unreadable_stat(none, ErrorKind::Other, false), None);
             // hidepid=2 / invisible on /proc
             assert!(super::mounts_hide_pids(
                 "proc /proc proc rw,nosuid,nodev,noexec,relatime,hidepid=2 0 0\n"

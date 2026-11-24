@@ -8,6 +8,7 @@ use clap::Args;
 use crate::providers;
 use crate::setup::branches::{self, BranchReport, SET_HINT};
 use crate::setup::doctor;
+use crate::setup::repo_models::NOT_READ;
 use crate::setup::rules::{RuleStatus, BRANCHES_HEADING, DELEGATION_RULE};
 use crate::state_dir::Layout;
 
@@ -161,11 +162,22 @@ pub fn run(args: DoctorArgs) -> i32 {
     };
 
     let report = doctor::scan(&repo_root);
+    // (0.2.5) what the repairs did not read because a link is on the way (an `AGENTS.md` that is a
+    // link to `CLAUDE.md`): named in the report, never a finding
+    let mut not_checked: Vec<(String, String)> = repair
+        .problems
+        .iter()
+        .filter(|p| p.old == NOT_READ)
+        .map(|p| (p.file.clone(), p.why.clone()))
+        .collect();
+    not_checked.extend(rule_repair.unread.iter().cloned());
+    not_checked.extend(sentence_repair.unread.iter().cloned());
+    not_checked.dedup();
     // (0.2.5, S2 F36-3) a `.c3` that is a link (or not a directory): every writing command refuses
     let state_link = crate::state_dir::link_problem(&repo_root);
     // a repair that could not be made is a finding of its own (an AGENTS.md one has no scan line)
     let clean = report.is_clean()
-        && repair.problems.is_empty()
+        && repair.problems.iter().all(|p| p.old == NOT_READ)
         && rule_repair.problem.is_none()
         && state_problem.is_none()
         && state_link.is_none()
@@ -206,11 +218,16 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "old": f.old,
                 "new": f.new,
             })).collect::<Vec<_>>(),
-            "fix_problems": repair.problems.iter().map(|p| serde_json::json!({
+            "fix_problems": repair.problems.iter().filter(|p| p.old != NOT_READ).map(|p| serde_json::json!({
                 "file": p.file,
                 "old": p.old,
                 "new": p.new,
                 "why": p.why,
+            })).collect::<Vec<_>>(),
+            // (0.2.5) not read because a link is on the way: named, never a finding
+            "not_checked": not_checked.iter().map(|(file, why)| serde_json::json!({
+                "file": file,
+                "why": why,
             })).collect::<Vec<_>>(),
             "fixed_rules": rule_repair.fixed.iter().collect::<Vec<_>>(),
             "rule_fix_problems": rule_repair.problem.iter().map(|(file, why)| serde_json::json!({
@@ -290,11 +307,14 @@ pub fn run(args: DoctorArgs) -> i32 {
         for f in fixes {
             println!("[fixed] {}: model {} -> {}", f.file, f.old, f.new);
         }
-        for p in &repair.problems {
+        for p in repair.problems.iter().filter(|p| p.old != NOT_READ) {
             println!(
                 "[!] {}: model {} -> {} not repaired - {}",
                 p.file, p.old, p.new, p.why
             );
+        }
+        for (file, why) in &not_checked {
+            println!("[i] {file}: not checked - {why}");
         }
         if let Some(file) = &rule_repair.fixed {
             println!(

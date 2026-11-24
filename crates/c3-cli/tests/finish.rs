@@ -422,6 +422,30 @@ fn passing_pre_finish_checks_run_in_the_repository_as_a_child() {
     assert_eq!(code, 1, "{err}");
     assert!(err.contains("config.json"), "{err}");
     assert_eq!(head_subject(&repo), "feat: src");
+
+    // (F46-6, F45-6) --skip-checks over that file says it could not be read and that nothing ran -
+    // never "none configured" - in the output and in the journal
+    let (code, out, err) = run_c3(
+        &repo,
+        &[
+            "finish",
+            "--message",
+            "feat: src2",
+            "--status",
+            "done",
+            "--skip-checks",
+        ],
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    let said = "Pre-finish checks skipped (--skip-checks): the configuration could not be read (";
+    assert!(
+        out.contains(said) && out.contains("no check was run"),
+        "{out}"
+    );
+    assert!(!out.contains("none configured"), "{out}");
+    let journal = std::fs::read_to_string(repo.join(".c3").join("JOURNAL.md")).unwrap();
+    assert!(journal.contains(said), "{journal}");
+    assert_eq!(head_subject(&repo), "feat: src2");
     let _ = std::fs::remove_dir_all(&repo);
 }
 

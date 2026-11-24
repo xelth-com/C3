@@ -454,13 +454,19 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     };
     // (0.2.5, S2 F36-1/F36-3) a directory in C3's folder is made ready at the folder's place now
     // (never a stale legacy path, never through a link); any other is created as it is
+    // (0.2.5 R7b, F47-2) and the file itself is published through that directory's handle
     let path = match (path.parent(), path.file_name()) {
         (Some(parent), Some(name)) => {
-            crate::state_dir::prepare_dir(&opts.repo_root, parent)?.join(name)
+            crate::state_dir::write_in(&opts.repo_root, parent, &name.to_string_lossy(), |_, _| {
+                Ok(full.as_bytes().to_vec())
+            })?
         }
-        _ => path,
+        _ => {
+            std::fs::write(&path, full.as_bytes())
+                .map_err(|e| format!("write {}: {e}", path.display()))?;
+            path
+        }
     };
-    std::fs::write(&path, full.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
 
     // Hand-off output: copy into the hand-off folder and prune old snapshots.
     let mut pruned = 0usize;
@@ -655,6 +661,10 @@ pub fn anchor_exists(state_dir: &Path) -> bool {
 
 /// C3's anchor in `state_dir` (`<repo>/.c3/anchor`), the commit of the last full snapshot.
 pub fn read_anchor(state_dir: &Path) -> Option<String> {
+    // (0.2.5 R7b, F48-3) an `anchor` in a folder not marked finished may be the old tool's: none
+    if !crate::state_dir::is_finished(state_dir) {
+        return None;
+    }
     std::fs::read_to_string(state_dir.join("anchor"))
         .ok()
         .map(|s| s.trim().to_string())
@@ -665,21 +675,24 @@ pub fn read_anchor(state_dir: &Path) -> Option<String> {
 // [`crate::state_dir::write_in`]: at the folder's place now, never through a link, never into a
 // legacy folder created again.
 fn write_anchor(repo_root: &Path, state_dir: &Path, head: &str) -> Result<(), String> {
-    crate::state_dir::write_in(repo_root, state_dir, "anchor", |_| {
+    crate::state_dir::write_in(repo_root, state_dir, "anchor", |_, _| {
         Ok(head.trim().as_bytes().to_vec())
     })
     .map(|_| ())
 }
 
 fn reset_seq(repo_root: &Path, state_dir: &Path) {
-    let _ = crate::state_dir::write_in(repo_root, state_dir, "snapshot_seq", |_| Ok(b"0".to_vec()));
+    let _ = crate::state_dir::write_in(repo_root, state_dir, "snapshot_seq", |_, _| {
+        Ok(b"0".to_vec())
+    });
 }
 
 fn bump_seq(repo_root: &Path, state_dir: &Path) -> u32 {
     let next = std::cell::Cell::new(1u32);
-    let _ = crate::state_dir::write_in(repo_root, state_dir, "snapshot_seq", |path| {
-        let cur: u32 = std::fs::read_to_string(path)
+    let _ = crate::state_dir::write_in(repo_root, state_dir, "snapshot_seq", |_, current| {
+        let cur: u32 = current
             .ok()
+            .flatten()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
         next.set(cur + 1);

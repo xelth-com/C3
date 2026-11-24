@@ -771,3 +771,78 @@ swap -> xelth.com/C3 page after the tag.
   `agent-abb8d1b4e3cdf1d5c`). D1 worker RESUMED by message (items 25-27 repeated). Verification of
   S2 launched: detach id `349c6254` (brief 42, `--rev ac26f5a`, Grok + Muse contributor + Qwen).
   OpenAI week: 54 % used until Nov 29 - enough for the acceptance, no Sol runs.
+- 2026-11-24 09:25, verification of S2 `349c6254`: 2 of 3 usable (Qwen failed: the Alibaba plan's monthly
+  quota is exhausted until 2026-11-26), both rated yes. n=33 Muse HOLD 1 major / 2 minor / 1 note
+  (F47-1..4), n=34 Grok HOLD 3 major / 2 minor (F48-1..5); F36-1, -4, -6, -8 confirmed fixed by
+  both. Still open in their reading, all sent to the running R7b worker as items 7-11: F48-1 a
+  LINKED `.c3` / `.eck` is still followed by consult / panel / work and by readers (only `ensure`
+  refused it); F48-2 a loser of the move lock, or a lock taken over by age from a live owner, can
+  re-create `.eck/`; F48-3 = F47-1 a lone legacy `anchor` in a half-done `.c3/` is read as C3's
+  own (-> a layout marker written last); F48-4 = F47-3 spellings the file system maps to the
+  folder (trailing dot / space, 8.3 names, an alias link); F47-4 the lock's takeover rule in the
+  CHANGELOG. F48-5's first half (a directory link inside `.eck/` blocks the move) is by design.
+- 2026-11-24 09:25, wave D1 reported (25 items, 24 done; item 8 - an end-to-end http run under `--rev` - not
+  done: it needs a loopback TLS server in the test) and committed as 2ffa02a, pushed, CI run
+  45355843912. Two hand-merged conflicts (`consult/args.rs`, CHANGELOG); fmt and workspace clippy
+  clean on main; tests of the combination left to CI. The old gate refused once more: the review
+  replies about the secret rule quote example secrets (AWS's documented example key, sample
+  passwords) and saved patches hold C3's own redaction markers - all listed and allowed; the
+  marker false positive was added to R7a's secret item. 15 findings set to `implemented`.
+  Decided in D1, for TECH_DEBT: the guard's 0.8 s gap after a fork that re-stamps history (needs
+  a heuristic; today's Codex forks by reference) and the smoke children's test variables
+  (obsolete). Store: 208 findings - 161 implemented, 9 wontfix, 1 rejected, 37 proposed (all in
+  R7a / R7b).
+  Review of D1 launched (brief 50 written by the coordinator, roster-w50: Grok + Muse contributor
+  + GLM-5.3, `--rev 2ffa02a --diff ac26f5a..2ffa02a`). Running: R7a, R7b.
+- 2026-11-24 09:45: CI for 2ffa02a (D1) GREEN on all three jobs (run 45355843912).
+- 2026-11-24 09:45, review of D1 `177fb994`: 3 of 3 usable, all rated yes. n=36 Grok HOLD 4 major / 2 minor
+  (F51-1..6), n=37 Muse HOLD 2 major / 1 minor / 1 note (F52-1..4), n=38 GLM-5.3 ACCEPT 4 minor /
+  3 note (F53-1..7). Decisions -> wave R8 (brief `briefs/R8-review-fixes-bridge.md`, worktree
+  `agent-a137dbf7ed9e5adfe`, from 2ffa02a), two of them SIMPLIFICATIONS instead of one more patch:
+  - agy (F51-1, F52-1, F53-2: the step classifier is wrong in new shapes every round): agy becomes
+    worktree-isolated like kimi - the comparison of its own worktree is the evidence - and the
+    classifier shrinks to the tool's name (reader allow-list). NOT exercised against the real agy
+    CLI: its plan is out of quota until 2026-11-28 - watch the first live run.
+  - the patch (F51-3, F52-2, F53-6): the name is its content (`<stem>.<sha8>.patch`), so the
+    claim protocol goes; hard link or one atomic rename, bytes compared when the name exists;
+    stale temp files of C3's pattern older than a day are removed.
+  - a one-revision `--diff` carries tracked changes only by default, `--diff-untracked` adds the
+    untracked files (F18-4 / F19-2 / F20-6 were still open for every reviewer); MCP gets the
+    parameter.
+  - the brief hash from the staged bytes (F51-2); an input that cannot be re-read is a warning
+    (F51-4); an unreadable findings store at the start of a single run (F53-3); the death
+    record's tie rule and panel members' streams (F51-6, F52-4, F10-7); the isolation paragraph
+    is always printed (F53-1); names with format characters are counted (F53-5).
+  wontfix: F52-3 (an outside collab root is the operator's anchor).
+  This is the LAST cheap-model review round: after R7a, R7b and R8 land - the version, the
+  acceptance by the standing partner. Running: R7a, R7b, R8.
+
+## 2026-11-24 12:03 - waves R7a, R7b, R8 merged on main (the last review round's fixes)
+
+- All three workers reported with fmt and clippy clean but with tests only partly run: the
+  compiler-turn wrapper waited 35 minutes for 6 GB of free RAM that never came (4.6 GB free, nobody
+  compiling), and after I lowered the bar (4 GB while no cargo/rustc runs) the harness stopped their
+  background runs for low memory. I merged the three patches myself (R8 on 2ffa02a clean; R7a and
+  R7b from ac26f5a by 3-way; conflicts: CHANGELOG three hunks, tests/branches.rs one - both sides
+  kept) and ran everything in the FOREGROUND on the merged tree: clippy -D warnings clean;
+  c3 lib 936 passed, c3-core 253; c3-cli branches 18, finish 27, ci_check 14, hook_scripts 5,
+  init_doctor 22, compat_wave2b 21, snapshot_partb 7, panel_light_required 5, mcp_integration 3,
+  claude_engine 19, kimi_engine 21 - all passed. The rest of c3-cli is left to CI.
+- Coordinator's corrections on top of the waves:
+  1. R8 item 5: an input that is GONE after the run (or was missing and appeared) is a CHANGED
+     input (sha256_after "missing"); only an input that is there and cannot be read is a warning.
+  2. R7b item 2: a link on the way to a repair candidate is not a failed repair - the SessionStart
+     line is silent, c3 doctor prints "[i] <file>: not checked" (not_checked in --json) and stays
+     clean. Otherwise a repository whose AGENTS.md is a link to CLAUDE.md got a line every session.
+  3. F38-1: every CI test step has its own timeout-minutes (15/15/25), job limits 60/50 - a hung
+     step now fails with its log. This is also the diagnosis tool for the Windows hang.
+- Findings: 225 - 210 implemented, 14 wontfix, 1 rejected, 0 proposed. New wontfix: F38-3, F38-4,
+  F38-5, F43-4 (notes in the store).
+- Known limits left by the waves (for the acceptance brief): R7b item 9 - a READ through a collab
+  resolver into a linked .c3/.eck is not refused, and the task directory is still created by
+  create_dir_all after begin_run checked the root; a live but hung owner of the move lock blocks
+  the move (commands go on in .eck and say so); R7a - a setsid daemon survives the deadline stop,
+  on Windows an already reaped child is not swept when the process table cannot be read; R8 - agy's
+  worktree isolation never ran against the real CLI; the Cf table is duplicated in reviewed.rs and
+  ci_check.rs; --diff-untracked fails on Windows for a name with U+202E (Git for Windows).
+- Next: commit, push, CI; version 0.2.5; TECH_DEBT; the acceptance.

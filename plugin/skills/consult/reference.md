@@ -45,8 +45,9 @@ hand it to a cheap roster member. `--effort` and `--max-words` override the pres
 | `--continue-sec <n>` | -1 = min(timeout, 900); 0 = no continuation turn |
 | `--stall-sec <n>` | stall cut without an event; 0 = off, -1 = roster entry's `stall_sec` else 900 |
 | `--range <base..head>` | diff-review/acceptance only; a single revision is refused |
-| `--diff <range>` | hand the reviewer the change as a patch in the task's handoffs: `base..head`, `base...head`, or ONE revision diffed against the working tree. A one-revision diff sends every untracked, not ignored file with its content (only secret-shaped values are redacted); stderr names up to ten of them before the reviewer starts. Bound it by committing first, a `base..head` range, or `--diff-tracked-only` |
-| `--diff-tracked-only` | with a one-revision `--diff`: leave the untracked files out of the patch |
+| `--diff <range>` | hand the reviewer the change as a patch in the task's handoffs: `base..head`, `base...head`, or ONE revision diffed against the working tree. A one-revision diff carries the tracked changes only; the untracked files left out are counted and up to ten named before the reviewer starts (stderr, the handoff's warnings, the ledger's `untracked_left_out`) |
+| `--diff-untracked` | with a one-revision `--diff`: carry every untracked, not ignored file in the patch too, with its content (only secret-shaped values are redacted); the run names them the same way. MCP: `diff_untracked` on `c3_consult` / `c3_panel` |
+| `--diff-tracked-only` | still accepted: names the default (tracked changes only) |
 | `--reply-name <slug>` | the handoff base name; default `reply` |
 | `--artifact <path>` | repeatable; hash a built artifact into the ledger so the review is bound to it |
 | `--raw` | plain-text reply: no schema, no findings bookkeeping |

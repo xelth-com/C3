@@ -40,13 +40,33 @@
 //! `"state_migrate": false` in the C3 config (then `.eck/` stays and C3 creates and uses `.c3/` for
 //! its own files; a collab directory placed under `.eck/` is used as given). The SessionStart hook
 //! never moves anything ([`forbid_moves`]).
+//!
+//! (0.2.5 R7b, F47-2) What these operations read, write and move INSIDE the repository goes
+//! through directory handles ([`crate::contain`]), from the repository root opened once as an
+//! anchor: `.c3/` is created and its stubs written relative to its own handle (opened without
+//! following it), a writer's directory is reached one component at a time without following any
+//! and its file published by a temporary file and a rename relative to that handle
+//! ([`write_in`]), the old tool's leftovers are renamed between handles of `.eck/` and its
+//! `legacy/`, the cache entries between handles of the two folders, and `.eck` is renamed to `.c3`
+//! relative to the repository root's handle - so a directory swapped for a link after its check
+//! can no longer redirect any of them outside. What stays path-based, and why: the move lock (in
+//! git's directory, outside the repository's tree, created exclusively), the read-only checks that
+//! decide WHETHER to act (the layout, [`link_problem`], the collab resolvers; each act is checked
+//! again on the handles), the live-run walk (a read-only, fail-closed look through other modules'
+//! record readers), `.gitignore` (a file the user owns at the repository root), and the files
+//! callers write by path into a directory [`prepare_dir`] made ready (scouts, explains, the index
+//! store, the copy into `lastsnapshot/`).
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use cap_std::fs::Dir;
+
+use crate::contain::{self, Kind, Root, RootError, Step};
 use crate::setup::init::{ensure_gitignore_line, stub_content, STUB_MANIFESTS};
-use crate::setup::repo_models::{is_link, link_words};
+use crate::setup::repo_models::{is_link, link_words, step_link_words};
 
 /// The folder's name, at the repository root.
 pub const STATE_DIR: &str = ".c3";
@@ -68,9 +88,6 @@ pub const MIGRATE_ENV: &str = "C3_STATE_MIGRATE";
 /// The old tool's files at the top of its folder that C3 never reads: moved into
 /// [`LEGACY_SUBDIR`] (`anchor` in particular must not be taken for C3's own anchor).
 const LEGACY_LEFTOVERS: &[&str] = &["anchor", "update_seq", "telemetry_queue.json"];
-/// (S2, F36-2) The old tool's files that only it writes: one of them at the top of `.c3/` marks a
-/// move an S1 build left half done (its `anchor` beside them is the old tool's too).
-const HALF_DONE_MARKERS: &[&str] = &["update_seq", "telemetry_queue.json"];
 /// The old tool's report, relative to the folder.
 const LEGACY_REPORT: [&str; 2] = ["lastsnapshot", "AnswerToSA.md"];
 /// The directories of the folder where no task directory lives (the live-run walk does not look
@@ -104,7 +121,8 @@ pub const UNREADABLE_HOOK: &str = "CODEX_CONSULT_TEST_STATE_UNREADABLE";
 
 /// How long a process waits for the move lock before it reads the state again.
 const LOCK_WAIT_DEFAULT_MS: u64 = 10_000;
-/// A move lock older than this is taken over whatever its owner: a move takes moments.
+/// A move lock older than this is taken over when its owner cannot be shown alive (another host's):
+/// a move takes moments. (R7b, F48-2) A live owner's lock is never taken over by age.
 const LOCK_STALE_SECS: u64 = 600;
 /// A lock file that does not parse is taken over once it is this old (its creator died between
 /// the exclusive create and the write).
@@ -127,7 +145,8 @@ fn real_dir(p: &Path) -> bool {
 
 /// The folder a read-only command reads: `.c3` when it is a real directory, else (when there is no
 /// `.c3` in any form) `.eck` when that is a directory (until a writing command moved it), else
-/// `None`. (S2, F36-3) A `.c3` that is a link is never read through.
+/// `None`. (S2, F36-3) A `.c3` that is a link is never read through; (R7b, F48-1) nor is a `.eck`
+/// that is one (read without following it).
 pub fn read_path(repo_root: &Path) -> Option<PathBuf> {
     let c3 = path(repo_root);
     match std::fs::symlink_metadata(&c3) {
@@ -136,7 +155,71 @@ pub fn read_path(repo_root: &Path) -> Option<PathBuf> {
         Err(_) => {}
     }
     let eck = legacy_path(repo_root);
-    eck.is_dir().then_some(eck)
+    real_dir(&eck).then_some(eck)
+}
+
+/// (R7b, F48-1/F48-4) Why the path `p` may not be used: it reaches into C3's folder through a link,
+/// because `.c3` or `.eck` itself is a link (a symlink, a junction or another reparse point) and `p` lies
+/// in it (by name, or - after a resolution that followed the link - in its target), or a component
+/// of `p` in the repository is a link that resolves to the folder or into it (an alias). `None`
+/// when no link leads into the folder. Every writer that reaches into the folder by a path refuses
+/// on it ([`begin_run`]: consultations, panels, work runs); one line, nothing created.
+pub fn folder_link_problem(repo_root: &Path, p: &Path) -> Option<String> {
+    let abs = lexical(&if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        repo_root.join(p)
+    });
+    for name in [STATE_DIR, LEGACY_STATE_DIR] {
+        let folder = repo_root.join(name);
+        let Ok(m) = std::fs::symlink_metadata(&folder) else {
+            continue;
+        };
+        if !is_link(&m) {
+            continue;
+        }
+        // (`lexical` already took the Windows spelling of each name)
+        let by_name = c3_core::paths::repo_relative(&lexical(repo_root), &abs)
+            .is_some_and(|r| r.split('/').next().is_some_and(|f| names_equal(f, name)));
+        let by_target = match (std::fs::canonicalize(&folder), canonical_prefix(&abs)) {
+            (Ok(t), Some(c)) => c.starts_with(crate::providers::dunce_simplify(t)),
+            _ => false,
+        };
+        if by_name || by_target {
+            return Some(format!(
+                "{name} is {} - C3 never reads or writes through a link, so nothing under it is used (its target is untouched); make {name} a real directory or remove it",
+                link_words(&folder)
+            ));
+        }
+    }
+    // an alias: a link in the repository that resolves to the folder or into it
+    let rel = c3_core::paths::repo_relative(&lexical(repo_root), &abs)?;
+    let folders: Vec<PathBuf> = [STATE_DIR, LEGACY_STATE_DIR]
+        .iter()
+        .filter_map(|n| std::fs::canonicalize(repo_root.join(n)).ok())
+        .map(crate::providers::dunce_simplify)
+        .collect();
+    let mut cur = repo_root.to_path_buf();
+    for part in rel.split('/').filter(|s| !s.is_empty()) {
+        cur.push(part);
+        let Ok(m) = std::fs::symlink_metadata(&cur) else {
+            break;
+        };
+        if !is_link(&m) {
+            continue;
+        }
+        let into = std::fs::canonicalize(&cur)
+            .map(crate::providers::dunce_simplify)
+            .is_ok_and(|t| folders.iter().any(|f| t.starts_with(f)));
+        if into {
+            return Some(format!(
+                "{} is {} into C3's project folder - C3 never reads or writes through a link, so nothing under it is used",
+                shown(repo_root, &cur),
+                link_words(&cur)
+            ));
+        }
+    }
+    None
 }
 
 /// The repo-relative POSIX label of `name` inside the folder `dir` (`.c3/ROADMAP.md`).
@@ -325,33 +408,43 @@ pub fn ensure(repo_root: &Path, collab_root: Option<&Path>) -> Result<Ensured, S
     // a collab root inside the legacy folder moved with it
     let collab_root = collab_root.map(|c| moved_with_folder(repo_root, c));
     let collab_root = collab_root.as_deref();
-    if std::fs::symlink_metadata(&dir).is_err() {
-        match std::fs::create_dir(&dir) {
-            Ok(()) => out.new_folder = true,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && real_dir(&dir) => {}
-            Err(e) => return Err(format!("could not create {STATE_DIR}/ ({e})")),
+    // (R7b, F47-2) `.c3/` is created relative to the repository root's handle and opened without
+    // following it (a link or a non-directory refuses); the stubs are created relative to its handle
+    let root = Root::open_anchor(repo_root).map_err(|e| {
+        format!(
+            "could not create {STATE_DIR}/ (the repository root {})",
+            e.words()
+        )
+    })?;
+    let folder = match open_state_folder(&root, true) {
+        Ok((d, fresh)) => {
+            out.new_folder = fresh;
+            d
         }
-    }
-    if !real_dir(&dir) {
-        return Err(link_problem(repo_root)
-            .unwrap_or_else(|| format!("{STATE_DIR} is not a real directory")));
-    }
+        Err(Step::Create(e)) => return Err(format!("could not create {STATE_DIR}/ ({e})")),
+        Err(_) => {
+            return Err(link_problem(repo_root)
+                .unwrap_or_else(|| format!("{STATE_DIR} is not a real directory")))
+        }
+    };
     out.moved.extend(finish_half_done(repo_root));
     if let Some(c) = collab_root {
         out.moved.extend(migrate_collab_cache(repo_root, c));
     }
     for name in STUB_MANIFESTS {
         let file = format!("{name}.md");
-        let p = dir.join(&file);
-        if std::fs::symlink_metadata(&p).is_ok() {
+        if contain::entry(&folder, OsStr::new(&file))
+            .ok()
+            .flatten()
+            .is_some()
+        {
             continue;
         }
-        // created only when absent - never through a link, never over a file that appeared
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&p)
-        {
+        // created only when absent - an exclusive create relative to `.c3/`'s handle: never
+        // through a link, never over a file that appeared
+        let mut create = cap_std::fs::OpenOptions::new();
+        create.write(true).create_new(true);
+        match folder.open_with(&file, &create) {
             Ok(mut f) => {
                 use std::io::Write as _;
                 f.write_all(stub_content(name).as_bytes())
@@ -364,6 +457,48 @@ pub fn ensure(repo_root: &Path, collab_root: Option<&Path>) -> Result<Ensured, S
     }
     out.gitignore_added = ensure_gitignore(repo_root)?;
     Ok(out)
+}
+
+/// (R7b, F48-3) The file that marks `.c3/` as finished: written LAST (an exclusive create through
+/// the folder's handle) by a fresh creation, by the move once `.eck` is renamed, and by the finish of
+/// an unfinished folder. A `.c3/` without it is unfinished: the next writing command relocates the
+/// old tool's leftovers at its top - a lone `anchor` included - into `legacy/` before it writes the
+/// marker ([`ensure`]), and no snapshot anchor is read from it.
+pub const LAYOUT_MARKER: &str = "layout";
+/// What the marker holds (the layout version).
+const LAYOUT_BODY: &str = "c3 project folder, layout 1\n";
+
+/// (R7b, F48-3) Whether the folder `dir` carries [`LAYOUT_MARKER`] (a regular file, read without
+/// following it): only then is an `anchor` at its top C3's own.
+pub fn is_finished(dir: &Path) -> bool {
+    std::fs::symlink_metadata(dir.join(LAYOUT_MARKER)).is_ok_and(|m| m.is_file() && !is_link(&m))
+}
+
+/// Write [`LAYOUT_MARKER`] into the folder's handle (an exclusive create; one already there is
+/// kept).
+fn write_marker(folder: &Dir) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut o = cap_std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    match folder.open_with(LAYOUT_MARKER, &o) {
+        Ok(mut f) => f.write_all(LAYOUT_BODY.as_bytes()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// (R7b, F47-2/F48-3) `.c3` opened relative to the repository root's handle WITHOUT following it
+/// (a link or a non-directory refuses), created first when `create` and it is not there. A folder
+/// this call created is fresh: it gets [`LAYOUT_MARKER`] at once. Returns the handle and whether it
+/// was fresh.
+fn open_state_folder(root: &Root, create: bool) -> Result<(Dir, bool), Step> {
+    let existed = !matches!(contain::entry(root.dir(), OsStr::new(STATE_DIR)), Ok(None));
+    let d = contain::open_child(root.dir(), OsStr::new(STATE_DIR), create)?;
+    let fresh = create && !existed;
+    if fresh {
+        let _ = write_marker(&d);
+    }
+    Ok((d, fresh))
 }
 
 /// The moves of `c3 doctor --fix`: [`migrate_legacy`], the finish of a half-done move and
@@ -451,7 +586,8 @@ struct LockRec {
 /// every worktree of the repository finds it there; its name carries a hash of the worktree root),
 /// or - outside a git repository - in the temp directory; never inside `.eck/` or `.c3/`. It holds
 /// the owner's pid and start time and is stale when that owner is gone (the liveness rule of the
-/// recovery records) or when it is older than [`LOCK_STALE_SECS`]. Released (the file removed) on
+/// recovery records), or - an owner that cannot be shown alive - when it is older than
+/// [`LOCK_STALE_SECS`] (never while its owner lives, R7b). Released (the file removed) on
 /// drop. The mover holds it from the re-read of the state through the rename; a run that starts
 /// under the legacy folder holds it while it creates its records ([`begin_run`]).
 #[derive(Debug)]
@@ -605,9 +741,12 @@ fn file_age_secs(path: &Path) -> Option<u64> {
     )
 }
 
-/// Remove a stale lock (its owner gone, older than [`LOCK_STALE_SECS`], or unparsable and older
-/// than [`LOCK_GARBAGE_SECS`]) so the caller can retry the exclusive create. Returns whether the
-/// caller should retry at once (taken away, or already gone).
+/// Remove a stale lock so the caller can retry the exclusive create: one whose owner is gone, one
+/// whose owner cannot be shown alive (another host's) and is older than [`LOCK_STALE_SECS`], or one
+/// that does not parse and is older than [`LOCK_GARBAGE_SECS`]. (R7b, F48-2) The lock of an owner
+/// that is alive on this machine is NEVER taken over, whatever its age: the caller waits its bounded
+/// wait and goes on without moving. Returns whether the caller should retry at once (taken away, or
+/// already gone).
 fn take_over_if_stale(path: &Path) -> bool {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
@@ -621,9 +760,12 @@ fn take_over_if_stale(path: &Path) -> bool {
                 || rec
                     .host
                     .eq_ignore_ascii_case(&c3_core::host::machine_name());
-            // (a pid reused - even by this process - has another start time: gone)
-            let gone = here && !crate::liveness::proc::pid_alive(rec.pid, &rec.start_time);
-            gone || age.is_some_and(|a| a > LOCK_STALE_SECS)
+            if here {
+                // (a pid reused - even by this process - has another start time: gone)
+                !crate::liveness::proc::pid_alive(rec.pid, &rec.start_time)
+            } else {
+                age.is_some_and(|a| a > LOCK_STALE_SECS)
+            }
         }
         Err(_) => age.is_none_or(|a| a > LOCK_GARBAGE_SECS),
     };
@@ -698,18 +840,31 @@ pub fn migrate_legacy(repo_root: &Path) -> Migration {
         Ok(l) => l,
         Err(why) => return after_failure(repo_root, out, why),
     };
-    // the state again, under the lock: another process may have moved it meanwhile
-    if std::fs::symlink_metadata(&c3).is_ok() {
-        return out;
+    // the state again, under the lock and (R7b, F47-2) through the repository root's handle:
+    // another process may have moved it meanwhile
+    let root = match Root::open_anchor(repo_root) {
+        Ok(r) => r,
+        Err(e) => {
+            out.deferred = Some(format!("the repository root {}", e.words()));
+            return out;
+        }
+    };
+    match contain::entry(root.dir(), OsStr::new(STATE_DIR)) {
+        Ok(None) => {}
+        Ok(Some(_)) => return out,
+        Err(e) => {
+            out.deferred = Some(format!("{STATE_DIR} cannot be read ({e})"));
+            return out;
+        }
     }
-    match std::fs::symlink_metadata(&eck) {
-        Ok(m) if is_link(&m) => {
+    let eck_dir = match contain::open_child(root.dir(), OsStr::new(LEGACY_STATE_DIR), false) {
+        Ok(d) => d,
+        Err(Step::Link { .. }) => {
             out.notes.push(legacy_link_note(&eck));
             return out;
         }
-        Ok(m) if m.is_dir() => {}
-        _ => return out,
-    }
+        Err(_) => return out,
+    };
     if let Some(why) = live_run_under(repo_root, &eck) {
         out.deferred = Some(why);
         return out;
@@ -717,7 +872,9 @@ pub fn migrate_legacy(repo_root: &Path) -> Migration {
     hold_inside_the_move();
 
     // The old tool's leftovers and report, relocated inside `.eck/` before the rename.
-    let rel = relocate_leftovers(&eck, LEGACY_STATE_DIR);
+    let rel = relocate_leftovers(&eck_dir, LEGACY_STATE_DIR);
+    // (Windows: a handle held on `.eck` would refuse its rename)
+    drop(eck_dir);
     if let Some(why) = rel.blocked.clone() {
         out.notes.extend(rel.relocated_notes(LEGACY_STATE_DIR));
         out.notes.extend(rel.left);
@@ -732,8 +889,15 @@ pub fn migrate_legacy(repo_root: &Path) -> Migration {
             "simulated by {RENAME_FAIL_HOOK}"
         )))
     } else {
-        std::fs::rename(&eck, &c3)
+        rename_folder(&root)
     };
+    // (R7b, F48-3) the move is complete: the marker goes in last, through `.c3/`'s handle
+    if renamed.is_ok() {
+        if let Ok((d, _)) = open_state_folder(&root, false) {
+            let _ = write_marker(&d);
+        }
+    }
+    drop(root);
     if let Err(e) = renamed {
         drop(lock);
         out.notes.extend(rel.relocated_notes(LEGACY_STATE_DIR));
@@ -763,6 +927,29 @@ pub fn migrate_legacy(repo_root: &Path) -> Migration {
     }
     drop(lock);
     out
+}
+
+/// (R7b, F47-2) The rename of `.eck` to `.c3`, relative to the repository root's handle and never
+/// over an existing name: immediately before it `.c3` must be absent and `.eck` a real directory,
+/// both read through the root's handle without following them; the rename moves the entry `.eck`
+/// itself (a link put there in the last instant would be moved as a link - its target never). A
+/// directory is never renamed over an existing name on Windows; on Unix `rename(2)` could replace
+/// only an EMPTY directory made at `.c3` in that same instant (a non-empty one, or any other entry,
+/// makes it fail, and the failure is read like any other rename error).
+fn rename_folder(root: &Root) -> std::io::Result<()> {
+    if contain::entry(root.dir(), OsStr::new(STATE_DIR))?.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{STATE_DIR} appeared meanwhile"),
+        ));
+    }
+    if contain::entry(root.dir(), OsStr::new(LEGACY_STATE_DIR))? != Some(Kind::Dir) {
+        return Err(std::io::Error::other(format!(
+            "{LEGACY_STATE_DIR} is no longer a real directory"
+        )));
+    }
+    contain::race_point("state-rename");
+    root.dir().rename(LEGACY_STATE_DIR, root.dir(), STATE_DIR)
 }
 
 /// The note for a `.eck` that is a link.
@@ -846,39 +1033,33 @@ impl Relocation {
 /// Each step is idempotent (a step already made is skipped; a destination name that exists already
 /// keeps its bytes and the leftover goes to the first free `<name>.<n>`), and none goes through a
 /// link: a `legacy` or `lastsnapshot` that is a link stops that step and is reported. `label` names
-/// the folder in the notes.
-fn relocate_leftovers(folder: &Path, label: &str) -> Relocation {
+/// the folder in the notes. (R7b, F47-2) Through handles: `folder` is the folder's handle, `legacy/`
+/// is opened (created) once relative to it without following it, and every step is a rename
+/// between those handles - a directory swapped for a link after it was opened cannot take a
+/// leftover outside.
+fn relocate_leftovers(folder: &Dir, label: &str) -> Relocation {
     let mut out = Relocation::default();
-    let legacy = folder.join(LEGACY_SUBDIR);
+    let present = |d: &Dir, n: &str| contain::entry(d, OsStr::new(n)).ok().flatten().is_some();
+    let mut legacy: Option<Result<Dir, String>> = None;
     for name in LEGACY_LEFTOVERS {
-        let src = folder.join(name);
-        if std::fs::symlink_metadata(&src).is_err() {
+        if !present(folder, name) {
             continue;
         }
-        let ready = match std::fs::symlink_metadata(&legacy) {
-            Err(_) => std::fs::create_dir(&legacy)
-                .or_else(|e| if real_dir(&legacy) { Ok(()) } else { Err(e) })
-                .map_err(|e| format!("could not create {label}/{LEGACY_SUBDIR}/ ({e})")),
-            Ok(m) if m.is_dir() && !is_link(&m) => Ok(()),
-            Ok(m) => Err(format!(
-                "{label}/{LEGACY_SUBDIR} is {} - never written through",
-                if is_link(&m) {
-                    link_words(&legacy)
-                } else {
-                    "not a plain directory"
+        let ready = legacy.get_or_insert_with(|| open_legacy(folder, label));
+        let result = match ready {
+            Err(why) => Err(why.clone()),
+            Ok(dir) => {
+                let mut dst = name.to_string();
+                let mut n = 1;
+                while present(dir, &dst) {
+                    dst = format!("{name}.{n}");
+                    n += 1;
                 }
-            )),
-        };
-        let result = ready.and_then(|()| {
-            let mut dst = legacy.join(name);
-            let mut n = 1;
-            while std::fs::symlink_metadata(&dst).is_ok() {
-                dst = legacy.join(format!("{name}.{n}"));
-                n += 1;
+                folder
+                    .rename(name, dir, &dst)
+                    .map_err(|e| format!("could not move it to {label}/{LEGACY_SUBDIR}/ ({e})"))
             }
-            std::fs::rename(&src, &dst)
-                .map_err(|e| format!("could not move it to {label}/{LEGACY_SUBDIR}/ ({e})"))
-        });
+        };
         match result {
             Ok(()) => out.moved.push(name.to_string()),
             Err(why) => {
@@ -891,31 +1072,39 @@ fn relocate_leftovers(folder: &Path, label: &str) -> Relocation {
     }
 
     // The old tool's report becomes `last-report.md` - never taken through a linked `lastsnapshot`.
-    let snap = folder.join(LEGACY_REPORT[0]);
-    match std::fs::symlink_metadata(&snap) {
-        Ok(m) if is_link(&m) => out.left.push(format!(
+    let snap_link = |why: &Step| {
+        format!(
             "left {label}/{}: it is {} - nothing is taken through it",
             LEGACY_REPORT[0],
-            link_words(&snap)
-        )),
-        Ok(m) if m.is_dir() => {
-            let report = snap.join(LEGACY_REPORT[1]);
-            if std::fs::symlink_metadata(&report).is_ok_and(|m| m.is_file() && !is_link(&m)) {
-                let dst = folder.join(LAST_REPORT);
-                if std::fs::symlink_metadata(&dst).is_ok() {
-                    out.left.push(format!(
-                        "left {label}/{}/{}: {label}/{LAST_REPORT} exists already",
-                        LEGACY_REPORT[0], LEGACY_REPORT[1]
-                    ));
-                } else {
-                    match std::fs::rename(&report, &dst) {
-                        Ok(()) => out.report = true,
-                        Err(e) => out.left.push(format!(
-                            "left {label}/{}/{}: could not move it to {label}/{LAST_REPORT} ({e})",
-                            LEGACY_REPORT[0], LEGACY_REPORT[1]
-                        )),
+            step_link_words(why)
+        )
+    };
+    match contain::entry(folder, OsStr::new(LEGACY_REPORT[0])) {
+        Ok(Some(Kind::Link { symlink, .. })) => out.left.push(snap_link(&Step::Link { symlink })),
+        Ok(Some(Kind::Dir)) => {
+            match contain::open_child(folder, OsStr::new(LEGACY_REPORT[0]), false) {
+                Ok(snap) => {
+                    contain::race_point("state-report");
+                    let report = OsStr::new(LEGACY_REPORT[1]);
+                    if contain::entry(&snap, report).ok().flatten() == Some(Kind::File) {
+                        if present(folder, LAST_REPORT) {
+                            out.left.push(format!(
+                                "left {label}/{}/{}: {label}/{LAST_REPORT} exists already",
+                                LEGACY_REPORT[0], LEGACY_REPORT[1]
+                            ));
+                        } else {
+                            match snap.rename(report, folder, LAST_REPORT) {
+                            Ok(()) => out.report = true,
+                            Err(e) => out.left.push(format!(
+                                "left {label}/{}/{}: could not move it to {label}/{LAST_REPORT} ({e})",
+                                LEGACY_REPORT[0], LEGACY_REPORT[1]
+                            )),
+                        }
+                        }
                     }
                 }
+                Err(why @ Step::Link { .. }) => out.left.push(snap_link(&why)),
+                Err(_) => {}
             }
         }
         _ => {}
@@ -923,19 +1112,43 @@ fn relocate_leftovers(folder: &Path, label: &str) -> Relocation {
     out
 }
 
-/// (S2, F36-2) Finish a move an S1 build left half done: a `.c3/` that still has the old tool's
-/// `update_seq` or `telemetry_queue.json` at its top gets them - and an `anchor` beside them, the old
-/// tool's too - moved into `.c3/legacy/`, and `lastsnapshot/AnswerToSA.md` becomes `last-report.md`,
-/// under the move lock. Nothing happens for a `.c3/` without those marks (C3's own `anchor` stays).
+/// The old tool's `legacy/` in `folder`, opened (created when missing) relative to the folder's
+/// handle without following it; `Err` says why nothing may be moved into it.
+fn open_legacy(folder: &Dir, label: &str) -> Result<Dir, String> {
+    let d = match contain::open_child(folder, OsStr::new(LEGACY_SUBDIR), true) {
+        Ok(d) => d,
+        Err(why @ Step::Link { .. }) => {
+            return Err(format!(
+                "{label}/{LEGACY_SUBDIR} is {} - never written through",
+                step_link_words(&why)
+            ))
+        }
+        Err(Step::NotDir) => {
+            return Err(format!(
+                "{label}/{LEGACY_SUBDIR} is not a plain directory - never written through"
+            ))
+        }
+        Err(Step::Create(e)) => {
+            return Err(format!("could not create {label}/{LEGACY_SUBDIR}/ ({e})"))
+        }
+        Err(why) => return Err(format!("{label}/{LEGACY_SUBDIR} {why}")),
+    };
+    // (the race tests swap `legacy/` for a link here, between its check and the relocation)
+    contain::race_point("state-relocate");
+    Ok(d)
+}
+
+/// (S2, F36-2; R7b, F48-3) Finish a `.c3/` that is not marked finished ([`LAYOUT_MARKER`]): an S1
+/// build's half-done move, a move killed before its marker, a folder an earlier build made. Under
+/// the move lock, the old tool's `anchor`, `update_seq` and `telemetry_queue.json` at its top - a
+/// lone `anchor` too - go to `.c3/legacy/` and `lastsnapshot/AnswerToSA.md` becomes
+/// `last-report.md`; then the marker is written. A leftover that cannot be relocated leaves the
+/// folder unmarked (the next writing command tries again). Nothing happens for a marked folder, so
+/// C3's own `anchor` - written into a marked folder, or moved in by the cache move after this - is
+/// never sent to `legacy/`.
 fn finish_half_done(repo_root: &Path) -> Vec<String> {
     let c3 = path(repo_root);
-    let marked = |c3: &Path| {
-        real_dir(c3)
-            && HALF_DONE_MARKERS
-                .iter()
-                .any(|n| std::fs::symlink_metadata(c3.join(n)).is_ok())
-    };
-    if !marked(&c3) {
+    if !real_dir(&c3) || is_finished(&c3) {
         return Vec::new();
     }
     let _lock = match MoveLock::acquire(repo_root, "finish a half-done move") {
@@ -946,16 +1159,34 @@ fn finish_half_done(repo_root: &Path) -> Vec<String> {
             )]
         }
     };
-    if !marked(&c3) {
+    // (R7b, F47-2) under the lock, through `.c3/`'s handle (never followed)
+    let Some(folder) = Root::open_anchor(repo_root)
+        .ok()
+        .and_then(|r| contain::open_child(r.dir(), OsStr::new(STATE_DIR), false).ok())
+    else {
+        return Vec::new();
+    };
+    if contain::entry(&folder, OsStr::new(LAYOUT_MARKER))
+        .ok()
+        .flatten()
+        .is_some()
+    {
         return Vec::new();
     }
-    let rel = relocate_leftovers(&c3, STATE_DIR);
+    let rel = relocate_leftovers(&folder, STATE_DIR);
     let mut v: Vec<String> = rel
         .relocated_notes(STATE_DIR)
         .into_iter()
         .map(|n| format!("finished the move an earlier C3 left half done: {n}"))
         .collect();
     v.extend(rel.left);
+    if rel.blocked.is_none() {
+        if let Err(e) = write_marker(&folder) {
+            v.push(format!(
+                "{STATE_DIR}/{LAYOUT_MARKER} could not be written ({e}); the next writing command finishes the folder"
+            ));
+        }
+    }
     v
 }
 
@@ -1001,8 +1232,9 @@ fn walk_runs(repo_root: &Path, d: &Path, depth: usize) -> Option<String> {
             }
             // a directory behind a link is never walked - what runs there cannot be seen
             if std::fs::metadata(&p).map(|t| t.is_dir()).unwrap_or(true) {
+                // (R7b, F48-5) by design: the link blocks the move until it is gone; it is named
                 return may(format!(
-                    "{} is {} and the runs behind it are not checked",
+                    "{} is {} and the runs behind it are not checked (remove that link, or put a real directory in its place, and the move goes on)",
                     shown(repo_root, &p),
                     link_words(&p)
                 ));
@@ -1193,14 +1425,28 @@ pub struct RunStart {
 /// rename (on Unix an open file does not stop a rename; this does). Elsewhere, and inside a C3 child
 /// (which never moves the folder), nothing is taken. `Err` (nothing was started) when the lock
 /// cannot be taken or the folder moved to `.c3/` while the run was being prepared.
+///
+/// (R7b, F48-1) First, in every case: a collab directory that reaches into C3's folder through a
+/// link ([`folder_link_problem`]: `.c3` or `.eck` itself a link, or an alias) refuses the run with
+/// one line and nothing is created. Outside a C3 child a collab directory inside `.c3/` is then
+/// created through handles ([`prepare_dir`]: never through a link, `.c3/` itself fresh with its
+/// marker), so the run's own directories are made in a real directory of the folder.
 pub fn begin_run(repo_root: &Path, collab_root: &Path) -> Result<RunStart, String> {
+    if let Some(why) = folder_link_problem(repo_root, collab_root) {
+        return Err(format!("{why}; nothing was started"));
+    }
     let none = RunStart { _lock: None };
-    if !matches!(
-        split_state_path(repo_root, collab_root),
-        Some((StateName::Legacy, _))
-    ) || crate::engines::in_c3_child()
-    {
+    if crate::engines::in_c3_child() {
         return Ok(none);
+    }
+    match split_state_path(repo_root, collab_root) {
+        Some((StateName::Legacy, _)) => {}
+        Some((StateName::Current, _)) => {
+            prepare_dir(repo_root, collab_root)
+                .map_err(|why| format!("{why}; nothing was started"))?;
+            return Ok(none);
+        }
+        None => return Ok(none),
     }
     let eck = legacy_path(repo_root);
     if !real_dir(&eck) && !real_dir(&path(repo_root)) {
@@ -1250,7 +1496,8 @@ fn repo_relative_normal(repo_root: &Path, p: &Path) -> Option<String> {
     c3_core::paths::repo_relative(&croot, &cabs)
 }
 
-/// `p` with `.` dropped and `..` taking the previous component away (never above the root).
+/// `p` with `.` dropped and `..` taking the previous component away (never above the root), and
+/// (R7b, F47-3) each name as the file system resolves it ([`fs_name`]).
 fn lexical(p: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for c in p.components() {
@@ -1261,10 +1508,27 @@ fn lexical(p: &Path) -> PathBuf {
                     out.pop();
                 }
             }
+            Component::Normal(n) => out.push(fs_name(n)),
             other => out.push(other.as_os_str()),
         }
     }
     out
+}
+
+/// (R7b, F47-3) A path component as the file system resolves it: on Windows trailing dots and
+/// spaces name the same entry (`.eck.`, `.c3 ` are `.eck` and `.c3`), so they are dropped before a
+/// name is compared or joined; a component that is nothing but dots and spaces is kept as it is.
+/// Elsewhere such a name is another entry and stays exact.
+fn fs_name(n: &std::ffi::OsStr) -> std::ffi::OsString {
+    if cfg!(windows) {
+        if let Some(s) = n.to_str() {
+            let t = s.trim_end_matches(['.', ' ']);
+            if !t.is_empty() {
+                return t.into();
+            }
+        }
+    }
+    n.to_os_string()
 }
 
 /// The canonical form of the longest existing ancestor of `p`, with the rest appended.
@@ -1290,18 +1554,67 @@ fn canonical_prefix(p: &Path) -> Option<PathBuf> {
 /// system compares names) and the rest of the path below it (`/`-separated). (S2, F36-5) The path
 /// is normalised first ([`repo_relative_normal`]): `sub/../.eck/collab`, `./.eck/collab`,
 /// `.c3/../.eck/collab` and the absolute form all lie in `.eck`.
+///
+/// (R7b, F48-4) A path whose text names neither folder is classified by IDENTITY too: the longest
+/// existing prefix of it in the repository is compared with the existing `.c3` and `.eck` (their
+/// canonical paths, and the directory identity of an open handle), so an 8.3 short name (`ECK~1`)
+/// and an alias that is a link to the folder are the folder (an alias is then refused by every
+/// writer, [`folder_link_problem`]).
 fn split_state_path(repo_root: &Path, p: &Path) -> Option<(StateName, String)> {
     let rel = repo_relative_normal(repo_root, p)?;
-    let mut parts = rel.split('/').filter(|s| !s.is_empty() && *s != ".");
-    let first = parts.next()?;
+    let parts: Vec<&str> = rel
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect();
+    let first = parts.first()?;
     let kind = if names_equal(first, STATE_DIR) {
         StateName::Current
     } else if names_equal(first, LEGACY_STATE_DIR) {
         StateName::Legacy
     } else {
-        return None;
+        return split_by_identity(repo_root, &parts);
     };
-    Some((kind, parts.collect::<Vec<_>>().join("/")))
+    Some((kind, parts[1..].join("/")))
+}
+
+/// The identity half of [`split_state_path`]: the first existing prefix of `parts` (below the
+/// repository root) that is the same directory as an existing `.c3` or `.eck`.
+fn split_by_identity(repo_root: &Path, parts: &[&str]) -> Option<(StateName, String)> {
+    let id = |p: &Path| Root::open_anchor(p).ok().map(|r| r.id());
+    let canon = |p: &Path| {
+        std::fs::canonicalize(p)
+            .ok()
+            .map(crate::providers::dunce_simplify)
+    };
+    let folders: Vec<(StateName, Option<PathBuf>, Option<contain::FileId>)> = [
+        (StateName::Current, STATE_DIR),
+        (StateName::Legacy, LEGACY_STATE_DIR),
+    ]
+    .into_iter()
+    .filter_map(|(kind, name)| {
+        let f = repo_root.join(name);
+        std::fs::symlink_metadata(&f).ok()?;
+        Some((kind, canon(&f), id(&f)))
+    })
+    .collect();
+    if folders.is_empty() {
+        return None;
+    }
+    let mut cur = repo_root.to_path_buf();
+    for (i, part) in parts.iter().enumerate() {
+        cur.push(part);
+        if std::fs::symlink_metadata(&cur).is_err() {
+            return None;
+        }
+        let (c, d) = (canon(&cur), id(&cur));
+        for (kind, fc, fd) in &folders {
+            let same = (c.is_some() && c == *fc) || (d.is_some() && d == *fd);
+            if same {
+                return Some((*kind, parts[i + 1..].join("/")));
+            }
+        }
+    }
+    None
 }
 
 /// `base` joined with a `/`-separated rest.
@@ -1468,65 +1781,90 @@ fn link_refusal(repo_root: &Path, p: &Path) -> String {
 /// again (its path is resolved once more, then it is an error) - and each missing directory below it
 /// is created one level at a time, never through a link (an existing component that is a link is
 /// refused). A path outside both folders is created as it is. Returns the directory to write into.
+/// (R7b, F47-2) The walk and every creation go through handles from the repository root
+/// ([`open_write_dir`]); a caller that then writes by path into the directory it got does so by
+/// name (see the module doc for which do).
 pub fn prepare_dir(repo_root: &Path, dir: &Path) -> Result<PathBuf, String> {
+    open_write_dir(repo_root, dir).map(|(_, p)| p)
+}
+
+/// (R7b, F47-2) [`prepare_dir`] on handles: the directory's handle and its path. The repository
+/// root is opened once as an anchor, the folder relative to it WITHOUT following it (a link or a
+/// non-directory refuses; `.c3` is created when missing, `.eck` never), and each directory below
+/// relative to its parent's handle the same way, created when missing.
+fn open_write_dir(repo_root: &Path, dir: &Path) -> Result<(Dir, PathBuf), String> {
     for attempt in 0..2 {
         let p = moved_with_folder(repo_root, dir);
         let Some((kind, rest)) = split_state_path(repo_root, &p) else {
             std::fs::create_dir_all(&p).map_err(|e| format!("create {}: {e}", p.display()))?;
-            return Ok(p);
+            let d = Dir::open_ambient_dir(&p, cap_std::ambient_authority())
+                .map_err(|e| format!("create {}: {e}", p.display()))?;
+            return Ok((d, p));
         };
-        let root = match kind {
-            StateName::Current => path(repo_root),
-            StateName::Legacy => legacy_path(repo_root),
+        let root = Root::open_anchor(repo_root)
+            .map_err(|e| format!("the repository root {} - nothing was written", e.words()))?;
+        let name = match kind {
+            StateName::Current => STATE_DIR,
+            StateName::Legacy => LEGACY_STATE_DIR,
         };
-        match std::fs::symlink_metadata(&root) {
-            Ok(m) if is_link(&m) => return Err(link_refusal(repo_root, &root)),
-            Ok(m) if m.is_dir() => {}
-            Ok(_) => {
+        let mut cur_path = repo_root.join(name);
+        // `.c3` is created when missing (fresh, with its marker); `.eck` never is
+        let opened = match kind {
+            StateName::Current => open_state_folder(&root, true).map(|(d, _)| d),
+            StateName::Legacy => contain::open_child(root.dir(), OsStr::new(name), false),
+        };
+        let mut cur = match opened {
+            Ok(d) => d,
+            Err(Step::Link { .. }) => return Err(link_refusal(repo_root, &cur_path)),
+            Err(Step::NotDir) => {
                 return Err(format!(
                     "{} is not a directory - nothing was written",
-                    shown(repo_root, &root)
+                    shown(repo_root, &cur_path)
                 ))
             }
-            Err(_) if kind == StateName::Current => match std::fs::create_dir(&root) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && real_dir(&root) => {}
-                Err(e) => return Err(format!("create {STATE_DIR}/: {e}")),
-            },
-            Err(_) if attempt == 0 => continue,
-            Err(_) => {
+            Err(Step::Missing) if attempt == 0 => continue,
+            Err(Step::Missing) => {
                 return Err(format!(
                     "the project folder {LEGACY_STATE_DIR}/ is gone and {STATE_DIR}/ is not there - nothing was written (C3 never creates {LEGACY_STATE_DIR}/ again)"
                 ))
             }
-        }
-        let mut cur = root;
+            Err(Step::Create(e)) => return Err(format!("create {STATE_DIR}/: {e}")),
+            Err(why) => {
+                return Err(format!(
+                    "{} {why} - nothing was written",
+                    shown(repo_root, &cur_path)
+                ))
+            }
+        };
         let mut vanished = false;
         for part in rest.split('/').filter(|s| !s.is_empty()) {
-            cur.push(part);
-            match std::fs::symlink_metadata(&cur) {
-                Ok(m) if is_link(&m) => return Err(link_refusal(repo_root, &cur)),
-                Ok(m) if m.is_dir() => {}
-                Ok(_) => {
+            cur_path.push(part);
+            cur = match contain::open_child(&cur, OsStr::new(part), true) {
+                Ok(d) => d,
+                Err(Step::Link { .. }) => return Err(link_refusal(repo_root, &cur_path)),
+                Err(Step::NotDir) => {
                     return Err(format!(
                         "{} is not a directory - nothing was written",
-                        shown(repo_root, &cur)
+                        shown(repo_root, &cur_path)
                     ))
                 }
-                Err(_) => match std::fs::create_dir(&cur) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && real_dir(&cur) => {}
-                    // the folder was renamed under this writer: resolve it again
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        vanished = true;
-                        break;
-                    }
-                    Err(e) => return Err(format!("create {}: {e}", shown(repo_root, &cur))),
-                },
-            }
+                // the folder was removed under this writer: resolve it again
+                Err(Step::Create(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                    vanished = true;
+                    break;
+                }
+                Err(Step::Missing) => {
+                    vanished = true;
+                    break;
+                }
+                Err(Step::Create(e)) => {
+                    return Err(format!("create {}: {e}", shown(repo_root, &cur_path)))
+                }
+                Err(why) => return Err(format!("create {}: {why}", shown(repo_root, &cur_path))),
+            };
         }
         if !vanished {
-            return Ok(cur);
+            return Ok((cur, cur_path));
         }
     }
     Err(format!(
@@ -1535,59 +1873,127 @@ pub fn prepare_dir(repo_root: &Path, dir: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-/// (S2, F36-1/F36-3) Write the file `name` in the folder directory `dir` (prepared by
-/// [`prepare_dir`]): its bytes come from `content`, called with the file's path just before the
-/// write (so a read-modify-write reads the file it writes). A file that is a link is refused. When
-/// the legacy folder was renamed between the preparation and the write, the write is made again at
-/// the folder's new place. Returns the file written.
+/// (R7b, F47-2) What a file held before [`write_in`] replaces it, read through the same directory
+/// handle: `Ok(None)` when it was not there, `Err` when it could not be read as text.
+pub type Current = Result<Option<String>, String>;
+
+/// (S2, F36-1/F36-3) Write the file `name` in the folder directory `dir` (prepared as by
+/// [`prepare_dir`]): its bytes come from `content`, called with the file's path and (R7b) what the
+/// file holds now, read through the directory's handle (so a read-modify-write reads the file it
+/// writes). A file that is a link, or no regular file, is refused. (R7b, F47-2) Through handles:
+/// the directory is reached by [`open_write_dir`] and the file published by a new temporary file
+/// and a rename relative to that handle ([`contain::publish`]) - it REPLACES the file (a second
+/// hard link of it never sees the write) and a directory swapped for a link meanwhile cannot take
+/// it outside. When the folder was removed between the preparation and the write, the write is
+/// made again at the folder's place now. Returns the file written.
 pub fn write_in(
     repo_root: &Path,
     dir: &Path,
     name: &str,
-    content: impl Fn(&Path) -> Result<Vec<u8>, String>,
+    content: impl Fn(&Path, Current) -> Result<Vec<u8>, String>,
 ) -> Result<PathBuf, String> {
     let mut last = String::new();
+    let leaf = OsStr::new(name);
     for _ in 0..2 {
-        let d = prepare_dir(repo_root, dir)?;
-        let f = d.join(name);
-        if std::fs::symlink_metadata(&f).is_ok_and(|m| is_link(&m)) {
-            return Err(link_refusal(repo_root, &f));
-        }
-        let bytes = content(&f)?;
-        match std::fs::write(&f, &bytes) {
-            Ok(()) => return Ok(f),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                last = format!("write {}: {e}", shown(repo_root, &f));
+        let (d, dpath) = open_write_dir(repo_root, dir)?;
+        let f = dpath.join(name);
+        let check = |_: contain::Stage| -> Result<(), String> {
+            match contain::entry(&d, leaf) {
+                Ok(Some(Kind::Link { .. })) => Err(link_refusal(repo_root, &f)),
+                Ok(Some(Kind::File)) | Ok(None) => Ok(()),
+                Ok(Some(_)) => Err(format!(
+                    "write {}: it is not a regular file",
+                    shown(repo_root, &f)
+                )),
+                Err(e) => Err(format!("write {}: {e}", shown(repo_root, &f))),
             }
-            Err(e) => return Err(format!("write {}: {e}", shown(repo_root, &f))),
-        }
+        };
+        check(contain::Stage::BeforeCreate)?;
+        let current: Current = match contain::read_file_in(&d, leaf) {
+            Ok(b) => String::from_utf8(b)
+                .map(Some)
+                .map_err(|_| "stream did not contain valid UTF-8".to_string()),
+            Err(Step::Missing) => Ok(None),
+            Err(why) => Err(format!("it {why}")),
+        };
+        let bytes = content(&f, current)?;
+        #[cfg(unix)]
+        let permissions = d
+            .symlink_metadata(leaf)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.permissions());
+        #[cfg(not(unix))]
+        let permissions = None;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|t| t.as_nanos())
+            .unwrap_or(0);
+        let tmp = format!(".{name}.c3-{}-{nanos}.tmp", std::process::id());
+        // (the race tests swap the directory for a link at `state-write-create`)
+        let published = contain::publish(&contain::Publish {
+            dir: &d,
+            leaf,
+            tmp: OsStr::new(&tmp),
+            bytes: &bytes,
+            permissions,
+            check: &check,
+            race: "state-write",
+        });
+        let failure = match published {
+            Ok(()) => return Ok(f),
+            Err(failure) => failure,
+        };
+        let msg = match &failure.error {
+            contain::PublishError::Check(why) => why.clone(),
+            // the folder was removed under this writer: resolve it again
+            contain::PublishError::Create(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                last = format!("write {}: {e}", shown(repo_root, &f));
+                continue;
+            }
+            contain::PublishError::Create(e)
+            | contain::PublishError::Write(e)
+            | contain::PublishError::Rename(e) => format!("write {}: {e}", shown(repo_root, &f)),
+        };
+        return Err(failure.with_cleanup(msg));
     }
     Err(last)
 }
 
 // ------------------------------------------------------------------------------ the collab cache
 
-/// The first link among the components of `p`: those below the repository root when `p` lies in
-/// it, else `p` and its parent (a collab root outside the repository and its `.c3`).
-fn first_link_in(repo_root: &Path, p: &Path) -> Option<PathBuf> {
-    let is_l = |q: &Path| std::fs::symlink_metadata(q).is_ok_and(|m| is_link(&m));
-    match repo_relative_normal(repo_root, p) {
-        Some(rel) => {
-            let mut cur = repo_root.to_path_buf();
-            for part in rel.split('/').filter(|s| !s.is_empty()) {
-                cur.push(part);
-                if is_l(&cur) {
-                    return Some(cur);
-                }
-            }
-            None
-        }
-        None => [p.parent(), Some(p)]
-            .into_iter()
-            .flatten()
-            .find(|q| is_l(q))
-            .map(Path::to_path_buf),
+/// (R7b, F47-2) The legacy cache `<collab_root>/.c3` opened through handles, with its parent's
+/// handle. When it lies in the repository: from the repository root's handle one component at a
+/// time, none followed; outside it: the collab root opened without following it, then its `.c3`.
+/// `Err(Some(p))`: the link at `p` stopped it; `Err(None)`: it is not there (or no directory).
+fn open_cache_source(repo_root: &Path, collab_root: &Path) -> Result<(Dir, Dir), Option<PathBuf>> {
+    let src = collab_root.join(STATE_DIR);
+    let Some(rel) = repo_relative_normal(repo_root, &src) else {
+        let parent = match Root::open(collab_root) {
+            Ok(r) => r.dir().try_clone().map_err(|_| None)?,
+            Err(RootError::Link) => return Err(Some(collab_root.to_path_buf())),
+            Err(_) => return Err(None),
+        };
+        return match contain::open_child(&parent, OsStr::new(STATE_DIR), false) {
+            Ok(d) => Ok((parent, d)),
+            Err(Step::Link { .. }) => Err(Some(src)),
+            Err(_) => Err(None),
+        };
+    };
+    let root = Root::open_anchor(repo_root).map_err(|_| None)?;
+    let mut cur = root.dir().try_clone().map_err(|_| None)?;
+    let mut cur_path = repo_root.to_path_buf();
+    let mut parent = None;
+    for part in rel.split('/').filter(|s| !s.is_empty()) {
+        cur_path.push(part);
+        let next = match contain::open_child(&cur, OsStr::new(part), false) {
+            Ok(d) => d,
+            Err(Step::Link { .. }) => return Err(Some(cur_path)),
+            Err(_) => return Err(None),
+        };
+        parent = Some(std::mem::replace(&mut cur, next));
     }
+    Ok((parent.ok_or(None)?, cur))
 }
 
 /// Move a legacy cache `<collab_root>/.c3/` (C3's `anchor`, `snapshot_seq`, `index/`, ...) into
@@ -1601,61 +2007,60 @@ pub fn migrate_collab_cache(repo_root: &Path, collab_root: &Path) -> Vec<String>
     let mut notes: Vec<String> = Vec::new();
     let src = collab_root.join(STATE_DIR);
     let dst = path(repo_root);
-    let Ok(meta) = std::fs::symlink_metadata(&src) else {
-        return notes;
-    };
-    if same_dir(&src, &dst) {
+    if std::fs::symlink_metadata(&src).is_err() || same_dir(&src, &dst) {
         return notes;
     }
     let src_label = shown(repo_root, &src);
-    if let Some(link) = first_link_in(repo_root, &src) {
-        notes.push(format!(
-            "{} is {} - the cache under it is not moved into {STATE_DIR}/ (C3 never walks through a link)",
-            shown(repo_root, &link),
-            link_words(&link)
-        ));
-        return notes;
-    }
-    if is_link(&meta) || !meta.is_dir() {
-        return notes;
-    }
-    let mut entries: Vec<std::ffi::OsString> = match std::fs::read_dir(&src) {
-        Ok(rd) => rd.flatten().map(|e| e.file_name()).collect(),
-        Err(_) => return notes,
-    };
-    entries.sort();
-    if entries.is_empty() {
-        let _ = std::fs::remove_dir(&src);
-        return notes;
-    }
-    match std::fs::symlink_metadata(&dst) {
-        Err(_) => {
-            if let Err(e) = std::fs::create_dir(&dst) {
-                notes.push(format!(
-                    "{src_label} not moved: could not create {STATE_DIR}/ ({e})"
-                ));
-                return notes;
-            }
-        }
-        Ok(m) if m.is_dir() && !is_link(&m) => {}
-        Ok(_) => {
+    // (R7b, F47-2) through handles: the source and `.c3/` are opened without following them, and
+    // each entry is renamed between the two handles
+    let (parent, src_dir) = match open_cache_source(repo_root, collab_root) {
+        Ok(v) => v,
+        Err(Some(link)) => {
             notes.push(format!(
-                "{src_label} not moved: {STATE_DIR} is a link or not a directory"
+                "{} is {} - the cache under it is not moved into {STATE_DIR}/ (C3 never walks through a link)",
+                shown(repo_root, &link),
+                link_words(&link)
             ));
             return notes;
         }
+        Err(None) => return notes,
+    };
+    let entries = match contain::list(&src_dir) {
+        Ok(v) => v,
+        Err(_) => return notes,
+    };
+    if entries.is_empty() {
+        drop(src_dir);
+        let _ = parent.remove_dir(STATE_DIR);
+        return notes;
     }
+    let dst_dir = match Root::open_anchor(repo_root)
+        .map_err(|e| format!("the repository root {}", e.words()))
+        .and_then(|r| {
+            open_state_folder(&r, true)
+                .map(|(d, _)| d)
+                .map_err(|why| match why {
+                    Step::Create(e) => format!("could not create {STATE_DIR}/ ({e})"),
+                    _ => format!("{STATE_DIR} is a link or not a directory"),
+                })
+        }) {
+        Ok(d) => d,
+        Err(why) => {
+            notes.push(format!("{src_label} not moved: {why}"));
+            return notes;
+        }
+    };
     let mut moved: Vec<String> = Vec::new();
     for name in entries {
         let n = name.to_string_lossy().to_string();
-        let to = dst.join(&name);
-        if std::fs::symlink_metadata(&to).is_ok() {
+        if contain::entry(&dst_dir, &name).ok().flatten().is_some() {
             notes.push(format!(
                 "left {src_label}/{n}: {STATE_DIR}/{n} exists already (the destination wins)"
             ));
             continue;
         }
-        match std::fs::rename(src.join(&name), &to) {
+        contain::race_point("state-cache");
+        match src_dir.rename(&name, &dst_dir, &name) {
             Ok(()) => moved.push(n),
             Err(e) => notes.push(format!(
                 "left {src_label}/{n}: could not move it into {STATE_DIR}/ ({e})"
@@ -1671,7 +2076,8 @@ pub fn migrate_collab_cache(repo_root: &Path, collab_root: &Path) -> Vec<String>
             ),
         );
     }
-    let _ = std::fs::remove_dir(&src);
+    drop(src_dir);
+    let _ = parent.remove_dir(STATE_DIR);
     notes
 }
 

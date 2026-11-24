@@ -197,6 +197,10 @@ fn the_scripts_keep_their_fallbacks() {
         vec!["error: something odd".to_string()],
         "{text}"
     );
+    // (F45-4) ...cut at 400 characters by the scripts themselves: a panic or library line that
+    // bypassed `c3 hook`'s own cap does not reach the session whole
+    let text = forwarded("long-noise", &format!("\n{}\nmore\n", "e".repeat(5000)));
+    assert_eq!(lines_before_rule(&text), vec!["e".repeat(400)], "{text}");
 }
 
 /// The `.ps1` under Windows PowerShell 5.1 with a fake `c3` that is itself a PowerShell script
@@ -225,7 +229,7 @@ fn run_ps1_script(name: &str, body: &str) -> Option<String> {
 
 // (0.2.5; R4, F16-10 / F17-9) The `.ps1` no longer cuts a line - so it can never split a surrogate
 // pair: an emoji at UTF-16 units 399-400 (where the old cut fell) is forwarded with the rest of the
-// line, on the forwarded path and on the no-prefix fallback.
+// line on the forwarded path; the no-prefix fallback (cut at 400 again, F45-4) stops before it.
 #[test]
 fn the_ps1_forwards_a_long_line_whole() {
     let Some(text) = run_ps1_script(
@@ -248,11 +252,8 @@ fn the_ps1_forwards_a_long_line_whole() {
     )
     .unwrap();
     let lines = lines_before_rule(&text);
-    assert_eq!(lines.len(), 1, "{text}");
-    assert!(
-        lines[0].starts_with(&"y".repeat(399)) && lines[0].ends_with('z'),
-        "{text}"
-    );
+    // (F45-4) the fallback is cut at 400 again - before the surrogate pair, never inside it
+    assert_eq!(lines, vec!["y".repeat(399)], "{text}");
 }
 
 // (R4, F17-9) An exception inside the `.ps1` still ends with the waiting rule, exactly as the normal

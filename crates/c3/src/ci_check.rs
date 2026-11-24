@@ -24,10 +24,12 @@
 //! false` in the C3 config turns it off.
 //!
 //! The branch asked about is the one the clone names - `c3.defaultBranch`, else `origin/HEAD` - and
-//! (0.2.5, F31-2) when the clone names none, the one GitHub names: `gh repo view --json
-//! defaultBranchRef`, asked once under the same deadline and remembered in the repository's gate
-//! file for a day. A local `main` or `master` is never taken for it; when gh cannot say, the check
-//! stays silent.
+//! (0.2.5, F31-2) when the clone names none, the one GitHub names: `gh repo view <owner/name> --json
+//! defaultBranchRef`, asked once under the same deadline and remembered in the repository's branch
+//! memory for a day. A local `main` or `master` is never taken for it; when gh cannot say, the
+//! check stays silent. (F46-4, F45-3) Every `gh` call names the repository: the one `origin`
+//! names, or without an `origin` the one GitHub repository the remotes name - with several
+//! different ones there is no check - and `GH_REPO` / `GH_HOST` are removed from its environment.
 //!
 //! The hook asks at most once a day per repository: (R4, F16-9) the time of the last attempt is one
 //! small file per repository, `<codex home>/c3/ci-check-<hash>.json` (the hash of the repository's
@@ -239,6 +241,62 @@ fn remotes_name_github(out: &str) -> bool {
     })
 }
 
+/// (F46-4, F45-3) The GitHub repository (`owner/name`) THIS checkout's CI lives in, from `git
+/// remote -v` ([`github_repo_of`]); `None` when it cannot be told.
+fn github_repo(repo_root: &Path) -> Option<String> {
+    git_out(repo_root, &["remote", "-v"]).and_then(|s| github_repo_of(&s))
+}
+
+/// [`github_repo`] over `git remote -v` output (pure): the `origin` remote's repository when there
+/// is an `origin` (none when its host is not GitHub's); without an `origin`, the repository of the
+/// GitHub remotes when they all name the same one; `None` with several different ones - gh would
+/// pick one by its own rules, which need not be this checkout's.
+fn github_repo_of(out: &str) -> Option<String> {
+    let remotes: Vec<(&str, Option<String>)> = out
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let (name, url) = (f.next()?, f.next()?);
+            Some((name, github_slug(url)))
+        })
+        .collect();
+    if let Some((_, slug)) = remotes.iter().find(|(n, _)| *n == "origin") {
+        return slug.clone();
+    }
+    let mut slugs: Vec<&String> = remotes.iter().filter_map(|(_, s)| s.as_ref()).collect();
+    slugs.sort();
+    slugs.dedup();
+    match slugs.as_slice() {
+        [one] => Some((*one).clone()),
+        _ => None,
+    }
+}
+
+/// The `owner/name` of a GitHub remote URL (https, ssh or scp-like), `None` for another host or a
+/// path that is not exactly `owner/name[.git]` of plain characters (nothing that could read as a
+/// flag).
+fn github_slug(url: &str) -> Option<String> {
+    let host = url_host(url)?;
+    if !GITHUB_HOSTS.contains(&host.as_str()) {
+        return None;
+    }
+    let path = match url.split_once("://") {
+        Some((_, rest)) => rest.split_once('/')?.1,
+        None => url.split_once(':')?.1,
+    };
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let mut parts = path.split('/');
+    let (owner, name) = (parts.next()?, parts.next()?);
+    let plain = |s: &str| {
+        !s.is_empty()
+            && !s.starts_with(['-', '.'])
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    (parts.next().is_none() && plain(owner) && plain(name)).then(|| format!("{owner}/{name}"))
+}
+
 /// The host of a git remote URL, lower-cased (a trailing `.` dropped): `scheme://[user@]host[:port]/
 /// path` (an IPv6 host in brackets), or the scp-like `[user@]host:path` (a `:` before any `/`).
 /// `None` for a local path or a URL without a host.
@@ -270,28 +328,35 @@ fn url_host(url: &str) -> Option<String> {
 /// without a local branch of that name); (F31-2) when the clone names none, the one GitHub names
 /// ([`github_default_branch`]). `None` when `c3.defaultBranch` names a branch that does not exist,
 /// or nobody can say - a local `main` / `master` is never taken for the default.
-fn ci_branch(gh: &str, repo_root: &Path) -> Option<String> {
+fn ci_branch(gh: &str, repo_root: &Path, repo: &str) -> Option<String> {
     let memory = gate_dir().map(|d| (d, repo_key(repo_root)));
-    ci_branch_in(gh, repo_root, memory.as_ref())
+    ci_branch_in(gh, repo_root, repo, memory.as_ref())
 }
 
-/// [`ci_branch`] with the gate record that remembers GitHub's answer (`memory`: the gate directory
-/// and the repository's key; `None`: nothing is remembered).
-fn ci_branch_in(gh: &str, repo_root: &Path, memory: Option<&(PathBuf, String)>) -> Option<String> {
+/// [`ci_branch`] with the record that remembers GitHub's answer (`memory`: the gate directory and
+/// the repository's key; `None`: nothing is remembered).
+fn ci_branch_in(
+    gh: &str,
+    repo_root: &Path,
+    repo: &str,
+    memory: Option<&(PathBuf, String)>,
+) -> Option<String> {
     match crate::setup::branches::remote_default_branch(repo_root) {
         Ok(Some(b)) => Some(b).filter(|b| branch_text_ok(b)),
-        Ok(None) => github_default_branch(gh, repo_root, memory),
+        Ok(None) => github_default_branch(gh, repo_root, repo, memory),
         Err(_) => None,
     }
 }
 
-/// (F31-2) The repository's default branch as GitHub names it: remembered in its gate record for a
-/// day ([`remembered_default`]), else asked once - `gh repo view --json defaultBranchRef`, through
-/// the deadline-bound runner - and remembered. `None` when gh cannot say (a failure, a reply that
-/// does not parse, a name that may not stand in the line).
+/// (F31-2) The repository's default branch as GitHub names it: remembered for a day
+/// ([`remembered_default`]), else asked once - `gh repo view <owner/name> --json defaultBranchRef`
+/// (F46-4: the repository named, never inferred), through the deadline-bound runner - and
+/// remembered. `None` when gh cannot say (a failure, a reply that does not parse, a name that may
+/// not stand in the line).
 fn github_default_branch(
     gh: &str,
     repo_root: &Path,
+    repo: &str,
     memory: Option<&(PathBuf, String)>,
 ) -> Option<String> {
     let now = Utc::now();
@@ -302,7 +367,7 @@ fn github_default_branch(
     }
     let json = run_gh(
         gh,
-        &["repo", "view", "--json", "defaultBranchRef"],
+        &["repo", "view", repo, "--json", "defaultBranchRef"],
         repo_root,
     )?;
     let name = default_branch_of(&json)?;
@@ -327,35 +392,44 @@ fn default_branch_of(json: &str) -> Option<String> {
 /// it): its stdout on a clean exit, `None` on any failure - a spawn error, a non-zero exit (not
 /// logged in, no such repository), a kill.
 fn run_gh(gh: &str, args: &[&str], repo_root: &Path) -> Option<String> {
-    let mut cmd = Command::new(gh);
-    cmd.args(args)
-        .current_dir(repo_root)
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_NO_UPDATE_NOTIFIER", "1");
-    let out = crate::bounded::run_registered(cmd).ok()?;
+    let out = crate::bounded::run_registered(gh_command(gh, args, repo_root)).ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The check proper, for a repository: `gh` on PATH, a GitHub remote, a known default branch, then
-/// the latest completed run. `None` whenever any of it is missing or the run is not red. Run it
-/// inside [`crate::bounded::within`]: every process it starts is then bound to that deadline.
-fn check(repo_root: &Path) -> Option<CiFailure> {
-    let gh = crate::providers::find_on_path("gh")?;
-    if !has_github_remote(repo_root) {
-        return None;
-    }
-    let branch = ci_branch(&gh, repo_root)?;
-    check_with(&gh, repo_root, &branch)
+/// The `gh` command of [`run_gh`]: (F46-4) `GH_REPO` and `GH_HOST` are removed from its
+/// environment - the callers name the repository themselves, and neither may send the question to
+/// another repository or host.
+fn gh_command(gh: &str, args: &[&str], repo_root: &Path) -> Command {
+    let mut cmd = Command::new(gh);
+    cmd.args(args)
+        .current_dir(repo_root)
+        .env_remove("GH_REPO")
+        .env_remove("GH_HOST")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_NO_UPDATE_NOTIFIER", "1");
+    cmd
 }
 
-/// [`check`] once `gh` and the branch are known.
-fn check_with(gh: &str, repo_root: &Path, branch: &str) -> Option<CiFailure> {
+/// The check proper, for a repository: `gh` on PATH, a GitHub repository this checkout's remotes
+/// name ([`github_repo`]), a known default branch, then the latest completed run. `None` whenever
+/// any of it is missing or the run is not red. Run it inside [`crate::bounded::within`]: every
+/// process it starts is then bound to that deadline.
+fn check(repo_root: &Path) -> Option<CiFailure> {
+    let gh = crate::providers::find_on_path("gh")?;
+    let repo = github_repo(repo_root)?;
+    let branch = ci_branch(&gh, repo_root, &repo)?;
+    check_with(&gh, repo_root, &repo, &branch)
+}
+
+/// [`check`] once `gh`, the repository and the branch are known: `gh run list ... -R <repo>`.
+fn check_with(gh: &str, repo_root: &Path, repo: &str, branch: &str) -> Option<CiFailure> {
     let json = run_gh(
         gh,
         &[
-            "run", "list", "--branch", branch, "--limit", RUN_LIMIT, "--json", RUN_FIELDS,
+            "run", "list", "--branch", branch, "--limit", RUN_LIMIT, "--json", RUN_FIELDS, "-R",
+            repo,
         ],
         repo_root,
     )?;
@@ -415,9 +489,17 @@ fn gate_name_tail(name: &str) -> Option<&str> {
     hash.bytes().all(|b| b.is_ascii_hexdigit()).then_some(tail)
 }
 
-/// Whether a gate file name is one of ours (`ci-check-<16 hex>.json`).
+/// (F46-4) The file that remembers the default branch GitHub named for the repository `key`:
+/// `ci-check-<16 hex>.branch.json` - apart from the gate file, so a gate write and a branch write
+/// that overlap cannot drop each other's fields.
+fn branch_file(dir: &Path, key: &str) -> PathBuf {
+    gate_file(dir, key).with_extension("branch.json")
+}
+
+/// Whether a gate file name is one of ours (`ci-check-<16 hex>.json`, or the branch memory
+/// `ci-check-<16 hex>.branch.json`).
 fn is_gate_file_name(name: &str) -> bool {
-    gate_name_tail(name) == Some(".json")
+    matches!(gate_name_tail(name), Some(".json" | ".branch.json"))
 }
 
 /// (F31-3) Whether a name is one of our claim files (`ci-check-<16 hex>.<8 digits>.claim`).
@@ -428,9 +510,12 @@ fn is_claim_file_name(name: &str) -> bool {
         .is_some_and(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// (F31-5) Whether a name is one of our temp files (`ci-check-<16 hex>.json.<...>.tmp`).
+/// (F31-5) Whether a name is one of our temp files (`ci-check-<16 hex>.json.<...>.tmp`, or the
+/// branch memory's `ci-check-<16 hex>.branch.json.<...>.tmp`).
 fn is_gate_temp_name(name: &str) -> bool {
-    gate_name_tail(name).is_some_and(|t| t.starts_with(".json.") && t.ends_with(".tmp"))
+    gate_name_tail(name).is_some_and(|t| {
+        (t.starts_with(".json.") || t.starts_with(".branch.json.")) && t.ends_with(".tmp")
+    })
 }
 
 /// (F31-3) The claim file of the repository `key` for the UTC day of `now`.
@@ -457,10 +542,16 @@ fn gate_claim(dir: &Path, key: &str, now: DateTime<Utc>) -> bool {
         .is_ok()
 }
 
-/// The repository's gate record (`repo`, `attempted_at`, and - F31-2 - `default_branch` with
-/// `default_branch_at`): empty when there is none, it does not parse, or it is another key's.
+/// The repository's gate record (`repo`, `attempted_at`; the default branch an older build kept
+/// here is no longer read): empty when there is none, it does not parse, or it is another key's.
 fn gate_read(dir: &Path, key: &str) -> serde_json::Map<String, Value> {
-    std::fs::read(gate_file(dir, key))
+    record_read(&gate_file(dir, key), key)
+}
+
+/// A record file of the repository `key` ([`gate_read`], the branch memory): empty when there is
+/// none, it does not parse, or it is another key's.
+fn record_read(path: &Path, key: &str) -> serde_json::Map<String, Value> {
+    std::fs::read(path)
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .filter(|v| v.get("repo").and_then(Value::as_str) == Some(key))
@@ -486,10 +577,21 @@ fn within_a_day(t: DateTime<Utc>, now: DateTime<Utc>) -> bool {
 /// Best-effort write of the repository's gate record: its own file, through a temp file and a rename
 /// (the temp file is removed on every failure) - no other repository's record is read or rewritten.
 fn gate_write(dir: &Path, key: &str, rec: &serde_json::Map<String, Value>, now: DateTime<Utc>) {
+    record_write(dir, &gate_file(dir, key), key, rec, now);
+}
+
+/// Best-effort write of a record file of the repository `key` ([`gate_write`], the branch memory),
+/// through a temp file and a rename.
+fn record_write(
+    dir: &Path,
+    path: &Path,
+    key: &str,
+    rec: &serde_json::Map<String, Value>,
+    now: DateTime<Utc>,
+) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
-    let path = gate_file(dir, key);
     let mut rec = rec.clone();
     rec.insert("repo".to_string(), Value::String(key.to_string()));
     let Ok(bytes) = serde_json::to_vec_pretty(&Value::Object(rec)) else {
@@ -500,7 +602,7 @@ fn gate_write(dir: &Path, key: &str, rec: &serde_json::Map<String, Value>, now: 
         std::process::id(),
         now.timestamp_nanos_opt().unwrap_or(0)
     ));
-    if std::fs::write(&tmp, &bytes).is_err() || std::fs::rename(&tmp, &path).is_err() {
+    if std::fs::write(&tmp, &bytes).is_err() || std::fs::rename(&tmp, path).is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
 }
@@ -513,9 +615,9 @@ fn gate_due(dir: &Path, key: &str, now: DateTime<Utc>) -> bool {
 }
 
 /// (F31-2) The default branch GitHub named for the repository `key` less than a day ago, as
-/// remembered in its gate record.
+/// remembered in its branch memory ([`branch_file`]).
 fn remembered_default(dir: &Path, key: &str, now: DateTime<Utc>) -> Option<String> {
-    let rec = gate_read(dir, key);
+    let rec = record_read(&branch_file(dir, key), key);
     if !gate_time(&rec, "default_branch_at").is_some_and(|t| within_a_day(t, now)) {
         return None;
     }
@@ -525,16 +627,16 @@ fn remembered_default(dir: &Path, key: &str, now: DateTime<Utc>) -> Option<Strin
         .map(str::to_string)
 }
 
-/// (F31-2) Remember the default branch GitHub named, in the repository's gate record (every other
-/// field kept).
+/// (F31-2) Remember the default branch GitHub named, in the repository's branch memory (F46-4: a
+/// file of its own, written whole - the gate record's attempt is never read or rewritten here).
 fn remember_default(dir: &Path, key: &str, branch: &str, now: DateTime<Utc>) {
-    let mut rec = gate_read(dir, key);
+    let mut rec = serde_json::Map::new();
     rec.insert(
         "default_branch".to_string(),
         Value::String(branch.to_string()),
     );
     rec.insert("default_branch_at".to_string(), Value::String(rfc3339(now)));
-    gate_write(dir, key, &rec, now);
+    record_write(dir, &branch_file(dir, key), key, &rec, now);
 }
 
 /// Best-effort record of an attempt for the repository `key` (its gate record, every other field
@@ -589,9 +691,7 @@ fn hook_failure() -> Option<CiFailure> {
         return None;
     }
     let gh = crate::providers::find_on_path("gh")?;
-    if !has_github_remote(&repo_root) {
-        return None;
-    }
+    let repo = github_repo(&repo_root)?;
     let dir = gate_dir()?;
     let key = repo_key(&repo_root);
     let now = Utc::now();
@@ -605,8 +705,8 @@ fn hook_failure() -> Option<CiFailure> {
     }
     // the attempt is recorded first: a `gh` that stalls, fails or is not logged in costs one try a day
     gate_record(&dir, &key, now);
-    let branch = ci_branch(&gh, &repo_root)?;
-    check_with(&gh, &repo_root, &branch)
+    let branch = ci_branch(&gh, &repo_root, &repo)?;
+    check_with(&gh, &repo_root, &repo, &branch)
 }
 
 #[cfg(test)]
@@ -1068,8 +1168,8 @@ mod tests {
             crate::bounded::with_scan_children(Arc::clone(&set), || {
                 (
                     has_github_remote(&repo),
-                    ci_branch_in(&gh, &repo, None),
-                    check_with(&gh, &repo, "main"),
+                    ci_branch_in(&gh, &repo, "example/c3", None),
+                    check_with(&gh, &repo, "example/c3", "main"),
                 )
             });
         assert!(!remote);
@@ -1077,7 +1177,10 @@ mod tests {
         assert_eq!(failure, None);
         assert!(set.started_pids().is_empty(), "{:?}", set.started_pids());
         assert!(has_github_remote(&repo));
-        assert_eq!(ci_branch_in(&gh, &repo, None).as_deref(), Some("main"));
+        assert_eq!(
+            ci_branch_in(&gh, &repo, "example/c3", None).as_deref(),
+            Some("main")
+        );
         let _ = std::fs::remove_dir_all(&repo);
     }
 
@@ -1146,16 +1249,16 @@ mod tests {
         );
         let memory = (state.clone(), repo_key(&repo));
         assert_eq!(
-            ci_branch_in(&gh, &repo, Some(&memory)).as_deref(),
+            ci_branch_in(&gh, &repo, "example/c3", Some(&memory)).as_deref(),
             Some("develop")
         );
         assert_eq!(
             gh_calls(&log),
-            vec!["repo view --json defaultBranchRef".to_string()]
+            vec!["repo view example/c3 --json defaultBranchRef".to_string()]
         );
         // remembered for the day: no second question
         assert_eq!(
-            ci_branch_in(&gh, &repo, Some(&memory)).as_deref(),
+            ci_branch_in(&gh, &repo, "example/c3", Some(&memory)).as_deref(),
             Some("develop")
         );
         assert_eq!(gh_calls(&log).len(), 1, "{:?}", gh_calls(&log));
@@ -1176,13 +1279,13 @@ mod tests {
         let failing_dir = gate_scratch("ghdefault-fail");
         let flog = failing_dir.join("gh.log");
         let failing = answering_gh(&failing_dir, &flog, None);
-        assert_eq!(ci_branch_in(&failing, &repo, None), None);
+        assert_eq!(ci_branch_in(&failing, &repo, "example/c3", None), None);
         let odd = answering_gh(
             &failing_dir,
             &flog,
             Some(r#"{"defaultBranchRef":{"name":""}}"#),
         );
-        assert_eq!(ci_branch_in(&odd, &repo, None), None);
+        assert_eq!(ci_branch_in(&odd, &repo, "example/c3", None), None);
         assert_eq!(
             default_branch_of(r#"{"defaultBranchRef":{"name":"trunk"}}"#).as_deref(),
             Some("trunk")
@@ -1195,6 +1298,134 @@ mod tests {
         let _ = std::fs::remove_dir_all(&repo);
         let _ = std::fs::remove_dir_all(&state);
         let _ = std::fs::remove_dir_all(&failing_dir);
+    }
+
+    // (F46-4, F45-3) gh is asked about THIS checkout's repository: `origin`'s when there is one
+    // (none when it is not on GitHub), else the one GitHub repository the remotes name - several
+    // different ones and no `origin`: no repository, no check; `GH_REPO` and `GH_HOST` are removed
+    // from gh's environment and the repository is named in its arguments.
+    #[test]
+    fn gh_is_asked_about_this_checkouts_repository() {
+        let remotes = |lines: &[(&str, &str)]| -> String {
+            lines
+                .iter()
+                .flat_map(|(n, u)| [format!("{n}\t{u} (fetch)"), format!("{n}\t{u} (push)")])
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        type Case<'a> = (&'a [(&'a str, &'a str)], Option<&'a str>);
+        let cases: &[Case] = &[
+            (&[("origin", "https://github.com/me/c3.git")], Some("me/c3")),
+            (
+                &[
+                    ("upstream", "https://github.com/them/c3.git"),
+                    ("origin", "git@github.com:me/c3.git"),
+                ],
+                Some("me/c3"),
+            ),
+            (
+                &[("origin", "ssh://git@ssh.github.com:443/me/c3.git/")],
+                Some("me/c3"),
+            ),
+            (
+                &[
+                    ("origin", "https://gitlab.example/me/c3.git"),
+                    ("upstream", "https://github.com/them/c3.git"),
+                ],
+                None,
+            ),
+            (&[("fork", "https://github.com/me/c3")], Some("me/c3")),
+            (
+                &[
+                    ("fork", "https://github.com/me/c3.git"),
+                    ("upstream", "https://github.com/them/c3.git"),
+                ],
+                None,
+            ),
+            (
+                &[
+                    ("a", "https://github.com/me/c3.git"),
+                    ("b", "git@github.com:me/c3.git"),
+                ],
+                Some("me/c3"),
+            ),
+            (&[("origin", "https://github.com/-R/x.git")], None),
+            (&[("origin", "https://github.com/me/c3/extra")], None),
+            (&[("origin", "https://github.com/me")], None),
+            (&[], None),
+        ];
+        for (lines, want) in cases {
+            assert_eq!(
+                github_repo_of(&remotes(lines)).as_deref(),
+                *want,
+                "{lines:?}"
+            );
+        }
+        let cmd = gh_command("gh", &["run", "list", "-R", "me/c3"], Path::new("."));
+        let envs: Vec<(String, Option<String>)> = cmd
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().to_string(),
+                    v.map(|v| v.to_string_lossy().to_string()),
+                )
+            })
+            .collect();
+        for gone in ["GH_REPO", "GH_HOST"] {
+            assert!(envs.contains(&(gone.to_string(), None)), "{envs:?}");
+        }
+        // the scratch repository's own remote is the one named, in both calls
+        let repo = scratch_repo_without_origin_head("ghrepo");
+        assert_eq!(github_repo(&repo).as_deref(), Some("example/c3"));
+        let state = gate_scratch("ghrepo-state");
+        let log = state.join("gh.log");
+        let gh = answering_gh(
+            &state,
+            &log,
+            Some(r#"{"defaultBranchRef":{"name":"main"}}"#),
+        );
+        let branch = ci_branch_in(&gh, &repo, "example/c3", None).unwrap();
+        let _ = check_with(&gh, &repo, "example/c3", &branch);
+        let calls = gh_calls(&log);
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].starts_with("repo view example/c3 "), "{calls:?}");
+        assert!(calls[1].ends_with(" -R example/c3"), "{calls:?}");
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&state);
+    }
+
+    // (F46-4) The remembered default branch and the gate's attempt live in separate files: a gate
+    // write made from a read that predates the branch memory does not drop it, nor the reverse.
+    #[test]
+    fn the_branch_memory_and_the_attempt_do_not_drop_each_other() {
+        let dir = gate_scratch("separate");
+        let now = Utc::now();
+        let stale = gate_read(&dir, "c:/repo");
+        remember_default(&dir, "c:/repo", "develop", now);
+        gate_write(&dir, "c:/repo", &stale, now);
+        gate_record(&dir, "c:/repo", now);
+        assert_eq!(
+            remembered_default(&dir, "c:/repo", now).as_deref(),
+            Some("develop")
+        );
+        remember_default(&dir, "c:/repo", "trunk", now);
+        assert!(!gate_due(&dir, "c:/repo", now));
+        assert_eq!(
+            remembered_default(&dir, "c:/repo", now).as_deref(),
+            Some("trunk")
+        );
+        let name = branch_file(&dir, "c:/repo")
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            name.ends_with(".branch.json") && is_gate_file_name(&name),
+            "{name}"
+        );
+        assert!(is_gate_temp_name(&format!("{name}.123.ab.tmp")));
+        assert_ne!(branch_file(&dir, "c:/repo"), gate_file(&dir, "c:/repo"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // (R4, F16-3) When the check's deadline fires, `gh` - and what it started (here the shell's
@@ -1231,7 +1462,7 @@ mod tests {
         let root = repo.clone();
         let out = crate::bounded::within_stopping(
             Duration::from_millis(2500),
-            move || check_with(&gh, &root, "main"),
+            move || check_with(&gh, &root, "example/c3", "main"),
             Arc::clone(&children),
         );
         assert_eq!(out, None);

@@ -98,10 +98,10 @@ try {
     if ($forwarded.Count -gt 0) {
         foreach ($t in $forwarded) { Write-Output $t }
     } else {
-        # nothing carried a known prefix: the first non-empty line as it is, else a note
+        # nothing carried a known prefix: the first non-empty line cut at 400, else a note
         $first = (@($raw | Where-Object { $_ -and $_.Trim() }) | Select-Object -First 1)
         if (-not $first) { $first = "c3 hook exited $code without output" }
-        Write-Output "$first"
+        Write-Output (Get-CutText "$first" 400)
     }
     Write-Output $WaitRule
 } catch {

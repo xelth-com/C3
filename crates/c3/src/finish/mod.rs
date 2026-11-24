@@ -56,6 +56,9 @@ pub struct ChecksOutcome {
     pub skipped: Vec<String>,
     /// `--skip-checks` was given (whether or not any check is configured).
     pub skip_requested: bool,
+    /// (F46-6, F45-6) `--skip-checks` was given and the configuration could not be read or parsed
+    /// (why): whether any check is configured is unknown, and none ran.
+    pub config_error: Option<String>,
 }
 
 impl ChecksOutcome {
@@ -63,6 +66,11 @@ impl ChecksOutcome {
     /// `None` when no check is configured and none was skipped.
     pub fn line(&self) -> Option<String> {
         if self.skip_requested {
+            if let Some(e) = &self.config_error {
+                return Some(format!(
+                    "Pre-finish checks skipped (--skip-checks): the configuration could not be read ({e}); no check was run."
+                ));
+            }
             return Some(if self.skipped.is_empty() {
                 "Pre-finish checks skipped (--skip-checks; none configured).".to_string()
             } else {
@@ -180,7 +188,7 @@ fn now_stamp() -> String {
 /// move had to wait). (0.2.5, S2 F36-1/F36-3) Through [`state_dir::write_in`]: the folder as it is
 /// now (never a stale legacy path, never a new `.eck/`), never through a link.
 fn write_answer(repo: &Path, dir: &Path, body: &str) -> Result<(), String> {
-    state_dir::write_in(repo, dir, state_dir::LAST_REPORT, |_| {
+    state_dir::write_in(repo, dir, state_dir::LAST_REPORT, |_, _| {
         Ok(body.as_bytes().to_vec())
     })
     .map(|_| ())
@@ -190,8 +198,8 @@ fn write_answer(repo: &Path, dir: &Path, body: &str) -> Result<(), String> {
 /// at the folder's place now ([`state_dir::write_in`]).
 fn write_journal(repo: &Path, dir: &Path, title: &str, body: &str) -> Result<(), String> {
     let stamp = now_stamp();
-    state_dir::write_in(repo, dir, "JOURNAL.md", |path| {
-        let existing = std::fs::read_to_string(path).unwrap_or_default();
+    state_dir::write_in(repo, dir, "JOURNAL.md", |_, current| {
+        let existing = current.ok().flatten().unwrap_or_default();
         Ok(journal::insert_journal_entry(&existing, &stamp, title, body).into_bytes())
     })
     .map(|_| ())
@@ -254,19 +262,24 @@ pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
 
     // 0a. (0.2.5) The repository's own pre-finish checks, before anything is written or staged: a
     //     failing one refuses with nothing changed. `--skip-checks` goes on and says so.
-    let configured = checks::configured(repo).map_err(|e| {
-        FinishError::Other(format!(
-            "refusing to finish: the pre-finish checks cannot be read - {e}; fix the file or pass --skip-checks"
-        ))
-    });
+    let configured = checks::configured(repo);
     let check_outcome = if opts.skip_checks {
+        let (skipped, config_error) = match configured {
+            Ok(list) => (list, None),
+            Err(e) => (Vec::new(), Some(e)),
+        };
         ChecksOutcome {
-            skipped: configured.unwrap_or_default(),
+            skipped,
             skip_requested: true,
+            config_error,
             ..Default::default()
         }
     } else {
-        let list = configured?;
+        let list = configured.map_err(|e| {
+            FinishError::Other(format!(
+                "refusing to finish: the pre-finish checks cannot be read - {e}; fix the file or pass --skip-checks"
+            ))
+        })?;
         checks::run_all(&list, repo).map_err(FinishError::CheckFailed)?;
         ChecksOutcome {
             passed: list,
@@ -387,10 +400,10 @@ pub fn run_manifest(
     }
     let ensured = state_dir::ensure(repo_root, collab_root)?;
     // (S2, F36-1/F36-3) read and written at the folder's place now, never through a link
-    let path = state_dir::write_in(repo_root, &ensured.dir, name, |path| {
-        let current = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => manifest::initial_content(name),
+    let path = state_dir::write_in(repo_root, &ensured.dir, name, |path, current| {
+        let current = match current {
+            Ok(Some(s)) => s,
+            Ok(None) => manifest::initial_content(name),
             Err(e) => return Err(format!("read {}: {e}", path.display())),
         };
         manifest::apply(&current, action, content, section, target).map(String::into_bytes)

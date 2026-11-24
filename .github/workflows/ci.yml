@@ -26,7 +26,7 @@ jobs:
     name: ${{ matrix.os }} / default features
     runs-on: ${{ matrix.os }}
     # A hung test must not hold a runner for hours: the Windows job takes about 17 minutes.
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -64,18 +64,27 @@ jobs:
       # crate it was in, and `success() || failure()` runs every step after a failed one.
       - name: Test c3-core (default features)
         if: success() || failure()
+        # (F38-1) a hung step is stopped as FAILED with its log kept, and the next steps still run;
+        # the job-level limit alone cancels the job and leaves no log of the step that hung
+        timeout-minutes: 15
         run: cargo test -p c3-core --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
       - name: Test c3 (default features)
         if: success() || failure()
+        # (F38-1) a hung step is stopped as FAILED with its log kept, and the next steps still run;
+        # the job-level limit alone cancels the job and leaves no log of the step that hung
+        timeout-minutes: 15
         run: cargo test -p c3 --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
       - name: Test c3-cli (default features)
         if: success() || failure()
+        # (F38-1) a hung step is stopped as FAILED with its log kept, and the next steps still run;
+        # the job-level limit alone cancels the job and leaves no log of the step that hung
+        timeout-minutes: 25
         run: cargo test -p c3-cli --no-fail-fast ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
 
   index-surreal:
     name: ubuntu-latest / index-surreal
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
@@ -104,10 +113,19 @@ jobs:
       # step names c3's own feature (c3-core has none).
       - name: Test c3-core (index-surreal)
         if: success() || failure()
+        # (F38-1) a hung step is stopped as FAILED with its log kept, and the next steps still run;
+        # the job-level limit alone cancels the job and leaves no log of the step that hung
+        timeout-minutes: 15
         run: cargo test -p c3-core --no-fail-fast
       - name: Test c3 (index-surreal)
         if: success() || failure()
+        # (F38-1) a hung step is stopped as FAILED with its log kept, and the next steps still run;
+        # the job-level limit alone cancels the job and leaves no log of the step that hung
+        timeout-minutes: 15
         run: cargo test -p c3 --no-fail-fast --features c3/index-surreal
       - name: Test c3-cli (index-surreal)
         if: success() || failure()
+        # (F38-1) a hung step is stopped as FAILED with its log kept, and the next steps still run;
+        # the job-level limit alone cancels the job and leaves no log of the step that hung
+        timeout-minutes: 15
         run: cargo test -p c3-cli --no-fail-fast --features c3-cli/index-surreal

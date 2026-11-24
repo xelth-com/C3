@@ -1429,7 +1429,7 @@ fn close_removes_a_merged_branch_and_its_clean_worktree_and_refuses_the_rest() {
     let (code, _o, err) = run_c3(&repo, &["branches", "--close", "dirty"], &[]);
     assert_eq!(code, 1);
     assert!(
-        err.contains("uncommitted changes or untracked files"),
+        err.contains("holds 1 file(s) outside the committed tree") && err.contains("scratch.txt"),
         "{err}"
     );
     assert!(dirty.join("scratch.txt").exists() && branch_exists(&repo, "dirty"));
@@ -1482,5 +1482,153 @@ fn close_removes_a_merged_branch_and_its_clean_worktree_and_refuses_the_rest() {
 
     let _ = std::fs::remove_dir_all(&outside);
     let _ = std::fs::remove_dir_all(&wts);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (F46-3, F45-8) A merged branch whose worktree holds only ignored files (`.env`, build output) is
+// refused with the count and the names: `git worktree remove` would delete them unlisted. Nothing
+// is removed; once they are gone the branch closes.
+#[test]
+fn close_never_deletes_an_ignored_file_of_the_worktree() {
+    let repo = fixture_repo("close-ignored");
+    let wts = scratch_dir("close-ignored-wts");
+    let common = PathBuf::from(git_out(&repo, &["rev-parse", "--git-common-dir"]).trim());
+    let common = if common.is_absolute() {
+        common
+    } else {
+        repo.join(common)
+    };
+    std::fs::create_dir_all(common.join("info")).unwrap();
+    std::fs::write(common.join("info").join("exclude"), ".env\nbuild/\n").unwrap();
+    git(&repo, &["branch", "ignored-only"]);
+    let wt = wts.join("ignored-only");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            &wt.to_string_lossy(),
+            "ignored-only",
+        ],
+    );
+    std::fs::write(wt.join(".env"), "TOKEN=keep-me\n").unwrap();
+    std::fs::create_dir_all(wt.join("build")).unwrap();
+    std::fs::write(wt.join("build").join("out.bin"), "x").unwrap();
+    // git itself sees nothing to report without --ignored
+    assert_eq!(git_out(&wt, &["status", "--porcelain"]).trim(), "");
+    let (code, _o, err) = run_c3(&repo, &["branches", "--close", "ignored-only"], &[]);
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("holds 2 file(s) outside the committed tree") && err.contains(".env"),
+        "{err}"
+    );
+    assert!(err.contains("nothing removed"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(wt.join(".env")).unwrap(),
+        "TOKEN=keep-me\n"
+    );
+    assert!(wt.join("build").join("out.bin").exists());
+    assert!(branch_exists(&repo, "ignored-only"));
+    // once the ignored files are gone, the branch closes
+    std::fs::remove_file(wt.join(".env")).unwrap();
+    std::fs::remove_dir_all(wt.join("build")).unwrap();
+    let (code, out, err) = run_c3(&repo, &["branches", "--close", "ignored-only"], &[]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(!wt.exists() && !branch_exists(&repo, "ignored-only"));
+    let _ = std::fs::remove_dir_all(&wts);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// An obstacle to removing `file`: on Windows the file held open without delete sharing (the
+/// handle is returned; dropping it removes the obstacle), elsewhere its directory made read-only.
+#[cfg(windows)]
+fn obstruct(file: &Path) -> Option<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 0x1;
+    Some(
+        std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(file)
+            .unwrap(),
+    )
+}
+
+#[cfg(not(windows))]
+fn obstruct(file: &Path) -> Option<std::fs::File> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = file.parent().unwrap();
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    None
+}
+
+/// Remove the obstacle [`obstruct`] made.
+fn clear_obstacle(file: &Path, held: Option<std::fs::File>) {
+    drop(held);
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(
+            file.parent().unwrap(),
+            std::fs::Permissions::from_mode(0o755),
+        );
+    }
+    #[cfg(windows)]
+    let _ = file;
+}
+
+// (0.2.5 R7b, F43-6) A stale throwaway worktree whose removal meets an entry it cannot remove is
+// half removed: everything else goes, its `.git` file stays (removed last), the registration is
+// kept - `c3 doctor` still lists it - and `c3 doctor --fix` finishes it once the obstacle is gone.
+#[test]
+fn a_half_removed_throwaway_is_listed_and_finished_once_the_obstacle_is_gone() {
+    let repo = fixture_repo("kimi-half");
+    make_doctor_clean(&repo);
+    let (name, wt) = add_throwaway(&repo, 8);
+    write_owner(
+        &wt,
+        &format!("{} 1999-01-01T00:00:00.0000000Z\n", std::process::id()),
+    );
+    std::fs::create_dir_all(wt.join("sub")).unwrap();
+    let locked = wt.join("sub").join("locked.txt");
+    std::fs::write(&locked, "x\n").unwrap();
+    let held = obstruct(&locked);
+    let envs = [("C3_CONFIG", "none"), ("CODEX_CONSULT_ROSTER", "none")];
+
+    let (_c, out, err) = run_c3(&repo, &["doctor", "--fix"], &envs);
+    if !wt.exists() {
+        // (a superuser removes through a read-only directory: no obstacle to test here)
+        clear_obstacle(&locked, held);
+        eprintln!("skipped: the obstacle did not stop the removal (running as a superuser?)");
+        let _ = std::fs::remove_dir_all(&repo);
+        return;
+    }
+    assert!(
+        out.contains("[!] could not remove the stale c3 worktree") && out.contains(&name),
+        "{out}\n{err}"
+    );
+    assert!(locked.exists(), "the obstacle stays");
+    assert!(!wt.join("README.md").exists(), "the rest was removed");
+    assert!(wt.join(".git").is_file(), "the .git file is kept");
+    let list = git_out(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(list.contains(&name), "still registered: {list}");
+
+    let (code, out, _e) = run_c3(&repo, &["doctor"], &[("C3_CONFIG", "none")]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("[!] stale c3 worktree") && out.contains(&name),
+        "the half-removed worktree is listed: {out}"
+    );
+
+    clear_obstacle(&locked, held);
+    let (_c, out, err) = run_c3(&repo, &["doctor", "--fix"], &envs);
+    assert!(
+        out.contains("[fixed] removed the stale c3 worktree") && out.contains(&name),
+        "{out}\n{err}"
+    );
+    assert!(!wt.exists(), "the worktree is gone");
+    let list = git_out(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(!list.contains(&name), "{list}");
     let _ = std::fs::remove_dir_all(&repo);
 }

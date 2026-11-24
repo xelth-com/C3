@@ -62,8 +62,8 @@ forwarded=$(printf '%s\n' "$out" | tr -d '\r' | sed 's/[[:space:]]*$//' | awk '
 if [ -n "$forwarded" ]; then
   printf '%s\n' "$forwarded"
 else
-  # nothing carried a known prefix: the first non-empty line as it is, else a note
-  first=$(printf '%s\n' "$out" | tr -d '\r' | grep -m1 '.')
+  # nothing carried a known prefix: the first non-empty line cut at 400, else a note
+  first=$(printf '%s\n' "$out" | tr -d '\r' | grep -m1 '.' | cut -c1-400)
   if [ -z "$first" ]; then
     first="c3 hook exited $code without output"
   fi

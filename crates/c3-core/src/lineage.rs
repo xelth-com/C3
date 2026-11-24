@@ -90,7 +90,8 @@ pub struct EngineSpec {
     /// (grok only): a grok `--json-schema` turn can answer in one model call without ever
     /// calling `read_file`, and then invents the brief from its question numbers.
     pub inline_brief: bool,
-    /// (A1) The reviewer runs in a throwaway git worktree of HEAD, not in the live checkout (kimi):
+    /// (A1) The reviewer runs in a throwaway git worktree of HEAD, not in the live checkout (kimi;
+    /// (0.2.5 R8) agy):
     /// what is uncommitted in the live tree is not there. The bridge stages the brief into the
     /// worktree, refuses the seat before launch when the brief is neither committed nor stageable,
     /// and tells the reviewer which paths were uncommitted at launch.
@@ -219,8 +220,8 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             reply_source: "the result event's structured_output (else its response text)",
             thread_flag: "--conversation",
             thread_noun: "conversation",
-            read_only_note: "its --sandbox restricts the terminal only; the bridge's tree check fails a run that writes",
-            sandbox_record: "read-only (requested; enforced by evidence for tracked and untracked files and the collab directory, not for gitignored paths, submodules or files outside the repository; agy --sandbox restricts the terminal only)",
+            read_only_note: "its --sandbox restricts the terminal only; it runs in a throwaway worktree of HEAD and the bridge fails a run that writes there",
+            sandbox_record: "read-only (requested; agy runs in a throwaway worktree of HEAD and a write there fails the run - gitignored paths included, not files outside the worktree; agy --sandbox restricts the terminal only)",
             tools_line: "Tools: you may read files of the repository; you have NO permission to run commands in this consultation - never call run_command; make NO file changes; a check that needs a command belongs under `## Requested checks`.",
             steps_flag: "",
             denial_retry: true,
@@ -236,7 +237,9 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: false,
             crt_quote: false,
             inline_brief: false,
-            worktree_isolated: false,
+            // (0.2.5 R8, F51-1 / F52-1 / F53-2) its tool log cannot prove a read: the worktree's
+            // own before/after comparison is the evidence
+            worktree_isolated: true,
         }),
         "muse" => Some(EngineSpec {
             name: "muse",
@@ -964,12 +967,16 @@ mod tests {
         }
     }
 
-    // (A1) only the kimi engine reviews a throwaway worktree of HEAD.
+    // (A1; 0.2.5 R8) the kimi and agy engines review a throwaway worktree of HEAD, no other.
     #[test]
-    fn worktree_isolated_is_kimi_only() {
+    fn worktree_isolated_is_kimi_and_agy() {
         for name in ALL_ENGINE_NAMES {
             let spec = engine_spec(name).unwrap();
-            assert_eq!(spec.worktree_isolated, *name == "kimi", "engine {name}");
+            assert_eq!(
+                spec.worktree_isolated,
+                *name == "kimi" || *name == "agy",
+                "engine {name}"
+            );
         }
     }
 }

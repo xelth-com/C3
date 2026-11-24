@@ -362,6 +362,10 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
             if opt_bool(args, "skip_preflight") {
                 v.push("--skip-preflight".into());
             }
+            // (0.2.5 R8, F51-5 / F53-7) a one-revision diff carries untracked files only when asked
+            if opt_bool(args, "diff_untracked") {
+                v.push("--diff-untracked".into());
+            }
             if opt_bool(args, "off_peak_only") {
                 v.push("--off-peak-only".into());
             }
@@ -427,6 +431,15 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
             if let Some(n) = opt_i64(args, "timeout_sec") {
                 v.push("--timeout-sec".into());
                 v.push(n.to_string());
+            }
+            // (0.2.5 R8, F51-5 / F53-7) the change as a patch, syntax-checked like c3_consult's
+            if let Some(d) = opt_str(args, "diff") {
+                crate::consult::reviewed::parse_diff_spec(&d)?;
+                v.push("--diff".into());
+                v.push(d);
+            }
+            if opt_bool(args, "diff_untracked") {
+                v.push("--diff-untracked".into());
             }
             let dry_run = opt_bool(args, "dry_run");
             // detach defaults to true: a panel takes minutes and an MCP call must
@@ -968,7 +981,8 @@ fn tool_defs() -> Value {
                     "continue_sec": { "type": "integer", "description": "Timeout-continuation budget (-1 = min(timeout,900); 0 = none)." },
                     "range": { "type": "string", "description": "base..head or base...head (diff-review / acceptance only)." },
                     "rev": { "type": "string", "description": "Review this revision: the reviewer runs in a throwaway worktree of it (brief and task handoffs copied in)." },
-                    "diff": { "type": "string", "description": "base..head, base...head or one revision (against the working tree): `git diff` written as a patch into the task's handoffs and named in the prompt." },
+                    "diff": { "type": "string", "description": "base..head, base...head or one revision (against the working tree): `git diff` written as a patch into the task's handoffs and named in the prompt. One revision carries the tracked changes only; the untracked files left out are named in the reply's warnings." },
+                    "diff_untracked": { "type": "boolean", "description": "With a one-revision `diff`: carry the untracked, not ignored files in the patch too, with their content (redacted only where a value looks like a secret)." },
                     "artifact": { "type": "array", "items": { "type": "string" }, "description": "File(s) bound to the review (repo-relative)." },
                     "raw": { "type": "boolean", "description": "A plain-text consultation: no schema, no findings bookkeeping." },
                     "dry_run": { "type": "boolean", "description": "Print the plan and exit; writes nothing." },
@@ -1002,6 +1016,8 @@ fn tool_defs() -> Value {
                     "dry_run": { "type": "boolean", "description": "Print the plan and exit; writes nothing (default false)." },
                     "detach": { "type": "boolean", "description": "Run in the background and return at once. DEFAULT TRUE." },
                     "timeout_sec": { "type": "integer", "description": "Run timeout in seconds (0 = the purpose default)." },
+                    "diff": { "type": "string", "description": "base..head, base...head or one revision (against the working tree): `git diff` written as a patch into the task's handoffs and named in every member's prompt. One revision carries the tracked changes only; the untracked files left out are named in the warnings." },
+                    "diff_untracked": { "type": "boolean", "description": "With a one-revision `diff`: carry the untracked, not ignored files in the patch too, with their content (redacted only where a value looks like a secret)." },
                     "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
                 },
                 "required": ["task", "brief"]
@@ -1376,6 +1392,36 @@ mod tests {
         assert_eq!(argv[0], "providers");
         assert!(argv.contains(&"--short".to_string()));
         assert!(argv.contains(&"--no-network".to_string()));
+    }
+
+    // (0.2.5 R8, F51-5 / F53-7) c3_consult and c3_panel pass `diff_untracked` on as
+    // `--diff-untracked` (without it a one-revision diff carries the tracked changes only); the
+    // panel takes `diff` too, refused like the consult's when it is not a revision.
+    #[test]
+    fn consult_and_panel_pass_diff_untracked() {
+        let base = json!({ "task": "t", "purpose": "checkpoint", "brief": "b.md", "prompt": "p",
+            "reply_name": "r", "diff": "HEAD" });
+        let (argv, _t) = build_argv("c3_consult", &base).unwrap();
+        assert!(argv.contains(&"--diff".to_string()));
+        assert!(!argv.contains(&"--diff-untracked".to_string()), "{argv:?}");
+        let mut asked = base.clone();
+        asked["diff_untracked"] = json!(true);
+        let (argv, _t) = build_argv("c3_consult", &asked).unwrap();
+        assert!(argv.contains(&"--diff-untracked".to_string()), "{argv:?}");
+        let (argv, _t) = build_argv(
+            "c3_panel",
+            &json!({ "task": "t", "brief": "b.md", "diff": "HEAD", "diff_untracked": true }),
+        )
+        .unwrap();
+        let at = argv.iter().position(|a| a == "--diff").unwrap();
+        assert_eq!(argv[at + 1], "HEAD");
+        assert!(argv.contains(&"--diff-untracked".to_string()), "{argv:?}");
+        let err = build_argv(
+            "c3_panel",
+            &json!({ "task": "t", "brief": "b.md", "diff": "-c" }),
+        )
+        .unwrap_err();
+        assert!(err.starts_with("-Diff '"), "{err}");
     }
 
     #[test]

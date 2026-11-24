@@ -41,30 +41,32 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // (0.2.5, S1) the hook never moves C3's project folder, whatever collab path it looks at
     crate::state_dir::forbid_moves();
     // (0.2.5) every line goes out through `emit`: at most MAX_LINE_CHARS characters, cut at a
-    // character boundary - the SessionStart scripts forward the lines as they are
-    emit(&line(collab_dir));
-    emit(&pointer_line(explain_command));
+    // character boundary - the SessionStart scripts forward the lines as they are; (F46-8) a line
+    // printed before (its whole text) is not printed again
+    let mut out = Printed::default();
+    out.emit(&line(collab_dir));
+    out.emit(&pointer_line(explain_command));
     // (R30 wave-boundary compaction) after a compaction the coordinator has lost the in-context
     // memory of who it is coordinating; restore it from the record it would itself write
     // (CODEX_CONSULT_COORDINATOR, resolved against the roster) so it can pick its detached runs
     // (the first line already names them) back up. Printed ONLY for the `compact` source.
     if source.eq_ignore_ascii_case("compact") {
         if let Some(l) = compaction_line() {
-            emit(&l);
+            out.emit(&l);
         }
     }
     // (wave 11) one extra line when C3 has a newer release on record: the cache is refreshed if it
     // is stale (within the 3 s budget) and the check is on; any error, a disabled check or an
     // up-to-date install prints nothing, so startup/resume/compact output is otherwise unchanged.
     if let Some(l) = crate::update::hook_line(chrono::Utc::now()) {
-        emit(&l);
+        out.emit(&l);
     }
     // (c3 maintain) one extra line when a finished maintenance pass has not been reported yet; the
     // hook also starts a detached pass when one is due and the feature is on. Silent on any error,
     // nothing printed when there is nothing to say, so startup/resume/compact output is otherwise
     // unchanged and never blocked.
     if let Some(l) = crate::maintain::hook_line(chrono::Utc::now()) {
-        emit(&l);
+        out.emit(&l);
     }
     // (repo model settings) C3 repairs this repository's stale agent model pins and lets AGENTS.md
     // follow the roster's successor, printing one line only when it changed something or could not
@@ -72,7 +74,7 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // child. No process at all is started (the root is found by walking up to `.git`), nothing is
     // written outside the repo root, a file is replaced by rename, never written through.
     if let Some(l) = crate::setup::repo_models::hook_line() {
-        emit(&l);
+        out.emit(&l);
     }
     // (branches) one line when a branch or worktree has no recorded state, the default branch is
     // unknown, or the start folder is not on the default branch. Default ON (`C3_BRANCH_CHECK=off`
@@ -81,7 +83,7 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // git repository - and (0.2.5, F02-6) all of its git calls share ONE deadline: past it the line
     // is dropped, its git children are killed (R2, F13-5) and the hook goes on.
     if let Some(l) = branch_line_within(branch_line_deadline()) {
-        emit(&l);
+        out.emit(&l);
     }
     // (0.2.5, red CI) one line when the latest completed CI run of the default branch failed, read
     // through `gh`: at most one call per repository and day (the attempt is cached in C3's state
@@ -89,7 +91,7 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     // `"ci_check": false`, and inside a C3 child. (R4, F16-3) Every git and `gh` process of the check
     // runs under ONE deadline (`ci_check::HOOK_DEADLINE`, 3 s) and is killed when it fires.
     if let Some(l) = crate::ci_check::hook_line() {
-        emit(&l);
+        out.emit(&l);
     }
     0
 }
@@ -99,26 +101,58 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
 /// the lines as they are, so both print the same text whatever the line holds.
 pub const MAX_LINE_CHARS: usize = 400;
 
-/// The printed form of one line of the hook: carriage returns removed (`c3-hook.sh` drops every one,
-/// the `.ps1` would keep an inner one), trailing white space trimmed, and a line longer than
-/// [`MAX_LINE_CHARS`] characters cut at a character boundary to `MAX_LINE_CHARS - 3` characters with
-/// `...` appended - never longer than [`MAX_LINE_CHARS`].
-pub fn capped_line(text: &str) -> String {
+/// One line of the hook as a whole: carriage returns removed (`c3-hook.sh` drops every one, the
+/// `.ps1` would keep an inner one) and trailing white space trimmed.
+fn whole_line(text: &str) -> String {
     let clean: String = text.chars().filter(|c| *c != '\r').collect();
-    let clean = clean.trim_end();
+    clean.trim_end().to_string()
+}
+
+/// The printed form of one line of the hook ([`whole_line`]): a line longer than
+/// [`MAX_LINE_CHARS`] characters is cut at a character boundary and ends in `... #` and the first 8
+/// hex digits of the SHA-256 of the whole line - never longer than [`MAX_LINE_CHARS`]. (F46-8) Two
+/// lines that differ only past the cut stay two different lines, so the scripts' de-duplication
+/// (on the printed text) keeps both; the same line always prints the same.
+pub fn capped_line(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let clean = whole_line(text);
     if clean.chars().count() <= MAX_LINE_CHARS {
-        return clean.to_string();
+        return clean;
     }
-    let mut cut: String = clean.chars().take(MAX_LINE_CHARS - 3).collect();
-    cut.push_str("...");
+    let digest = Sha256::digest(clean.as_bytes());
+    let tag: String = digest[..4].iter().map(|b| format!("{b:02x}")).collect();
+    let suffix = format!("... #{tag}");
+    let mut cut: String = clean
+        .chars()
+        .take(MAX_LINE_CHARS - suffix.chars().count())
+        .collect();
+    cut.push_str(&suffix);
     cut
 }
 
-/// Print one hook message: each of its lines (a message is one line; an inner line break starts a
-/// line of its own) through [`capped_line`].
-fn emit(text: &str) {
-    for l in text.split('\n') {
-        println!("{}", capped_line(l));
+/// The lines `c3 hook` printed in this run, each as a whole ([`whole_line`]).
+#[derive(Default)]
+struct Printed {
+    seen: std::collections::HashSet<String>,
+}
+
+impl Printed {
+    /// Print one hook message: each of its lines (a message is one line; an inner line break starts
+    /// a line of its own) that was not printed before, through [`capped_line`].
+    fn emit(&mut self, text: &str) {
+        for l in self.lines(text) {
+            println!("{l}");
+        }
+    }
+
+    /// [`Printed::emit`]'s lines (F46-8): a line is a repeat when its WHOLE text was printed
+    /// before - compared before the cap, so lines that differ past the cut are both printed.
+    fn lines(&mut self, text: &str) -> Vec<String> {
+        text.split('\n')
+            .map(whole_line)
+            .filter(|w| self.seen.insert(w.clone()))
+            .map(|w| capped_line(&w))
+            .collect()
     }
 }
 
@@ -394,20 +428,53 @@ mod tests {
         let ascii = format!("c3: {}", "x".repeat(600));
         let cut = capped_line(&ascii);
         assert_eq!(cut.chars().count(), MAX_LINE_CHARS);
-        assert_eq!(cut, format!("c3: {}...", "x".repeat(393)));
+        let (head, tag) = cut.split_once("... #").unwrap();
+        assert_eq!(head, format!("c3: {}", "x".repeat(383)));
+        assert!(
+            tag.len() == 8 && tag.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{tag}"
+        );
         // non-ASCII: two-byte letters and four-byte emoji (two UTF-16 units each) count once
         let wide = format!("c3: {}{}", "ü".repeat(300), "\u{1F600}".repeat(200));
         let cut = capped_line(&wide);
         assert_eq!(cut.chars().count(), MAX_LINE_CHARS);
-        assert_eq!(
-            cut,
-            format!("c3: {}{}...", "ü".repeat(300), "\u{1F600}".repeat(93))
+        assert!(
+            cut.starts_with(&format!(
+                "c3: {}{}... #",
+                "ü".repeat(300),
+                "\u{1F600}".repeat(83)
+            )),
+            "{cut}"
         );
         // exactly 400 characters: unchanged, even when that is 1600 bytes
         let full = "\u{1F600}".repeat(MAX_LINE_CHARS);
         assert_eq!(capped_line(&full), full);
         // carriage returns go, trailing white space is trimmed
         assert_eq!(capped_line("c3: a\rb  \r"), "c3: ab");
+    }
+
+    // (F46-8) De-duplication compares whole lines BEFORE the cap: two lines that share their first
+    // 397 characters and differ after are both printed - and print as two different lines, so the
+    // scripts (which de-duplicate the printed text) forward both; a repeated whole line is printed
+    // once.
+    #[test]
+    fn lines_that_differ_past_the_cut_are_both_printed() {
+        let common = format!("c3: {}", "x".repeat(393));
+        let a = format!("{common}-first tail");
+        let b = format!("{common}-second tail");
+        let mut out = Printed::default();
+        let printed = out.lines(&format!("{a}\n{b}\n{a}"));
+        assert_eq!(printed.len(), 2, "{printed:?}");
+        assert_ne!(printed[0], printed[1]);
+        assert!(printed
+            .iter()
+            .all(|l| l.chars().count() == MAX_LINE_CHARS && l.starts_with(&common[..380])));
+        // a later message repeating a whole line prints nothing; a short new one prints
+        assert!(out.lines(&b).is_empty());
+        assert_eq!(out.lines("c3: fine \r"), vec!["c3: fine".to_string()]);
+        assert!(out.lines("c3: fine").is_empty());
+        // the same whole line always prints the same
+        assert_eq!(capped_line(&a), capped_line(&a));
     }
 
     // (0.2.5) The branch line's deadline has a test-mode override; without the mode it is ignored.

@@ -130,6 +130,7 @@ pub fn run(args: FinishArgs) -> i32 {
                         "passed": r.checks.passed,
                         "skipped": r.checks.skip_requested,
                         "not_run": r.checks.skipped,
+                        "config_error": r.checks.config_error,
                     },
                 });
                 println!("{obj}");

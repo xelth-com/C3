@@ -1306,11 +1306,15 @@ fn a_brief_committed_at_head_but_not_in_the_live_tree_is_taken_from_the_revision
     // (0.2.5 D1, F10-3 / F11-4) the brief is committed at HEAD and DELETED from the live tree: the
     // entry check no longer refuses the run - the reviewer reads its worktree, where the staging
     // materialises the committed brief - and the handoff says the brief was taken from the
-    // revision. A brief committed nowhere is still refused before anything starts.
+    // revision. A brief committed nowhere is still refused before anything starts. (0.2.5 R8,
+    // F51-2) The handoff names the full sha of the commit the staging took the brief from, and the
+    // record's brief sha256 is the one of the bytes it staged.
     let e = setup("brief-from-rev");
     std::fs::write(e.repo.join("brief.md"), "# Committed brief\n").unwrap();
     git(&e.repo, &["add", "-A"]);
     git(&e.repo, &["commit", "-q", "-m", "brief"]);
+    let head = git_out(&e.repo, &["rev-parse", "HEAD"]);
+    let blob = git_out(&e.repo, &["rev-parse", "HEAD:brief.md"]);
     std::fs::remove_file(e.repo.join("brief.md")).unwrap();
     let o = e.consult(
         &[
@@ -1343,9 +1347,23 @@ fn a_brief_committed_at_head_but_not_in_the_live_tree_is_taken_from_the_revision
     let handoff = std::fs::read_to_string(e.repo.join(".collab").join("t").join(reply_rel))
         .unwrap_or_default();
     assert!(
-        handoff
-            .contains("Taken from the committed revision HEAD (the live tree does not hold it)."),
+        handoff.contains(&format!(
+            "Taken from the committed revision {} (the live tree does not hold it).",
+            head.trim()
+        )),
         "{handoff}"
+    );
+    let staged = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&e.repo)
+        .args(["cat-file", "blob", blob.trim()])
+        .output()
+        .unwrap()
+        .stdout;
+    assert_eq!(
+        l["brief_sha256"].as_str().unwrap_or(""),
+        c3_core::sha256_hex(&staged),
+        "{l}"
     );
     assert!(
         !e.repo.join("brief.md").exists(),

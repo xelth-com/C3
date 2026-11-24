@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 fn c3_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_c3"))
@@ -642,11 +642,10 @@ fn fake_agy_cmd() -> String {
         "if \"%~1\"==\"models\" goto models".to_string(),
         "more >nul".to_string(),
         // The tool step's tool name (FAKE_AGY_TOOL_NAME, default run_command): the stall tests use a
-        // read-only tool so the read-only tree check does not fail them, while the writing-tool test
-        // leaves the default.
+        // read-only tool so the tree check has nothing to say about them.
         "if not defined FAKE_AGY_TOOL_NAME set FAKE_AGY_TOOL_NAME=run_command".to_string(),
-        // (F10-1) the tool step's logged parameters (FAKE_AGY_TOOL_PARAMS, default a command line):
-        // a reader carrying a command counts as writing, so the read-only runs pass a path.
+        // The tool step's logged parameters (FAKE_AGY_TOOL_PARAMS, default a command line): (0.2.5
+        // R8) recorded only - a step is judged by its tool's name.
         r#"if not defined FAKE_AGY_TOOL_PARAMS set FAKE_AGY_TOOL_PARAMS={"CommandLine":"cargo build"}"#
             .to_string(),
         format!(
@@ -664,8 +663,9 @@ fn fake_agy_cmd() -> String {
             r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"DONE","step_type":"tool","tool_name":"%FAKE_AGY_TOOL_NAME%"}}}}"#
         ),
         ":result".to_string(),
-        // (A1, F11-1) FAKE_AGY_TOUCH=<path>: a file appears in the tree during the run, written by
-        // the launcher itself with no tool event - who wrote it cannot be told from the log.
+        // (A1, F11-1) FAKE_AGY_TOUCH=<path>: a file appears during the run, written by the launcher
+        // itself with no tool event - who wrote it cannot be told from the log. (0.2.5 R8) A relative
+        // path lands in agy's working directory - its throwaway worktree.
         "if defined FAKE_AGY_TOUCH echo touched>\"%FAKE_AGY_TOUCH%\"".to_string(),
         format!(
             r#"echo {{"event":"result","result":{{"conversation_id":"{ID}","status":"SUCCESS","response":"advise","duration_seconds":1.0,"num_turns":1,"structured_output":{ADVISE},"usage":{{"input_tokens":100,"output_tokens":10,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":110}}}}}}"#
@@ -843,7 +843,7 @@ fn agy_quiet_tool_run(e: &Env, tag: &str, pings: &str) -> Output {
             ("PATH", &path),
             ("FAKE_AGY_TOOL_PINGS", pings),
             // A read-only tool: the stall mechanic is what these tests exercise, not the read-only
-            // tree check, so the tool must not trip the writing-tool fail (Muse, review-2026-10-30).
+            // tree check (Muse, review-2026-10-30).
             ("FAKE_AGY_TOOL_NAME", "read_file"),
             ("FAKE_AGY_TOOL_PARAMS", r#"{"Path":"app.txt"}"#),
         ],
@@ -881,126 +881,144 @@ fn an_agy_stall_names_the_open_tool_step() {
     assert_eq!(last["stall"]["seconds"], 3);
 }
 
-// (Muse, review-2026-10-30, item 6) agy that calls a WRITING tool (run_command) FAILS the run even
-// when the working tree and collab dir did not change: its write may have landed in a path the
-// monitored compare ignores, so a clean compare must not let it pass.
-#[test]
-fn an_agy_writing_tool_call_fails_a_clean_run() {
-    let e = setup("agywrite");
+/// An agy run of the fake (no stall bound in play) with `env` on top of the PATH without agy.
+fn agy_run(e: &Env, tag: &str, extra: &[&str], env: &[(&str, &str)]) -> Output {
     let agy = e.fake_agy();
     let path = path_without_agy();
-    let x = e.consult(
-        &[
-            "--provider",
-            "gemini",
-            "--engine",
-            "agy",
-            "--model",
-            "gemini-3.8-flash-high",
-            "--engine-exe",
-            &agy,
-            "--reply-name",
-            "aw",
-            "--stall-sec",
-            "30",
-            "--continue-sec",
-            "0",
-        ],
-        // run_command (the default) completes quickly (no stall); the tree is untouched.
-        &[("PATH", &path), ("FAKE_AGY_TOOL_PINGS", "2")],
-    );
-    let t = text(&x);
-    assert_eq!(x.status.code(), Some(1), "{t}");
-    let last = e.last();
-    let o = last["bridge_outcome"].as_str().unwrap_or("");
-    assert!(o.contains("a writing tool was called: run_command"), "{o}");
+    let mut args: Vec<&str> = vec![
+        "--provider",
+        "gemini",
+        "--engine",
+        "agy",
+        "--model",
+        "gemini-3.8-flash-high",
+        "--engine-exe",
+        agy.as_str(),
+        "--reply-name",
+        tag,
+        "--continue-sec",
+        "0",
+    ];
+    args.extend_from_slice(extra);
+    let mut vars = vec![("PATH", path.as_str())];
+    vars.extend_from_slice(env);
+    e.consult(&args, &vars)
 }
 
-// (A1, xelixir panel be3d155b; F11-1) a file appears in the working tree while agy runs - the fake
-// launcher writes it itself, with no tool event, as a write missing from agy's log would look; agy's
-// own tool log shows no writing step and its reply is complete and schema-valid: the change is a
-// WARNING ("reply kept"), the run is usable and its ledger entry is written. The warning calls the
-// change UNATTRIBUTED - the log cannot prove who made it, so it never says "someone else's".
+// (0.2.5 R8, F51-1 / F52-1 / F53-2) agy's steps are judged by the tool's NAME: a reader on the
+// allow-list is a reader whatever its parameters carry (`read_file` with `path = "rm -rf x"`), an
+// unknown tool and a command tool are writers. The classification is recorded
+// (`tree_check.writing_tools`) and does not decide the run: agy reviews a throwaway worktree, and a
+// writing tool beside an unchanged worktree is a warning - the reply is kept.
 #[test]
-fn an_agy_tree_change_with_a_complete_reply_is_kept_as_an_unattributed_warning() {
-    let e = setup("agykept");
-    let agy = e.fake_agy();
-    let path = path_without_agy();
-    let touched = e.repo.join("edited-by-a-worker.txt");
-    let touched_s = touched.to_string_lossy().to_string();
-    let x = e.consult(
+fn agy_steps_are_judged_by_the_tools_name_and_an_unchanged_worktree_keeps_the_reply() {
+    let e = setup("agyname");
+    let x = agy_run(
+        &e,
+        "ar",
+        &[],
         &[
-            "--provider",
-            "gemini",
-            "--engine",
-            "agy",
-            "--model",
-            "gemini-3.8-flash-high",
-            "--engine-exe",
-            &agy,
-            "--reply-name",
-            "ak",
-            "--continue-sec",
-            "0",
+            ("FAKE_AGY_TOOL_PINGS", "2"),
+            ("FAKE_AGY_TOOL_NAME", "read_file"),
+            ("FAKE_AGY_TOOL_PARAMS", r#"{"path":"rm -rf x"}"#),
         ],
-        // no tool step at all (the reply comes in the result event), and the tree changes.
-        &[("PATH", &path), ("FAKE_AGY_TOUCH", &touched_s)],
     );
     let t = text(&x);
-    assert!(touched.exists(), "the fake touched the tree");
+    assert_eq!(x.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert_eq!(last["bridge_outcome"], "usable reply", "{t}");
+    assert_eq!(last["worktree"]["reason"], "engine", "{last}");
+    assert_eq!(last["tree_check"]["outcome"], "clean", "{last}");
+    assert!(last["tree_check"].get("writing_tools").is_none(), "{last}");
+    for (tag, tool, params) in [
+        ("au", "open_notes", r#"{"Path":"notes.md"}"#),
+        ("aw", "run_command", r#"{"CommandLine":"cargo build"}"#),
+    ] {
+        let x = agy_run(
+            &e,
+            tag,
+            &[],
+            &[
+                ("FAKE_AGY_TOOL_PINGS", "2"),
+                ("FAKE_AGY_TOOL_NAME", tool),
+                ("FAKE_AGY_TOOL_PARAMS", params),
+            ],
+        );
+        let t = text(&x);
+        assert_eq!(x.status.code(), Some(0), "{tool}: {t}");
+        let last = e.last();
+        assert_eq!(last["bridge_outcome"], "usable reply", "{tool}: {t}");
+        assert_eq!(last["tree_check"]["outcome"], "warned", "{last}");
+        assert_eq!(last["tree_check"]["writing_tools"], json!([tool]), "{last}");
+        assert!(
+            warnings(&last).iter().any(|w| w
+                == &format!("agy's tool log names a writing tool ({tool}), but its throwaway worktree is unchanged - reply kept")),
+            "{last}"
+        );
+    }
+}
+
+// (0.2.5 R8) agy writes in its throwaway worktree (the fake launcher writes a file into its working
+// directory, with no tool event - a write missing from agy's log): the worktree's own comparison
+// fails the run, class permission; the live checkout never sees the file.
+#[test]
+fn an_agy_write_in_its_worktree_fails_the_run() {
+    let e = setup("agywt");
+    let x = agy_run(&e, "ak", &[], &[("FAKE_AGY_TOUCH", "written-by-agy.txt")]);
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{t}");
+    assert!(!e.repo.join("written-by-agy.txt").exists());
+    let last = e.last();
+    let o = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        o.starts_with("failed: the reviewer's throwaway worktree changed during the run: 1 file: written-by-agy.txt"),
+        "{o}\n{t}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "permission", "{last}");
+    assert_eq!(last["tree_check"]["outcome"], "failed", "{last}");
+}
+
+// (0.2.5 R8) the LIVE checkout changes while agy runs in its throwaway worktree - a new file, and the
+// brief the review is bound to: neither is the reviewer's, the reviewer read the copy staged at
+// launch, so both are warnings and the complete reply is kept.
+#[test]
+fn a_live_tree_change_during_an_agy_run_is_only_a_warning() {
+    let e = setup("agylive");
+    let touched = e.repo.join("edited-by-a-worker.txt");
+    let touched_s = touched.to_string_lossy().to_string();
+    let x = agy_run(&e, "al", &[], &[("FAKE_AGY_TOUCH", &touched_s)]);
+    let t = text(&x);
+    assert!(touched.exists(), "the fake touched the live tree");
     assert_eq!(x.status.code(), Some(0), "{t}");
     let last = e.last();
     assert_eq!(last["bridge_outcome"], "usable reply", "{t}");
     assert_eq!(last["tree_check"]["outcome"], "warned", "{last}");
     assert!(
-        t.contains("the working tree changed during the run")
-            && t.contains("agy's event stream named no tool call, the change is unattributed")
-            && t.contains("reply kept"),
-        "the warning says the reply was kept and the change unattributed: {t}"
+        t.contains("the main working tree changed during the run")
+            && t.contains(
+                "the reviewer ran in a throwaway worktree, the change is not the reviewer's"
+            ),
+        "{t}"
     );
-    assert!(!t.contains("not the reviewer's"), "{t}");
-}
-
-// (F11-2) the BRIEF the review is bound to changes while agy reads it (the reviewer's Verify): a
-// complete, schema-valid reply is NOT recorded as usable - the outcome is a failure naming the
-// changed input, class permission (as a failed read-only check), the raw reply kept.
-#[test]
-fn an_agy_run_whose_brief_changed_is_not_recorded_as_usable() {
-    let e = setup("agybound");
-    let agy = e.fake_agy();
-    let path = path_without_agy();
     let brief = e.repo.join("brief.md");
     std::fs::write(&brief, "# Brief\n\n1. Is app.txt fine?\n").unwrap();
     let brief_s = brief.to_string_lossy().to_string();
-    let x = e.consult(
-        &[
-            "--provider",
-            "gemini",
-            "--engine",
-            "agy",
-            "--model",
-            "gemini-3.8-flash-high",
-            "--engine-exe",
-            &agy,
-            "--reply-name",
-            "ab",
-            "--brief",
-            "brief.md",
-            "--continue-sec",
-            "0",
-        ],
-        &[("PATH", &path), ("FAKE_AGY_TOUCH", &brief_s)],
+    let y = agy_run(
+        &e,
+        "ab",
+        &["--brief", "brief.md"],
+        &[("FAKE_AGY_TOUCH", &brief_s)],
     );
-    let t = text(&x);
-    assert_eq!(x.status.code(), Some(1), "{t}");
+    let ty = text(&y);
+    assert_eq!(y.status.code(), Some(0), "{ty}");
     let last = e.last();
-    let o = last["bridge_outcome"].as_str().unwrap_or("");
+    assert_eq!(last["bridge_outcome"], "usable reply", "{ty}");
     assert!(
-        o.starts_with("failed: a bound input changed during the run: the brief `brief.md`"),
-        "{o}\n{t}"
+        ty.contains(
+            "the brief changed during the run (the reviewer read the copy staged at launch)"
+        ),
+        "{ty}"
     );
-    assert_eq!(last["provider_failure"]["class"], "permission", "{last}");
-    assert_eq!(last["tree_check"]["outcome"], "failed", "{last}");
 }
 
 // (0.2.5 D1, F11-2) the same rule for codex, which reads the LIVE brief too: the brief changes

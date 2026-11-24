@@ -22,7 +22,7 @@
 
 use std::path::Path;
 
-use crate::setup::repo_models::{edit_refusal, replace_file, Edit};
+use crate::setup::repo_models::{edit_refusal, read_candidate, replace_file, Candidate, Edit};
 
 /// The rule file, relative to the repository root.
 pub const DELEGATION_RULE: &str = ".claude/rules/02-delegation.md";
@@ -121,14 +121,25 @@ pub fn with_branches_section(content: &str) -> Option<String> {
     Some(out)
 }
 
-/// Read the delegation rule of `repo_root` and classify it (the only I/O of a scan).
+/// (0.2.5 R7b, F43-5) A rules file read the way the repair reaches it: through handles from the
+/// repository root, nothing on the way followed ([`read_candidate`]).
+fn read_rules_file(repo_root: &Path, file: &str) -> Candidate {
+    match crate::contain::Root::open_anchor(repo_root) {
+        Ok(root) => read_candidate(&root, file),
+        Err(_) => Candidate::Absent,
+    }
+}
+
+/// Read the delegation rule of `repo_root` and classify it (the only I/O of a scan). (0.2.5 R7b,
+/// F43-5) Read through handles: a file behind a link is not read (`Absent` here; `c3 doctor --fix`
+/// reports the link with the repair's refusal).
 pub fn scan(repo_root: &Path) -> RuleStatus {
-    match std::fs::read(repo_root.join(DELEGATION_RULE)) {
-        Ok(bytes) => match std::str::from_utf8(&bytes) {
+    match read_rules_file(repo_root, DELEGATION_RULE) {
+        Candidate::Bytes(bytes) => match std::str::from_utf8(&bytes) {
             Ok(text) => status_of(text),
             Err(_) => RuleStatus::Absent,
         },
-        Err(_) => RuleStatus::Absent,
+        _ => RuleStatus::Absent,
     }
 }
 
@@ -139,14 +150,26 @@ pub struct RuleRepair {
     pub fixed: Option<String>,
     /// The repair that was due and could not be made: `(file, why)`; the file is as it was.
     pub problem: Option<(String, String)>,
+    /// (0.2.5) The rule file was not read because a link is on its way: `(file, why)`. Not a
+    /// problem by itself - nothing behind a link is read or written, so no repair is known to be
+    /// due; `c3 doctor` names it and stays clean.
+    pub unread: Option<(String, String)>,
 }
 
 /// Append the missing section to a rule file C3 wrote. Does nothing for a file that has the section,
-/// that the user rewrote, or that does not exist. The caller keeps this out of a C3 child.
+/// that the user rewrote, or that does not exist. The caller keeps this out of a C3 child. (0.2.5
+/// R7b, F43-5) A link on the way to the file is reported with the edit path's refusal and nothing
+/// is read through it.
 pub fn repair_delegation_rule(repo_root: &Path) -> RuleRepair {
-    let path = repo_root.join(DELEGATION_RULE);
-    let Ok(snapshot) = std::fs::read(&path) else {
-        return RuleRepair::default();
+    let snapshot = match read_rules_file(repo_root, DELEGATION_RULE) {
+        Candidate::Bytes(b) => b,
+        Candidate::Refused(why) => {
+            return RuleRepair {
+                unread: Some((DELEGATION_RULE.to_string(), why)),
+                ..RuleRepair::default()
+            }
+        }
+        Candidate::Absent => return RuleRepair::default(),
     };
     let Ok(content) = std::str::from_utf8(&snapshot) else {
         return RuleRepair::default();
@@ -167,11 +190,11 @@ pub fn repair_delegation_rule(repo_root: &Path) -> RuleRepair {
     match result {
         Ok(()) => RuleRepair {
             fixed: Some(DELEGATION_RULE.to_string()),
-            problem: None,
+            ..RuleRepair::default()
         },
         Err(why) => RuleRepair {
-            fixed: None,
             problem: Some((DELEGATION_RULE.to_string(), why)),
+            ..RuleRepair::default()
         },
     }
 }
@@ -275,7 +298,8 @@ pub fn state_sentence_status(file: &str, content: &str) -> StateSentenceFinding 
 pub fn scan_state_sentences(repo_root: &Path) -> Vec<StateSentenceFinding> {
     let mut v = Vec::new();
     for file in state_sentence_files() {
-        let Ok(bytes) = std::fs::read(repo_root.join(file)) else {
+        // (0.2.5 R7b, F43-5) through handles: a file behind a link is not read
+        let Candidate::Bytes(bytes) = read_rules_file(repo_root, file) else {
             continue;
         };
         let Ok(text) = std::str::from_utf8(&bytes) else {
@@ -296,6 +320,9 @@ pub struct StateSentenceRepair {
     pub fixed: Vec<String>,
     /// The repairs that were due and could not be made: `(file, why)`; the file is as it was.
     pub problems: Vec<(String, String)>,
+    /// (0.2.5) The files that were not read because a link is on their way: `(file, why)`. Not
+    /// problems by themselves (see [`RuleRepair::unread`]).
+    pub unread: Vec<(String, String)>,
 }
 
 /// Replace the old template sentences naming `.eck/` with the current ones - exactly those lines,
@@ -304,9 +331,14 @@ pub struct StateSentenceRepair {
 pub fn repair_state_sentences(repo_root: &Path) -> StateSentenceRepair {
     let mut out = StateSentenceRepair::default();
     for file in state_sentence_files() {
-        let path = repo_root.join(file);
-        let Ok(snapshot) = std::fs::read(&path) else {
-            continue;
+        // (0.2.5 R7b, F43-5) through handles: a link on the way is reported, never read through
+        let snapshot = match read_rules_file(repo_root, file) {
+            Candidate::Bytes(b) => b,
+            Candidate::Refused(why) => {
+                out.unread.push((file.to_string(), why));
+                continue;
+            }
+            Candidate::Absent => continue,
         };
         let Ok(content) = std::str::from_utf8(&snapshot) else {
             continue;
@@ -413,6 +445,53 @@ mod tests {
         assert_eq!(fixed.trim_end(), want.trim_end());
         // idempotent
         assert_eq!(with_branches_section(&fixed), None);
+    }
+
+    // (0.2.5 R7b, F43-5) A linked `.claude/rules` (a junction on Windows, a symlink elsewhere) is
+    // never read through: the scans see nothing, each repair reports the link with the edit path's
+    // refusal, and the files behind it keep their bytes.
+    #[test]
+    fn a_linked_rules_directory_is_never_read_and_its_repairs_are_refused() {
+        let base =
+            std::env::temp_dir().join(format!("c3-rules-link-{}", uuid::Uuid::new_v4().simple()));
+        let repo = base.join("repo");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(repo.join(".claude")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let old = old_file();
+        let (_, sentence, _) = STATE_SENTENCES[0];
+        std::fs::write(outside.join("02-delegation.md"), &old).unwrap();
+        std::fs::write(outside.join("01-c3-protocol.md"), format!("{sentence}\n")).unwrap();
+        let link = repo.join(".claude").join("rules");
+        crate::contain::tests::junction_or_symlink(&link, &outside);
+        assert_eq!(scan(&repo), RuleStatus::Absent);
+        assert!(scan_state_sentences(&repo).is_empty());
+        let r = repair_delegation_rule(&repo);
+        assert!(r.problem.is_none(), "a link is not a failed repair: {r:?}");
+        let (file, why) = r.unread.expect("the link is named");
+        assert_eq!(file, DELEGATION_RULE);
+        assert!(
+            why.starts_with(".claude/rules is a link") && why.ends_with("- not edited"),
+            "{why}"
+        );
+        let s = repair_state_sentences(&repo);
+        assert!(s.fixed.is_empty());
+        assert!(s.problems.is_empty(), "{s:?}");
+        assert_eq!(s.unread.len(), 2, "{s:?}");
+        assert!(s
+            .unread
+            .iter()
+            .all(|(_, why)| why.starts_with(".claude/rules is a link")));
+        assert_eq!(
+            std::fs::read_to_string(outside.join("02-delegation.md")).unwrap(),
+            old
+        );
+        assert_eq!(
+            std::fs::read_to_string(outside.join("01-c3-protocol.md")).unwrap(),
+            format!("{sentence}\n")
+        );
+        let _ = std::fs::remove_dir(&link).or_else(|_| std::fs::remove_file(&link));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

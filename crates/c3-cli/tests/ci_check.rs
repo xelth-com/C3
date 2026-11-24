@@ -505,7 +505,7 @@ fn without_origin_head_the_check_asks_github_for_the_default_branch() {
         .replace('"', "");
     assert!(
         log.lines()
-            .any(|l| l.trim() == "repo view --json defaultBranchRef"),
+            .any(|l| l.trim() == "repo view example/c3-ci-test --json defaultBranchRef"),
         "{log}"
     );
     assert!(log.contains(&asked("develop")), "{log}");
@@ -615,6 +615,71 @@ fn a_github_path_on_another_host_is_no_github_remote() {
     assert!(!out.contains("CI:"), "{out}");
     assert_eq!(e.calls(), 0, "gh ran for a non-GitHub host");
     let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (F46-4, F45-3) `GH_REPO` / `GH_HOST` naming another repository do not steer the check: both gh
+// calls name THIS checkout's repository (`origin`'s); with two different GitHub remotes and no
+// `origin`, gh is not started at all.
+#[test]
+fn the_check_asks_about_this_repository_whatever_gh_repo_says() {
+    let e = Env::new("finish-ghrepo");
+    let repo = scratch_repo_bare_remote("finish-ghrepo", true);
+    e.reply(RED);
+    let repo_json = e.root.join("repo.json");
+    std::fs::write(&repo_json, r#"{"defaultBranchRef":{"name":"main"}}"#).unwrap();
+    let repo_json_s = repo_json.to_string_lossy().to_string();
+    let extra = [
+        ("GH_FAKE_REPO_JSON", repo_json_s.as_str()),
+        ("GH_REPO", "someone-else/elsewhere"),
+        ("GH_HOST", "ghe.example.invalid"),
+    ];
+    let (code, out, err) = finish(&e, &repo, &extra, false);
+    assert_eq!(code, 0, "{out}\n{err}");
+    let log = std::fs::read_to_string(&e.log)
+        .unwrap_or_default()
+        .replace('"', "");
+    let calls: Vec<&str> = log
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(calls.len(), 2, "{log}");
+    assert_eq!(
+        calls[0],
+        "repo view example/c3-ci-test --json defaultBranchRef"
+    );
+    assert!(calls[1].contains(&asked("main")), "{log}");
+    assert!(calls[1].ends_with(" -R example/c3-ci-test"), "{log}");
+    assert!(out.lines().any(|l| l == RED_LINE), "{out}");
+
+    // no origin, two different GitHub remotes: no check
+    let e2 = Env::new("finish-ghrepo-two");
+    let two = scratch_repo("finish-ghrepo-two", false);
+    git(
+        &two,
+        &[
+            "remote",
+            "add",
+            "fork",
+            "https://github.com/me/c3-ci-test.git",
+        ],
+    );
+    git(
+        &two,
+        &[
+            "remote",
+            "add",
+            "upstream",
+            "https://github.com/example/c3-ci-test.git",
+        ],
+    );
+    e2.reply(RED);
+    let (code, out, err) = finish(&e2, &two, &[], false);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(!out.contains("CI:"), "{out}");
+    assert_eq!(e2.calls(), 0, "gh ran without a repository to name");
+    let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_dir_all(&two);
 }
 
 // (R4, F16-3) A `gh` that stalls cannot hold `c3 finish` past the check's one deadline (10 s for

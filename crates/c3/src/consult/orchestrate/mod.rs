@@ -374,6 +374,8 @@ struct Secondary {
     tree_check_outcome: String,
     /// The changed files the tree check named (for `tree_check{}`).
     tree_check_files: Vec<String>,
+    /// (0.2.5 R8) The writing tools an agy run's log names (`tree_check.writing_tools`).
+    tree_check_writing: Vec<String>,
     /// The engine turn warnings (denial notices, engine stderr warnings) — the ledger `warnings`
     /// of an engine run and the `warning    : ...` summary lines.
     engine_warnings: Vec<String>,
@@ -431,46 +433,151 @@ struct Drift {
     artifacts: Vec<serde_json::Value>,
     /// The `path`s whose sha256 changed during the review (drives the WARNING + the flag).
     artifacts_changed_paths: Vec<String>,
+    /// (0.2.5 R8, F51-4) The bound inputs (the brief, artifacts) that could not be re-read after
+    /// the run: a warning naming them, never a change.
+    bound_unreadable: Vec<String>,
+}
+
+/// The brief/artifact half of [`Drift`] ([`brief_artifact_drift`]).
+#[derive(Debug, Default)]
+struct BoundDrift {
+    brief_sha_after: String,
+    brief_changed: bool,
+    artifacts: Vec<serde_json::Value>,
+    artifacts_changed_paths: Vec<String>,
+    /// (0.2.5 R8, F51-4) What could not be re-read (`the brief `b.md``, `the artifact `a.rs``).
+    unreadable: Vec<String>,
+}
+
+impl BoundDrift {
+    /// Put this half into `drift`.
+    fn apply(self, drift: &mut Drift) {
+        drift.brief_sha_after = self.brief_sha_after;
+        drift.brief_changed = self.brief_changed;
+        drift.artifacts = self.artifacts;
+        drift.artifacts_changed_paths = self.artifacts_changed_paths;
+        drift.bound_unreadable = self.unreadable;
+    }
+}
+
+/// How many times the post-run re-hash retries a failed read, and how long it waits between tries.
+const REREAD_RETRIES: u32 = 3;
+const REREAD_PAUSE: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// What the post-run re-read of a bound input found.
+enum Reread {
+    Bytes(Vec<u8>),
+    /// The file is not there (after every retry): a bound input that was deleted during the run
+    /// is a CHANGED input, not an unreadable one.
+    Missing,
+    /// It is there and cannot be read (a lock, a scanner holding it).
+    Unreadable,
+}
+
+/// (0.2.5 R8, F51-4) Read a bound input for the post-run re-hash: a failed read (a lock, a scanner
+/// holding the file, a file replaced while it is read) is retried [`REREAD_RETRIES`] times,
+/// [`REREAD_PAUSE`] apart. The answer of the last try decides between "not there" and "cannot be
+/// read".
+fn reread(p: &Path) -> Reread {
+    let mut missing = false;
+    for attempt in 0..=REREAD_RETRIES {
+        if attempt > 0 {
+            std::thread::sleep(REREAD_PAUSE);
+        }
+        match std::fs::read(p) {
+            Ok(b) => return Reread::Bytes(b),
+            Err(e) => missing = e.kind() == std::io::ErrorKind::NotFound,
+        }
+    }
+    if missing {
+        Reread::Missing
+    } else {
+        Reread::Unreadable
+    }
 }
 
 /// (Muse, review-2026-10-30) Re-hash the brief and every bound artifact against the baselines
-/// `ctx` recorded before the run, and return the brief/artifact half of [`Drift`]:
-/// `(brief_sha_after, brief_changed, artifact records, changed artifact paths)`. Called for the
+/// `ctx` recorded before the run, and return the brief/artifact half of [`Drift`]. Called for the
 /// primary snapshot AND the authoritative post-last-turn re-take, so a write during a secondary
 /// turn is caught the same way the first computation catches a primary-turn write.
-fn brief_artifact_drift(ctx: &Context) -> (String, bool, Vec<serde_json::Value>, Vec<String>) {
-    // (0.2.5 D1) a brief taken from a committed revision cannot change during the run
-    let brief_sha_after = if ctx.brief_from_revision.is_some() {
-        ctx.brief_sha.clone()
-    } else {
-        ctx.brief_path
-            .as_ref()
-            .and_then(|p| std::fs::read(p).ok())
-            .map(|b| c3_core::sha256_hex(&b))
-            .unwrap_or_default()
-    };
-    let brief_changed = !ctx.brief_sha.is_empty() && ctx.brief_sha != brief_sha_after;
-    let mut artifact_records: Vec<serde_json::Value> = Vec::new();
-    let mut artifacts_changed_paths: Vec<String> = Vec::new();
-    for a in &ctx.artifacts {
-        let after = std::fs::read(&a.full)
-            .map(|b| c3_core::sha256_hex(&b))
-            .unwrap_or_else(|_| "missing".into());
-        if after != a.sha256 {
-            artifacts_changed_paths.push(a.path.clone());
+fn brief_artifact_drift(ctx: &Context) -> BoundDrift {
+    bound_drift(
+        ctx.brief_path.as_deref(),
+        &ctx.brief_ref,
+        &ctx.brief_sha,
+        ctx.brief_from_revision.is_some(),
+        &ctx.artifacts,
+    )
+}
+
+/// [`brief_artifact_drift`] over its inputs: the brief's path, reference and pre-run sha256 (and
+/// whether it was taken from a committed revision - (0.2.5 D1) such a brief cannot change during
+/// the run), and the bound artifacts. (0.2.5 R8, F51-4) A re-read whose hash differs from the
+/// pre-run hash is a change, and so is an input that was there before the run and is gone after it
+/// (or was missing and is there now: `sha256_after: "missing"` / a hash). An input that is there
+/// and cannot be re-read ([`reread`]) is named in `unreadable` instead - a warning, never a change
+/// (the ledger then records `sha256_after: "unreadable"` for an artifact and an empty brief
+/// `sha256_after`).
+fn bound_drift(
+    brief_path: Option<&Path>,
+    brief_ref: &str,
+    brief_sha: &str,
+    brief_fixed: bool,
+    artifacts: &[ArtifactHash],
+) -> BoundDrift {
+    let mut d = BoundDrift::default();
+    if brief_fixed {
+        d.brief_sha_after = brief_sha.to_string();
+    } else if let Some(p) = brief_path {
+        match reread(p) {
+            Reread::Bytes(b) => {
+                d.brief_sha_after = c3_core::sha256_hex(&b);
+                d.brief_changed = !brief_sha.is_empty() && brief_sha != d.brief_sha_after;
+            }
+            Reread::Missing if !brief_sha.is_empty() => {
+                d.brief_sha_after = "missing".to_string();
+                d.brief_changed = true;
+            }
+            Reread::Unreadable if !brief_sha.is_empty() => {
+                d.unreadable.push(if brief_ref.is_empty() {
+                    "the brief".to_string()
+                } else {
+                    format!("the brief `{brief_ref}`")
+                })
+            }
+            Reread::Missing | Reread::Unreadable => {}
         }
-        artifact_records.push(serde_json::json!({
+    }
+    for a in artifacts {
+        let after = match reread(&a.full) {
+            Reread::Bytes(b) => c3_core::sha256_hex(&b),
+            Reread::Missing => "missing".to_string(),
+            Reread::Unreadable => {
+                d.unreadable.push(format!("the artifact `{}`", a.path));
+                "unreadable".to_string()
+            }
+        };
+        if after != "unreadable" && after != a.sha256 {
+            d.artifacts_changed_paths.push(a.path.clone());
+        }
+        d.artifacts.push(serde_json::json!({
             "path": a.path,
             "sha256": a.sha256,
             "sha256_after": after,
         }));
     }
-    (
-        brief_sha_after,
-        brief_changed,
-        artifact_records,
-        artifacts_changed_paths,
-    )
+    d
+}
+
+/// (0.2.5 R8, F51-4) The warning of the bound inputs that could not be re-read after the run.
+fn unreadable_warning(unreadable: &[String]) -> Option<String> {
+    (!unreadable.is_empty()).then(|| {
+        format!(
+            "{} could not be re-read after the review (tried {} times), so it is not compared - the reply is not withheld for it",
+            unreadable.join(", "),
+            REREAD_RETRIES + 1
+        )
+    })
 }
 
 /// One resolved artifact bound to the review (`Resolve-ArtifactPaths` + `Get-ArtifactHashes`):
@@ -2469,8 +2576,10 @@ fn build_context(
 
     // (0.2.5 D1, F10-3 / F11-4) a brief committed at the reviewed revision need not exist in the
     // live tree when the run reads a throwaway worktree: the staging materialises it from that
-    // revision (HEAD first, else the worktree's own - `brief_bytes`' order), and the handoff says
+    // revision (the worktree's own first, else HEAD - `brief_bytes`' order), and the handoff says
     // so. Without a throwaway worktree, or committed nowhere, it is the refusal it always was.
+    // (0.2.5 R8, F51-2) The plan-time hash and source below are provisional: once the worktree is
+    // staged, the record names the bytes the staging actually wrote (`prepare_review_inputs`).
     let brief_committed: Option<(String, Vec<u8>)> = if brief_missing_live {
         match isolation.as_ref().and_then(|iso| {
             crate::engines::worktree::committed_brief(&repo_root, &brief_ref, iso.checkout())
@@ -2634,8 +2743,8 @@ fn build_context(
             &r.brief_prefix,
             &o.diff,
         );
-        // (0.2.5 D1) `--diff-tracked-only`: a one-revision patch leaves the untracked files out
-        d.tracked_only = o.diff_tracked_only;
+        // (0.2.5 R8) a one-revision patch holds the tracked changes only unless `--diff-untracked`
+        d.include_untracked = o.diff_untracked;
         Some(d)
     };
     let diff_line = diff_plan
@@ -2691,19 +2800,28 @@ fn build_context(
     // open findings are read ONCE, here, into the same immutable records (`shown_priors`), and the
     // prompt, the prior-blocker semantics and the validation of the prior report all use them -
     // never a re-read of the store at the finish.
+    // (0.2.5 R8, F53-3) A single run whose store read FAILS (a lock, a scanner) - retried once - is
+    // not frozen on an empty snapshot: it lists no prior findings, says so, and its reply's prior
+    // report is judged against the store as read at the finish (`shown_priors` stays `None`).
+    let mut priors_unreadable = false;
     let shown_priors: Option<Vec<crate::panel::member::ListedFinding>> = match member {
         Some(m) => member_records(Some(m)).map(|r| r.to_vec()),
-        None => Some(
-            store
-                .read_findings(&task)
-                .ok()
-                .flatten()
-                .map(|f| listed_findings(&f))
-                .unwrap_or_default(),
-        ),
+        None => match single_run_priors(|| store.read_findings(&task)) {
+            Some(records) => Some(records),
+            None => {
+                priors_unreadable = true;
+                let w = "the task's findings store could not be read at the start of the run (tried twice): no prior findings were listed, and the reply's prior report is checked against the store as read at the finish".to_string();
+                if !o.dry_run {
+                    println!("WARNING: {w}");
+                }
+                run_warnings.push(w);
+                None
+            }
+        },
     };
     let mut open_findings: Vec<OpenFinding> = match (&shown_priors, member) {
         (Some(records), _) => records.iter().map(open_finding_of).collect(),
+        (None, None) if priors_unreadable => Vec::new(),
         (None, m) => {
             let (mut live, _) = read_open_findings(&store, &task);
             if let Some(m) = m {
@@ -3850,6 +3968,17 @@ fn member_records(
         .map(|m| m.listed.as_slice())
 }
 
+/// (0.2.5 R8, F53-3) A single run's snapshot of the open findings it is shown, from `read` (the
+/// task's store): an absent store is an empty snapshot; a FAILED read is retried once, and `None`
+/// when it fails again - the run then lists no prior findings and judges the reply's prior report
+/// against the store as read at the finish, never against an empty snapshot.
+fn single_run_priors<E>(
+    read: impl Fn() -> Result<Option<c3_core::findings::FindingsFile>, E>,
+) -> Option<Vec<crate::panel::member::ListedFinding>> {
+    let found = read().or_else(|_| read()).ok()?;
+    Some(found.map(|f| listed_findings(&f)).unwrap_or_default())
+}
+
 fn read_open_findings(store: &FilesStore, task: &TaskSlug) -> (Vec<OpenFinding>, usize) {
     let findings = match store.read_findings(task) {
         Ok(Some(f)) => f,
@@ -4374,16 +4503,21 @@ pub(super) fn note_turn_stream(ctx: &Context, turn: &str, suffix: &str) {
             }
         }
     }
-    if super::detach::is_active() && ctx.panel_member.is_none() {
-        super::detach::note_engine_stream(super::detached::StreamNote {
-            consult_id: ctx.consult_id.clone(),
-            handoff: format!("{:02}", ctx.nn),
-            turn: turn.to_string(),
-            events_file: abs.clone(),
-            partial_hint: format!(
-                "the raw event stream of the {turn} turn is at {abs} (it may hold a usable reply)"
-            ),
-        });
+    let note = || super::detached::StreamNote {
+        consult_id: ctx.consult_id.clone(),
+        handoff: format!("{:02}", ctx.nn),
+        turn: turn.to_string(),
+        events_file: abs.clone(),
+        partial_hint: format!(
+            "the raw event stream of the {turn} turn is at {abs} (it may hold a usable reply)"
+        ),
+    };
+    if ctx.panel_member.is_some() {
+        // (0.2.5 R8, F10-7) a panel member notes its stream too, keyed by its handoff number: a
+        // member that dies in a later turn is then described by its own stream
+        super::detach::note_member_stream(&ctx.collab_root.join(ctx.task.as_str()), &note());
+    } else if super::detach::is_active() {
+        super::detach::note_engine_stream(note());
     }
 }
 
@@ -4396,9 +4530,12 @@ fn prepare_review_inputs(ctx: &mut Context) -> Result<(), super::reviewed::Setup
         super::reviewed::write_patch(d, &ctx.repo_root, &ctx.collab_root)
             .map_err(super::reviewed::SetupError::Capability)?;
         // (0.2.5 D1, F18-4 / F19-2 / F20-6) the operator sees which untracked files the patch
-        // carries before the reviewer starts (the redactor removes only what looks like a secret)
+        // carries - (0.2.5 R8) by default, which ones it left out - before the reviewer starts;
+        // (F51-5 / F53-7) kept as a run warning too, so the handoff header and the ledger say it
+        // where stderr is a log file (a detached run, an MCP call)
         if let Some(n) = super::reviewed::untracked_notice(d) {
             eprintln!("{TOOL}: {n}");
+            ctx.run_warnings.push(n);
         }
     }
     if let Some(plan) = &ctx.isolation {
@@ -4410,7 +4547,14 @@ fn prepare_review_inputs(ctx: &mut Context) -> Result<(), super::reviewed::Setup
             brief_path: ctx.brief_path.as_deref(),
             engine: &ctx.engine,
         };
-        ctx.review_tree = Some(super::reviewed::setup_review_tree(plan, &inputs)?);
+        let tree = super::reviewed::setup_review_tree(plan, &inputs)?;
+        // (0.2.5 R8, F51-2) the handoff and the ledger name the brief bytes the reviewer reads:
+        // the ones the staging wrote, and the commit it took them from (none: the live file)
+        if let Some((sha, from)) = tree.staged_brief() {
+            ctx.brief_sha = sha.clone();
+            ctx.brief_from_revision = from.clone();
+        }
+        ctx.review_tree = Some(tree);
     }
     Ok(())
 }
@@ -5385,18 +5529,14 @@ fn finish(args: Finish) -> i32 {
     let tree_cmp = revision::compare_tree_content(&ctx.revision, &rev_after);
     // Artifact drift: rehash each bound artifact from its absolute path and compare
     // (`codex-consult.ps1:4429`). A changed artifact is a WARNING and sets the ledger flag.
-    let (brief_sha_after, brief_changed, artifact_records, artifacts_changed_paths) =
-        brief_artifact_drift(&ctx);
     let mut drift = Drift {
         tree_sha256_after: rev_after.tree_sha256.clone(),
         tree_changed: tree_cmp.changed,
         tree_changed_paths: tree_cmp.paths.clone(),
         revision_moved: tree_cmp.revision_moved.clone(),
-        brief_sha_after,
-        brief_changed,
-        artifacts: artifact_records,
-        artifacts_changed_paths,
+        ..Default::default()
     };
+    brief_artifact_drift(&ctx).apply(&mut drift);
 
     // (rows (e)) A registration failure overrides everything: the child is already stopped, so the
     // outcome is the "could not register" text, no secondary turn runs, no findings are ingested.
@@ -5673,22 +5813,19 @@ fn finish(args: Finish) -> i32 {
         // way as the primary snapshot, so a write to either during a denial retry / timeout
         // continuation / format repair is caught here too (the first computation ran before the
         // secondary turns). `engine_tree_check` below reads `brief_changed`/`artifacts_changed_paths`.
-        let (
-            brief_sha_after_last,
-            brief_changed_last,
-            artifact_records_last,
-            artifacts_changed_last,
-        ) = brief_artifact_drift(&ctx);
-        drift.brief_sha_after = brief_sha_after_last;
-        drift.brief_changed = brief_changed_last;
-        drift.artifacts = artifact_records_last;
-        drift.artifacts_changed_paths = artifacts_changed_last;
+        brief_artifact_drift(&ctx).apply(&mut drift);
         let collab_after = crate::engines::tree_check::collab_snapshot(&ctx.collab_root);
         let agy_all = aggregate_agy_tool_log(&ctx, &detail);
         let claude_init = claude_tree_init(&ctx, &main_events_text);
-        // (A1) the reply is complete and schema-valid: a tree/collab change the reviewer's own
-        // tool log does not explain is only a warning - the reply is kept.
-        let reply_complete = usable && structured.is_some();
+        // (0.2.5 R8) the writing tools agy's log names (by the tool's name): recorded in the
+        // ledger's `tree_check.writing_tools`; the worktree's own comparison decides the run
+        if ctx.engine == "agy" {
+            for w in &agy_all.writing {
+                if !sec.tree_check_writing.contains(w) {
+                    sec.tree_check_writing.push(w.clone());
+                }
+            }
+        }
         // (B1) a reviewer that ran in a throwaway worktree: the check watches THAT worktree for the
         // reviewer's own writes; a change of the live tree during the run is only a warning.
         let worktree_changes = ctx.review_tree.as_ref().map(|t| t.changes());
@@ -5699,7 +5836,6 @@ fn finish(args: Finish) -> i32 {
             &collab_after,
             &agy_all,
             &claude_init,
-            reply_complete,
             worktree_changes.as_deref(),
         );
         sec.tree_check_outcome = check.outcome.clone();
@@ -5730,11 +5866,7 @@ fn finish(args: Finish) -> i32 {
     // (`--rev`) read the staged copies and is unaffected.
     let mut codex_bound_problem: Option<String> = None;
     if !is_engine && register_failure_text.is_none() {
-        let (sha_after, changed, records, paths) = brief_artifact_drift(&ctx);
-        drift.brief_sha_after = sha_after;
-        drift.brief_changed = changed;
-        drift.artifacts = records;
-        drift.artifacts_changed_paths = paths;
+        brief_artifact_drift(&ctx).apply(&mut drift);
         let bound = tree::bound_inputs_changed(&ctx.brief_ref, &drift);
         if tree::bound_inputs_withhold(&ctx.engine, ctx.review_tree.is_some()) && !bound.is_empty()
         {
@@ -5755,6 +5887,13 @@ fn finish(args: Finish) -> i32 {
                 bridge_outcome = format!("{bridge_outcome}; also: {}", check.problem);
             }
             codex_bound_problem = Some(check.problem);
+        }
+    }
+    // (0.2.5 R8, F51-4) a bound input that could not be re-read is a warning, never a change
+    if let Some(w) = unreadable_warning(&drift.bound_unreadable) {
+        println!("WARNING: {w}");
+        if !ctx.run_warnings.contains(&w) {
+            ctx.run_warnings.push(w);
         }
     }
     if let Some(problem) = codex_bound_problem.filter(|_| provider_failure.is_none()) {
@@ -6685,6 +6824,13 @@ fn finish(args: Finish) -> i32 {
     } else {
         String::new()
     };
+    // (0.2.5 R8, F10-7) a panel member that got here ended normally: its stream note goes
+    if ctx.panel_member.is_some() {
+        super::detach::drop_member_stream(
+            &ctx.collab_root.join(ctx.task.as_str()),
+            &format!("{:02}", ctx.nn),
+        );
+    }
     // (A1) A detached single run names the stream of the turn that ended it (the dead read-insist
     // re-ask's, else the primary's - the summary's `events file:`) and where its reply lies, so a
     // failed run's death record carries `events_file`/`last_event`/`events_mtime`/`partial_hint`
@@ -7409,6 +7555,122 @@ mod engine_tests {
     // (0.2.5 D1) The rule holds for every engine whose reviewer reads the LIVE tree - not agy only;
     // a run in a throwaway worktree (its inputs are staged copies) and the http reviewer (it reads
     // no file, only the pack) are unaffected. The changed inputs are named brief first.
+    // (0.2.5 R8, F53-3) A single run's start-of-run snapshot of the findings store: a transient
+    // read failure is retried once; an absent store is an empty snapshot; a store that stays
+    // unreadable gives NO snapshot, so the finish judges the reply's prior report against the store
+    // as it reads it then (no reportable-id restriction), never against an empty snapshot.
+    #[test]
+    fn a_single_run_whose_findings_store_cannot_be_read_is_not_judged_against_an_empty_snapshot() {
+        use c3_core::findings::FindingsFile;
+        let calls = std::cell::Cell::new(0);
+        let flaky = single_run_priors(|| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                Err(())
+            } else {
+                Ok(Some(FindingsFile::default()))
+            }
+        });
+        assert_eq!(flaky.map(|v| v.len()), Some(0));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            single_run_priors(|| Ok::<_, ()>(None)).map(|v| v.len()),
+            Some(0)
+        );
+        calls.set(0);
+        let broken = single_run_priors(|| {
+            calls.set(calls.get() + 1);
+            Err::<Option<FindingsFile>, ()>(())
+        });
+        assert!(broken.is_none());
+        assert_eq!(calls.get(), 2, "one retry");
+        // no snapshot: the finish's view of a single run is the store as read then
+        let view = member_prior_view(broken.as_deref(), None, None);
+        assert!(view.reportable.is_none() && view.records.is_empty());
+        let shown = member_prior_view(Some(&[]), None, None);
+        assert_eq!(
+            shown.reportable,
+            Some(Vec::new()),
+            "an empty snapshot restricts"
+        );
+    }
+
+    // (0.2.5 R8, F51-4) The post-run re-hash: a bound input that cannot be re-read (here: replaced
+    // by a directory, after the retries) is named as unreadable - a warning, never a change; only a
+    // successful re-read with another hash is a change; a brief taken from a revision is fixed.
+    #[test]
+    fn a_bound_input_that_cannot_be_re_read_is_a_warning_not_a_change() {
+        let dir = std::env::temp_dir().join(format!("c3-reread-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("b.md");
+        let art = dir.join("a.txt");
+        std::fs::write(&brief, "brief\n").unwrap();
+        std::fs::write(&art, "one\n").unwrap();
+        let brief_sha = c3_core::sha256_hex(b"brief\n");
+        let artifacts = vec![ArtifactHash {
+            path: "a.txt".into(),
+            full: art.clone(),
+            sha256: c3_core::sha256_hex(b"one\n"),
+        }];
+        let same = bound_drift(Some(&brief), "b.md", &brief_sha, false, &artifacts);
+        assert!(!same.brief_changed && same.artifacts_changed_paths.is_empty());
+        assert!(same.unreadable.is_empty());
+        // a successful re-read with other bytes is a change
+        std::fs::write(&art, "two\n").unwrap();
+        let changed = bound_drift(Some(&brief), "b.md", &brief_sha, false, &artifacts);
+        assert_eq!(changed.artifacts_changed_paths, vec!["a.txt".to_string()]);
+        // inputs that cannot be read any more: unreadable, not changed
+        std::fs::remove_file(&art).unwrap();
+        std::fs::create_dir_all(&art).unwrap();
+        std::fs::remove_file(&brief).unwrap();
+        std::fs::create_dir_all(&brief).unwrap();
+        let gone = bound_drift(Some(&brief), "b.md", &brief_sha, false, &artifacts);
+        assert!(!gone.brief_changed, "{gone:?}");
+        assert!(gone.artifacts_changed_paths.is_empty(), "{gone:?}");
+        assert_eq!(
+            gone.unreadable,
+            vec![
+                "the brief `b.md`".to_string(),
+                "the artifact `a.txt`".to_string()
+            ]
+        );
+        assert_eq!(gone.artifacts[0]["sha256_after"], "unreadable");
+        let w = unreadable_warning(&gone.unreadable).unwrap();
+        assert!(
+            w.starts_with(
+                "the brief `b.md`, the artifact `a.txt` could not be re-read after the review"
+            ),
+            "{w}"
+        );
+        // inputs that are gone after the run are CHANGED inputs, not unreadable ones
+        std::fs::remove_dir_all(&art).unwrap();
+        std::fs::remove_dir_all(&brief).unwrap();
+        let deleted = bound_drift(Some(&brief), "b.md", &brief_sha, false, &artifacts);
+        assert!(deleted.brief_changed, "{deleted:?}");
+        assert_eq!(deleted.artifacts_changed_paths, vec!["a.txt".to_string()]);
+        assert!(deleted.unreadable.is_empty(), "{deleted:?}");
+        assert_eq!(deleted.artifacts[0]["sha256_after"], "missing");
+        // an artifact that was missing before the run and still is: neither changed nor unreadable
+        let was_missing = vec![ArtifactHash {
+            path: "a.txt".into(),
+            full: art.clone(),
+            sha256: "missing".into(),
+        }];
+        let still = bound_drift(None, "", "", false, &was_missing);
+        assert!(still.artifacts_changed_paths.is_empty() && still.unreadable.is_empty());
+        // ... and one that appeared during the run is changed
+        std::fs::write(&art, "new\n").unwrap();
+        let appeared = bound_drift(None, "", "", false, &was_missing);
+        assert_eq!(appeared.artifacts_changed_paths, vec!["a.txt".to_string()]);
+        std::fs::write(&brief, "brief\n").unwrap();
+        // a brief taken from a committed revision is not re-read at all
+        let fixed = bound_drift(Some(&brief), "b.md", &brief_sha, true, &[]);
+        assert_eq!(fixed.brief_sha_after, brief_sha);
+        assert!(fixed.unreadable.is_empty() && !fixed.brief_changed);
+        assert!(unreadable_warning(&[]).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_changed_bound_input_withholds_the_reply_of_every_live_tree_engine() {
         use super::tree::{bound_inputs_changed, bound_inputs_withhold};
@@ -7473,8 +7735,8 @@ mod engine_tests {
     }
 
     // (D9 / TECH_DEBT bridge-reliability) the fail/warn decision of the engine tree check. The
-    // `why`/`warn` reasons are already built; only the engine, agy's tool log and (A1) whether the
-    // reply is complete and schema-valid decide.
+    // `why`/`warn` reasons are already built; only the engine and agy's tool log decide ((0.2.5
+    // R8) agy's `why` holds its throwaway worktree's own changes, as kimi's).
     #[test]
     fn engine_tree_outcome_decides_warn_vs_fail() {
         let why = vec!["the working tree changed during the run (1 file: a.rs)".to_string()];
@@ -7496,73 +7758,58 @@ mod engine_tests {
             writing: writing.iter().map(|s| s.to_string()).collect(),
         };
         // write-disabled engines (muse/grok/http/claude-with-read-only-init) warn; agy is not.
-        let run = |engine: &str, tools: &[&str], writing: &[&str], complete: bool| {
+        let run = |engine: &str, tools: &[&str], writing: &[&str]| {
             let wd = matches!(engine, "muse" | "grok" | "http" | "claude");
-            engine_tree_outcome(engine, &log(tools, writing), wd, complete, None, changes())
+            engine_tree_outcome(engine, &log(tools, writing), wd, None, changes())
         };
 
         // Nothing changed → clean, whatever the engine.
-        let clean = engine_tree_outcome("agy", &log(&[], &[]), false, false, None, none());
+        let clean = engine_tree_outcome("agy", &log(&[], &[]), false, None, none());
         assert_eq!(clean.outcome, "clean");
 
         // (decision 1) a claude change WARNS (the reply stays usable); the warning is kept.
-        let c = run("claude", &[], &[], false);
+        let c = run("claude", &[], &[]);
         assert_eq!(c.outcome, "warned");
         assert!(c.problem.is_empty());
         assert!(!c.warnings.is_empty());
 
         // The other write-disabled engines still WARN.
-        assert_eq!(run("muse", &[], &[], false).outcome, "warned");
-        assert_eq!(run("grok", &[], &[], false).outcome, "warned");
-        assert_eq!(run("http", &[], &[], false).outcome, "warned");
+        assert_eq!(run("muse", &[], &[]).outcome, "warned");
+        assert_eq!(run("grok", &[], &[]).outcome, "warned");
+        assert_eq!(run("http", &[], &[]).outcome, "warned");
 
-        // (decision 3) agy with only a read-only tool call WARNS and the reply stays usable.
-        let w = run("agy", &["view_file"], &[], false);
-        assert_eq!(w.outcome, "warned");
-        assert!(w.problem.is_empty());
-        assert!(!w.warnings.is_empty());
-
-        // (A1) agy's `finish` hand-over is not a writing call: read + finish with a change WARNS.
-        let fin = run("agy", &["read_file", "view_file", "finish"], &[], true);
-        assert_eq!(fin.outcome, "warned", "{}", fin.problem);
-
-        // (decision 3) agy whose log marks a writing/command call FAILS and names the tool - even
-        // when the reply is complete and schema-valid (a real write is never "reply kept").
-        let f = run("agy", &["view_file", "run_command"], &["run_command"], true);
+        // (0.2.5 R8) agy's `why` holds its throwaway worktree's own changes: a change there FAILS
+        // with or without a writing tool in its log (a reader-only log included) ...
+        let r = run("agy", &["read_file", "view_file", "finish"], &[]);
+        assert_eq!(r.outcome, "failed", "{}", r.problem);
+        assert!(r.warnings.is_empty());
+        let f = run("agy", &["view_file", "run_command"], &["run_command"]);
         assert_eq!(f.outcome, "failed");
-        assert!(f.problem.contains("a writing tool was called: run_command"));
-        assert!(f.warnings.is_empty());
-
-        // (decision 3) agy whose stream named NO tool call and whose reply is NOT complete stays
-        // FAILED and reports that.
-        let n = run("agy", &[], &[], false);
-        assert_eq!(n.outcome, "failed");
-        assert!(n.problem.contains("its event stream named no tool call"));
-
-        // (A1) the same change with a complete, schema-valid reply is a WARNING: the reply is kept
-        // (a failure is "no usable reply", never a change somebody else made).
-        let k = run("agy", &[], &[], true);
-        assert_eq!(k.outcome, "warned", "{}", k.problem);
-        assert!(k.problem.is_empty());
-
-        // (BLOCKER, review-2026-10-30) agy that called a WRITING tool FAILS even when NOTHING
-        // monitored changed (a write into an ignored path must not pass the clean early return).
+        assert!(
+            f.problem
+                .contains("(its tool log names a writing tool: run_command)"),
+            "{}",
+            f.problem
+        );
+        // ... and a writing tool in its log beside an unchanged worktree is a WARNING naming it.
         let b = engine_tree_outcome(
             "agy",
             &log(&["view_file", "write_file"], &["write_file"]),
             false,
-            true,
             None,
             none(),
         );
-        assert_eq!(b.outcome, "failed");
-        assert!(b.problem.contains("a writing tool was called: write_file"));
-        assert!(b.warnings.is_empty());
+        assert_eq!(b.outcome, "warned", "{}", b.problem);
+        assert!(b.problem.is_empty());
+        assert_eq!(
+            b.warnings,
+            vec!["agy's tool log names a writing tool (write_file), but its throwaway worktree is unchanged - reply kept".to_string()]
+        );
         // A read-only-only agy stream with nothing changed is still clean (no false positive).
-        let ok = engine_tree_outcome("agy", &log(&["view_file"], &[]), false, false, None, none());
+        let ok = engine_tree_outcome("agy", &log(&["view_file"], &[]), false, None, none());
         assert_eq!(ok.outcome, "clean");
         // A writing name in another engine's (empty) log is ignored: only agy reads it.
-        let other = engine_tree_outcome("muse", &log(&[], &["x"]), true, false, None, none());
+        let other = engine_tree_outcome("muse", &log(&[], &["x"]), true, None, none());
         assert_eq!(other.outcome, "clean");
 
         // (Muse, review-2026-10-30) claude whose init listed a write-capable tool is NOT
@@ -7572,14 +7819,13 @@ mod engine_tests {
             "claude",
             &log(&[], &[]),
             false,
-            true,
             Some("claude's init event listed tool(s) outside Read,Grep,Glob: Bash - ..."),
             changes(),
         );
         assert_eq!(cf.outcome, "failed");
         assert!(cf.problem.contains("Bash"));
         // claude with a read-only init (write_disabled) still WARNS on a change.
-        let cw = engine_tree_outcome("claude", &log(&[], &[]), true, false, None, changes());
+        let cw = engine_tree_outcome("claude", &log(&[], &[]), true, None, changes());
         assert_eq!(cw.outcome, "warned");
     }
 
@@ -7602,7 +7848,7 @@ mod engine_tests {
         let empty = AgyToolLog::default();
         // the worktree is clean, the live tree changed: warned, not failed (kimi is not
         // write-disabled, so the same change in the live tree used to FAIL it)
-        let clean = engine_tree_outcome("kimi", &empty, false, true, None, none());
+        let clean = engine_tree_outcome("kimi", &empty, false, None, none());
         let k = tree::with_live_tree_warnings(clean, main_warn());
         assert_eq!(k.outcome, "warned");
         assert!(k.problem.is_empty());
@@ -7620,7 +7866,7 @@ mod engine_tests {
             files: vec!["x".into()],
         };
         let f = tree::with_live_tree_warnings(
-            engine_tree_outcome("kimi", &empty, false, true, None, wrote),
+            engine_tree_outcome("kimi", &empty, false, None, wrote),
             main_warn(),
         );
         assert_eq!(f.outcome, "failed");
@@ -7633,7 +7879,7 @@ mod engine_tests {
         assert_eq!(f.warnings.len(), 1);
         // nothing changed anywhere: still clean
         let c = tree::with_live_tree_warnings(
-            engine_tree_outcome("kimi", &empty, false, true, None, none()),
+            engine_tree_outcome("kimi", &empty, false, None, none()),
             Vec::new(),
         );
         assert_eq!(c.outcome, "clean");

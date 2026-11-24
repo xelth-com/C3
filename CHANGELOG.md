@@ -18,9 +18,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   stages anything - in order, in the repository root, through the shell, each with `C3_CHILD=1` and
   under its own 120 s deadline through the shared deadline-bound runner - and the first that fails
   refuses the finish with its name, its exit code and the last 20 lines of its output: nothing is
-  written, staged or committed. `--skip-checks` (the MCP tool: `skip_checks`) goes on without them
-  and says so in the output and in the journal entry; a list that does not parse refuses (fix it, or
-  skip); no list, no checks.
+  written, staged or committed; the whole phase stops at 10 minutes (see the fix below).
+  `--skip-checks` (the MCP tool: `skip_checks`) goes on without them and says so in the output and
+  in the journal entry; a list that does not parse refuses (fix it, or skip); no list, no checks.
   Tests: `finish::checks` unit tests (the list, the tail, the message, a check run in the repository
   as a child, a check stopped at its deadline) and `finish.rs`'s
   `a_failing_pre_finish_check_refuses_with_nothing_staged` and
@@ -31,8 +31,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   project whose first listing shows every old branch as unknown. `--close <branch>` does what a
   session does by hand after a merge: the branch must be merged into the default branch by ancestry
   (or have every patch there), `git branch -d` itself must accept it (checked before anything is
-  touched), and its worktree, when it has one, must be clean, not locked, not the start folder nor
-  the checkout C3 runs in, and free of links that lead outside it; then `git worktree remove`
+  touched), and its worktree, when it has one, must hold nothing outside the committed tree (no
+  change, no untracked and no ignored file - see the fix below), not be locked, not be the start
+  folder nor the checkout C3 runs in, and be free of links that lead outside it; then `git worktree remove`
   without `--force` and `git branch -d`. Anything else is refused with the reason, nothing is ever
   forced, and both refuse inside a C3 child. Tests: `branches.rs`'s
   `record_unknown_records_every_unknown_branch_and_nothing_else` and
@@ -45,17 +46,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `an_old_git_is_a_doctor_problem_and_refuses_consult_rev_and_diff` (the installed version from a
   test hook).
 
-- **The operator sees which untracked files a one-revision `--diff` patch carries, and can leave
-  them out (F18-4 / F19-2 / F20-6).** `--diff <rev>` diffs one revision against the working tree
-  and puts the content of every untracked, not ignored file into the patch; the redactor removes
-  only what looks like a secret. Before the reviewer starts, stderr now says how many untracked
-  files the patch includes and names up to ten of them (as data: a name with a backtick or a
-  control character is counted, never shown), the ledger's `diff` record keeps the same list
-  (`untracked`, `untracked_count`), and the new `--diff-tracked-only` leaves the untracked files
-  out (the prompt line says so; the ledger records `tracked_only: true`; a panel and a detached
-  run carry it to their members). The README and the consult skill's reference say how to bound
-  it: commit first, a `base..head` range, or the flag. Test:
-  `a_one_revision_patch_names_its_untracked_files_and_tracked_only_leaves_them_out`.
+- **The operator sees which untracked files a one-revision `--diff` patch carries or leaves out
+  (F18-4 / F19-2 / F20-6).** Before the reviewer starts, the run says how many untracked files the
+  patch includes - (0.2.5 R8) or, by default, left out - and names up to ten of them (as data: a
+  name with a backtick, a control character or a format character is counted, never shown), and
+  the ledger's `diff` record keeps the same list (`untracked` / `untracked_count`, or
+  `untracked_left_out` / `untracked_left_out_count`). Wave D1 carried the untracked files by
+  default and added `--diff-tracked-only` to leave them out; since wave R8 the default is the
+  tracked changes only, `--diff-untracked` carries them, and `--diff-tracked-only` only names the
+  default (see Changed). A panel and a detached run carry the flags to their members. Test:
+  `a_one_revision_patch_leaves_untracked_files_out_unless_asked`.
 - **Panel integration tests for `--rev` and for the re-seat after a staging refusal.** A real panel
   of two fake reviewers of different labs under `--rev` proves each member runs in its OWN
   throwaway worktree of the same sha (two working directories, neither the live checkout), both
@@ -219,13 +219,66 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Changed
 
+- **agy reviews a throwaway worktree, and its tool log is judged by the tool's name (F51-1, F52-1,
+  F53-2).** The agy step classifier guessed from parameter names and values whether a step wrote,
+  and every review round found another shape it got wrong in both directions (a launcher prefix, a
+  pipe, a command under a path key, a file named like a command). The guess is replaced by the
+  fact: the agy engine is worktree-isolated like kimi (`worktree_isolated` in its engine spec, for
+  every purpose) - it runs in a throwaway worktree of HEAD (or of `--rev`) with the brief and the
+  task's handoffs staged in, and that worktree's before / after comparison is the evidence: a
+  change there fails the run (with or without a logged writer), a change of the live tree is at
+  most a warning. The classifier is the tool's name: a tool on the reader allow-list is a reader
+  whatever its parameters carry, every other tool a writer; it is recorded
+  (`tree_check.writing_tools` in the ledger), and a writing tool in the log beside an unchanged
+  worktree is a warning, not a failure. Removed: the parameter scanning (`command_shaped`, the
+  key-role table `agy_param_role` / `AGY_DATA_PARAM_SUFFIXES`, the write markers and command words
+  for readers) and the parameter merge of a step's events (the step merge stays - the tool name can
+  arrive late). NOT YET RUN against the real agy CLI: its plan is out of quota until 2026-11-28, so
+  the isolation must be watched on agy's first live run. Tests:
+  `agy_steps_are_judged_by_the_tools_name_and_an_unchanged_worktree_keeps_the_reply`,
+  `an_agy_write_in_its_worktree_fails_the_run`,
+  `a_live_tree_change_during_an_agy_run_is_only_a_warning`,
+  `agy_tool_step_classifier_reads_the_tools_name`,
+  `agy_readers_are_readers_whatever_their_parameters_say`, `worktree_isolated_is_kimi_and_agy`.
+- **A patch name is its content: no claims (F51-3, F52-2, F53-6).** The `--diff` patch file is
+  `<stem>.<sha8>.patch` after its own bytes, yet where hard links were unavailable the placement
+  claimed the name with an empty file and renamed onto it, with a takeover of old claims and a
+  cleanup by name - and each step had a race (a sibling's finished patch removed, a stalled owner
+  replacing another run's file). The claim protocol is removed. The bytes go into a temporary file
+  in the handoffs directory through its handle; if the name exists its bytes are compared - equal:
+  the temporary file is removed and the patch reused; different: refused ("holds other bytes"),
+  nothing overwritten; if it does not exist the patch is published by a hard link, or where there
+  are none by ONE atomic rename of the temporary file onto the name (two runs with equal bytes may
+  both do it - the result is the same file). An empty file at the name (an earlier build's claim)
+  is replaced by the rename. Nothing ever removes the final name. (F53-4, F43-7) Write-temp files
+  of C3's own pattern (`<stem>.<sha8>.<32 hex>.tmp`) older than a day are removed when a patch is
+  placed in that directory. Removed: `reuse_patch`, `place_without_link`, `drop_own_claim`, the
+  stale-claim age `PATCH_CLAIM_STALE_SECS` and the hooks `CODEX_CONSULT_TEST_PATCH_RENAME_FAIL` and
+  `CODEX_CONSULT_TEST_PATCH_CLAIM_STALE_SEC` (with their tests); `CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`
+  stays. Tests: `an_empty_leftover_claim_is_replaced_and_other_bytes_are_refused`,
+  `stale_patch_temps_are_swept_when_a_patch_is_placed`,
+  `a_patch_without_hard_links_is_placed_whole_and_nothing_partial_is_left`.
+- **A one-revision `--diff` carries the tracked changes only unless asked (F18-4, F19-2, F20-6,
+  F51-5, F53-5, F53-7).** `--diff <one revision>` puts the tracked changes into the patch; the
+  untracked files are left out and the run says so before the reviewer starts - how many, up to
+  ten names (a name with a control or a format character, Unicode category Cf included, is counted,
+  not shown) - on stderr, in the handoff's warnings and in the ledger (the run's `warnings` and the
+  `diff` record's `untracked_left_out` / `untracked_left_out_count`); the prompt line says how many
+  were left out. `--diff-untracked` includes them (through the redactor, named the same way as
+  carried). `--diff-tracked-only` stays accepted and names the default; the two together are
+  refused. The MCP tools `c3_consult` and `c3_panel` take `diff_untracked` (and `c3_panel` takes
+  `diff`). README and the consult skill's reference say it. Tests:
+  `a_one_revision_patch_leaves_untracked_files_out_unless_asked`,
+  `a_one_revision_diff_leaves_untracked_files_out_and_says_so`,
+  `consult_and_panel_pass_diff_untracked`.
 - **`c3 hook` caps its own lines; the wrapper scripts forward them as they are.** The two
   SessionStart scripts each cut a forwarded line at 400 - the `.ps1` by UTF-16 units, the `.sh` by
   bytes under `mawk` - so they printed different text for a long non-ASCII line. The cap is now
   `c3 hook`'s own (Rust): at most 400 characters per printed line, cut at a character boundary with
   `...` appended (397 kept), carriage returns removed and trailing white space trimmed. Both
-  scripts lost their cutting (they keep only their prefix filter and the order, de-duplication and
-  count rules) and print the same text again, non-ASCII lines included. Tests: the unit test
+  scripts lost their cutting of forwarded lines (they keep only their prefix filter and the order,
+  de-duplication and count rules; their own fallback line is cut at 400 again, see the fix below)
+  and print the same text again, non-ASCII lines included. Tests: the unit test
   `hook_lines_are_capped_at_400_characters_on_a_character_boundary` and `hook_scripts.rs` extended
   by a long non-ASCII line and a line longer than the cap (both forwarded unchanged by both
   scripts).
@@ -428,23 +481,56 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **A hung CI step fails with its log, and the steps after it still run (F38-1).** The per-crate
+  test steps of the `ci` workflow ran with `if: success() || failure()` under a job-level limit
+  only: a step that hung was cancelled with the whole job, its log was lost and the remaining
+  crates never ran - the Windows job hung twice in the `c3-cli` step on 2026-11-23/24 and left
+  nothing to read. Every test step now has its own `timeout-minutes` (15 / 15 / 25 minutes; the
+  Windows `c3-cli` step takes about 13), so a hung step is stopped as failed with its log kept; the
+  job limits are 60 and 50 minutes.
+- **The record names the brief bytes the reviewer read (F51-2).** The brief's sha256 in the handoff
+  and the ledger, and the line "taken from the committed revision", were decided at plan time while
+  the staging read the brief again, so they could name bytes the reviewer never saw. They now come
+  from the bytes the staging actually wrote into the worktree and where it took them from - the live
+  file, or the full sha of the commit whose file it materialised. Under `--rev` the reviewed
+  revision's own copy of the brief is preferred to HEAD's when the live file is missing. Tests:
+  `a_committed_brief_unreadable_live_is_materialised_from_head`,
+  `a_brief_committed_at_head_but_not_in_the_live_tree_is_taken_from_the_revision`.
+- **A file that cannot be re-read is not a changed file (F51-4).** The post-run re-hash of the brief
+  and the bound artifacts turned a failed read (a lock, a scanner) into a changed hash and withheld a
+  usable reply. A failed read is now retried three times, 200 ms apart; an input that still cannot
+  be read is a warning naming it ("could not be re-read"; an artifact's `sha256_after` is
+  `unreadable`) and the reply stays usable. A different hash withholds it, and so does an input that
+  was there before the run and is gone after it, or was missing and is there now (`sha256_after` is
+  then `missing` or the new hash): a deleted input is a changed input, not an unreadable one. Test:
+  `a_bound_input_that_cannot_be_re_read_is_a_warning_not_a_change`.
+- **A single run that cannot read the findings store at its start says so (F53-3).** A failed read
+  froze an empty snapshot, so a reply that reported a real prior finding was rejected at the finish.
+  The read is retried once; if it still fails the run lists no prior findings, records a warning
+  that the store was unreadable, and the reply's prior report is checked against the store as read
+  at the finish (the behaviour before wave D1). Test:
+  `a_single_run_whose_findings_store_cannot_be_read_is_not_judged_against_an_empty_snapshot`.
+- **The death record: the note wins when the times cannot be compared, and panel members note their
+  stream (F51-6, F52-4, F10-7).** The code now agrees with its comment: when either stream's time is
+  unknown (a noted file that does not resolve included) or the two are equal, the stream named by
+  the status note wins. A panel member - a process of its own - notes its current stream on every
+  turn transition too, keyed by its handoff number (`.consult.stream-<NN>.json` in the task
+  directory, removed when the member ends normally), so a panel's death record describes a member
+  that died in a later turn by that member's own stream. Tests:
+  `the_note_wins_when_the_stream_times_cannot_be_compared`,
+  `a_panel_death_record_takes_the_stream_its_dead_member_noted`.
+- **A reviewer in a throwaway worktree is always told so (F53-1).** Since wave D1 left the collab
+  paths out of the uncommitted-paths list, a run whose live tree was otherwise clean got no
+  isolation paragraph at all. The paragraph "your working directory is a throwaway git worktree of
+  the committed HEAD ..., not the live checkout" (and that the brief was copied in) is now always
+  there for an isolated run; only the list of uncommitted paths depends on the live tree. Test:
+  `the_isolation_prompt_names_tracked_changes_and_counts_the_rest`.
 - **A file name is data, not a command, for an allow-listed agy reader (F32-3).** Since 0.2.5 R1 the
   step classifier looked for command-shaped strings at every depth, so a `read_file` of a file named
-  `notes&&draft.md` was classified as writing and a complete review was thrown away. A reader's
-  parameters are now read by their role: a value under a path / file / directory / uri key
-  (`Path`, `AbsolutePath`, `DirectoryPath`, `SearchDirectory`, `Url`, `paths` - a key that ENDS in
-  such a word) is a file name and never scanned, a search term stays data, a key that names a
-  command or written content is a write whatever its value, and only a value under any other key -
-  one the reader's schema does not have - is scanned. A tool not on the reader allow-list stays
-  writing. Test (one table with item F24-4):
-  `agy_steps_merge_at_every_depth_and_read_reader_parameters_by_their_role`.
-- **An agy step's parameters merge into nested objects (F24-4).** The events of one step were united
-  key by key at the top only: a later event's command under a key whose object already had other
-  keys (`{"config":{"cwd":"."}}` then `{"config":{"action":"rm -rf x"}}`) was dropped, so an
-  allow-listed reader that wrote was classified as not writing. The merge is now recursive (an
-  empty value gives way to a non-empty one at any depth, objects and arrays are united), and two
-  different non-empty values that cannot be united are both kept, as an array under that key - a
-  command-shaped value from any event is never dropped. Test: the same table.
+  `notes&&draft.md` was classified as writing and a complete review was thrown away. (0.2.5 R8)
+  The parameter reading by role that wave D1 put here, and the recursive parameter merge of F24-4,
+  are gone: a step is now judged by its tool's name alone and agy reviews a throwaway worktree
+  (see Changed). Test: `agy_readers_are_readers_whatever_their_parameters_say`.
 - **A changed bound input withholds the reply of every engine that reads the live tree.** Wave R1
   did it for agy only: a brief or a bound artifact that changes during the run is not ambient drift
   - the reply may answer other bytes than the review is bound to - so it is kept (the raw reply as
@@ -487,22 +573,14 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `handoffs/<stem>.notes.md` and the run still looked clean. Exactly the patch file the run wrote
   and its write-temp name (`<stem>.<sha8>.<32 hex>.tmp`) are exempt now, nothing else with that
   prefix. Test: `the_runs_own_patch_is_the_only_exempt_file`.
-- **The `--diff` patch placement is contained from the start, survives an abandoned claim and
-  removes only its own (F43-1, F43-2, F43-3).** The handoffs directory was created by path name
-  (`create_dir_all`) before the anchor was opened on it, so a link above it redirected the create;
-  it is now opened - and what is missing of it created - through handles from a root on the
-  repository (or on the collab directory when that lies outside it), and a link anywhere above
-  `handoffs/` refuses the placement. Where hard links are unavailable a run killed between the
-  empty claim and the rename left an empty file that blocked every later run with that patch name
-  ("already holds other bytes"); an EMPTY file at the name unchanged for 60 seconds is now an
-  abandoned claim - taken over (removed while it is still that empty file, then claimed again
-  under the same exclusive create) with one stderr line - while a fresh claim is waited for and
-  then named as what it is. A failed rename removed the claimed name unconditionally, even when a
-  sibling had completed it meanwhile; the name is now removed only while it is still this call's
-  own empty claim (size zero and the identity it was created with, read on a handle right before
-  the removal), a sibling's finished patch with the same bytes is reused and one with other bytes
-  left alone and reported. Tests: `a_link_above_the_handoffs_directory_refuses_the_patch`,
-  `an_abandoned_empty_claim_is_taken_over`, `a_failed_rename_removes_only_its_own_claim`.
+- **The `--diff` patch placement is contained from the start (F43-1).** The handoffs directory was
+  created by path name (`create_dir_all`) before the anchor was opened on it, so a link above it
+  redirected the create; it is now opened - and what is missing of it created - through handles
+  from a root on the repository (or on the collab directory when that lies outside it), and a link
+  anywhere above `handoffs/` refuses the placement. (0.2.5 R8) The claim protocol this wave added
+  for file systems without hard links (F43-2, F43-3: the stale-claim takeover, the removal of the
+  own claim) is gone - a patch name is its content and is published by one rename (see Changed).
+  Test: `a_link_above_the_handoffs_directory_refuses_the_patch`.
 - **Many excluded paths no longer refuse a review (F28-2).** A diff with more than 500 changed paths
   excluded by the ignore rules or `.c3ignore` / `.eckignore` was refused outright, because each
   became an `:(exclude)` pathspec on git's command line (`git diff` takes no pathspec file). The
@@ -544,6 +622,101 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   reply recorded but its file gone" (`failed_reply_gone` in `--json`), found through each
   consultation's task directory; an older entry without a consult id counts as before. Test:
   `a_kept_reply_counts_only_while_its_file_is_still_there`.
+- **The deadline stop leaves nobody behind (F46-1, F45-2, F45-7).** `ScanChildren::stop` ended its
+  sweep at the first round that terminated nobody, so a grandchild forked after that read survived;
+  it skipped the tree of a registered child whose start time could not be read (already a zombie);
+  when the process table could not be read it swept only the children still running; and it waited
+  for a killed child with an unbounded `wait()` while holding the set's lock. The stop now takes the
+  registered children out of the set first (the lock is not held past that), reads the table once
+  before the kills and then sweeps round after round - at most five, 50 ms apart - until a round
+  after the kills finds no live descendant, also following the children of what an earlier round
+  terminated; a child whose start time is unknown is swept from the time the set spawned it (which
+  the set now records; 2 s slack for Linux's whole-second boot time); on Unix every registered
+  child's process group is killed, and when the table cannot be read the group of a child already
+  reaped too (while no process holds its pid again); the wait for a killed child is bounded by the
+  same 5 s as the wait for what was terminated, and whatever is still alive at the end is reported
+  (`StopReport`; the caller of `within` prints one `c3:` line naming the pids). The remaining limit:
+  a descendant that left the child's process group AND was re-parented - a daemon made with `setsid`
+  after a double fork - is reachable by neither net and is not swept; and on Windows a child already
+  reaped leaves no net when the table cannot be read (`taskkill /T` walks only from a live root, and
+  an exited child's bare pid may belong to another process). Tests: `bounded.rs`'s
+  `a_zombie_child_is_swept_from_the_time_it_was_spawned`,
+  `a_grandchild_forked_after_a_read_is_caught_by_the_next_round`,
+  `the_sweep_says_when_its_rounds_ran_out` and (Unix) `a_background_grandchild_of_a_running_child_is_reaped`.
+- **The secret rule is strict again, with one narrow exception (F46-2, F45-1).** The first cut of the
+  plain-word exemption let any single-case word under 24 letters pass under EVERY keyword and asked
+  for a key shape under `auth`, so `password = "hunterhunterhunter"`, `password = "troubadour"` and
+  `auth = "correct horse battery staple"` were neither refused by `c3 finish` nor redacted in packs
+  and `--diff` patches. Under `api_key`, `secret`, `password`, `passwd`, `pwd`, `token`,
+  `credential` and `authorization` a quoted value of 8+ characters is a secret again, plain word or
+  not. Only under the BARE keyword `auth` is a value that is one single word of letters (one case,
+  or one leading capital: `endpoint`, `subscription`, `oauth`) a setting; every other value of 8+
+  characters there - a passphrase with spaces, a digit string, a key-shaped value - is a secret.
+  A value that is C3's own redaction marker (`[REDACTED:<kind>]`, as a saved `--diff` patch holds
+  it) is never a secret, under any keyword, so the gate passes such a patch and redacting twice
+  changes nothing. Tests: `redact.rs`'s `a_plain_word_under_the_bare_auth_is_not_taken_for_a_secret`,
+  `values_that_can_be_secrets_are_still_redacted` (the reviewers' cases among them) and
+  `a_redaction_marker_is_never_taken_for_a_secret`, and `secret_gate.rs`'s
+  `a_plain_word_under_auth_passes_the_gate` extended (a saved patch with markers among them).
+- **`c3 branches --close` never deletes a file git does not show (F46-3, F45-8).** The cleanliness
+  check used `git status --porcelain`, which lists no ignored file, and `git worktree remove` then
+  deleted the worktree with its `.env` or build output unlisted. The check is now `git status
+  --porcelain --ignored --untracked-files=all`: a worktree holding any file outside the committed
+  tree - changed, untracked or ignored - is refused with the count and the first five names, and
+  nothing is removed. What `git branch -d` would refuse is still found out before the worktree is
+  touched; the remaining error texts now say exactly what was done (a `git worktree remove` that
+  failed part-way says the worktree may be partly removed and the branch kept; a `git branch` that
+  could not run after the removal says the worktree was removed). Test: `branches.rs`'s
+  `close_never_deletes_an_ignored_file_of_the_worktree` (and the dirty case of
+  `close_removes_a_merged_branch_and_its_clean_worktree_and_refuses_the_rest` now names the file).
+- **The CI check asks about THIS repository (F46-4, F45-3).** gh inferred the repository from
+  `GH_REPO` or from the remotes by its own rules, so another repository's default branch could be
+  remembered for a day and its runs reported as this checkout's CI. Every gh call now names the
+  repository - `gh repo view <owner/name>`, `gh run list ... -R <owner/name>` - taken from the
+  `origin` remote's URL (no check when `origin` is not on GitHub), or without an `origin` from the
+  one GitHub repository the remotes name (several different ones: no check, gh is not started), and
+  `GH_REPO` and `GH_HOST` are removed from gh's environment. The remembered default branch lives in
+  a file of its own (`ci-check-<hash>.branch.json`, written whole), so it and the daily attempt
+  record can no longer drop each other's fields. Tests: `ci_check.rs`'s
+  `gh_is_asked_about_this_checkouts_repository` and
+  `the_branch_memory_and_the_attempt_do_not_drop_each_other`, and the end-to-end
+  `the_check_asks_about_this_repository_whatever_gh_repo_says`.
+- **`--skip-checks` tells the truth, a stopped check shows what it printed, and the checks phase
+  has a ceiling (F46-6, F45-6, F45-5, F45-9).** With `--skip-checks` and a `.c3/config.json` that
+  could not be read or parsed, the output and the journal said "none configured"; they now say that
+  the configuration could not be read (with why) and that no check was run (`--json`:
+  `checks.config_error`). A check stopped at its deadline was reported as having printed nothing:
+  its output is now copied as it is read, and the refusal shows its last 20 lines before it was
+  stopped. The whole checks phase has a ceiling of 10 minutes: a check runs under 120 s or what is
+  left of the ceiling, whichever is shorter, and a check stopped at the ceiling - or one the ceiling
+  leaves no time to start - refuses like a failed check and names the checks that did not run.
+  Tests: `finish::checks`'s `a_stopped_check_shows_what_it_printed_before_it_was_stopped` and
+  `the_checks_phase_refuses_at_its_ceiling_and_names_what_did_not_run`, and `finish.rs`'s
+  `passing_pre_finish_checks_run_in_the_repository_as_a_child` extended by the skip over a broken
+  file.
+- **The hook scripts cap the one line they print themselves again, and lines that differ past the
+  cut stay two lines (F45-4, F46-8).** When no line carried a known prefix, both wrapper scripts
+  forwarded the first non-empty line uncapped - a panic or library line that bypassed `c3 hook`'s
+  cap reached the session whole; that line is cut at 400 again (`cut -c1-400`, `Get-CutText ...
+  400`). And two hook lines that shared their first 397 characters became one string after the cap,
+  so the scripts' de-duplication printed only one: `c3 hook` now de-duplicates on the whole line
+  before the cap, and a cut line ends in `... #` and the first 8 hex digits of the SHA-256 of the
+  whole line (387 characters kept), so lines that differ past the cut print as different lines and
+  the same line always prints the same. Tests: `hook::tests`'s
+  `lines_that_differ_past_the_cut_are_both_printed` and
+  `hook_lines_are_capped_at_400_characters_on_a_character_boundary` updated, and `hook_scripts.rs`'s
+  `the_scripts_keep_their_fallbacks` (a 5000-character unprefixed line) and
+  `the_ps1_forwards_a_long_line_whole` updated (the fallback stops before a surrogate pair).
+- **"Cannot tell" no longer keeps a dead process alive (F46-7).** On Linux a pid whose
+  `/proc/<pid>` does not exist read as "cannot tell" whenever the read failed with anything but
+  "not found" (a permission error among them), and `pid_alive` counts "cannot tell" as alive, so a
+  dead holder could keep a lock or a recovery record. A missing `/proc/<pid>` is now gone whatever
+  the error, unless `/proc` hides pids (then `kill -0` decides, as before); "cannot tell" is left
+  for an entry that exists and cannot be read. The maintenance pass's spawn gate (`lock_held`) also
+  applies the lock's own 6-hour stale rule, which only the take-over path applied, so an owner whose
+  identity cannot be read does not block a new pass longer than that. Tests:
+  `an_unreadable_proc_entry_is_cannot_tell_never_gone` (Linux) extended and `maintain`'s
+  `an_owner_that_cannot_be_told_dead_holds_the_lock_only_until_it_is_stale`.
 - **A public catalog source is no longer read from an IPv6 address that embeds or tunnels an IPv4
   (F39-1, F38-2).** Only IPv4-mapped and NAT64 addresses were judged by the IPv4 they carry, so
   `::10.0.0.1` (IPv4-compatible), `2002:a00:1::1` (6to4) and Teredo `2001::/32` passed the lookup
@@ -567,27 +740,34 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `a_roster_id_with_a_lab_token_is_matched_through_the_catalog_spelling` (the host-only case has no
   alias; `kimi-k3.1-pro` still works).
 - **What C3 does inside a reviewer's worktree and inside the repository can no longer be redirected
-  by a directory swapped for a link (F32-1, F24-1, F29-2, F18-5, F27-2, F16-5, F13-9, F28-1).** For a
-  user nothing changes, except that the windows are gone: staging into the throwaway worktree (both
-  the files written and the brief, `handoffs/` and `state.md` read), the post-checkout sweep of links
-  that lead out, the worktree's removal, the repository repair's file replacement, the rules-file
-  rewrite and the `--diff` patch now work relative to directory handles opened once and verified on
-  the handle (the new module `contain`, on the `cap-std` crate), never by a path name checked first
-  and resolved again - a directory replaced by a junction or symlink after it was checked can no
-  longer send a write, a read or a removal outside, and the three "decided boundaries" (a local
-  process racing the window) are withdrawn. What it means in detail: every path below a root is
-  opened one component at a time without following any (a link refuses - also one that stays
-  inside, where it was followed before for the brief and `handoffs/`; such an entry is now skipped
-  and counted, a linked brief refuses the run as before); a staged or repaired file is written to a
-  new temporary name and renamed relative to its directory's handle, and a temporary file whose
-  removal fails is reported instead of ignored; the removal unlinks and deletes through the handles
-  and then runs only `git worktree prune` (no `git worktree remove --force`, no `remove_dir_all` on
-  a path); the patch is always written to a temporary file first and placed without replacing
-  anything - a hard link, or on a file system without hard links a claim of the name (an empty file
-  created exclusively, which a sibling waits for) replaced by a rename - so no partial patch is ever
-  left under its name. On Windows the protection rests on the handles C3 holds: a
-  directory opened by cap-std cannot be renamed or deleted, nor can any of its ancestors, while the
-  handle is open. Tests: `contain::tests::cap_std_refuses_a_link_as_a_path_component` (the proof:
+  by a directory swapped for a link (F32-1, F24-1, F29-2, F18-5, F27-2, F16-5, F13-9, F28-1).**
+  Staging into the throwaway worktree (both the files written and the brief, `handoffs/` and
+  `state.md` read), the post-checkout sweep of links that lead out, the worktree's removal, the
+  repository repair's file replacement, the rules-file rewrite and the `--diff` patch now work
+  relative to directory handles opened once and verified on the handle (the new module `contain`,
+  on the `cap-std` crate), never by a path name checked first and resolved again - a directory
+  replaced by a junction or symlink after it was checked can no longer send a write, a read or a
+  removal outside, and the three "decided boundaries" (a local process racing the window) are
+  withdrawn. What changes for a user (F43-7, F44-2): every path below a root is opened one
+  component at a time without following any, so a symlink or junction INSIDE the repository on the
+  way to the brief now refuses the run, and one on the way to `handoffs/` or `state.md` is skipped
+  and counted - before, such a link was followed when its target stayed inside; every Windows
+  reparse point counts as a link (a cloud-sync placeholder too); and the worktree's directory cannot
+  be renamed while a reviewer runs in it. Two roots ARE followed by design: the repository root and
+  a task's handoffs directory when their own path is a link (where they live is not C3's to judge;
+  only what lies below them is contained). A staged or repaired file is written to a new temporary
+  name and renamed relative to its directory's handle, and a temporary file whose removal fails is
+  reported instead of ignored; the removal unlinks and deletes through the handles and then runs
+  only `git worktree prune` (no `git worktree remove --force`, no `remove_dir_all` on a path); the
+  patch is always written to a temporary file first and placed from it - a hard link, or
+  ((0.2.5 R8) instead of the claim of this wave) on a file system without hard links one atomic
+  rename onto its content-addressed name - so an interrupted placement never leaves a partial patch
+  under its name. What can remain: after a crash, a temporary file (C3's own patch temp files older
+  than a day are removed when a patch is placed in that directory); after a failed removal, the
+  entries that could not be removed (named in the error, the worktree kept for `c3 doctor --fix`).
+  On Windows the protection rests on
+  the handles C3 holds: a directory opened by cap-std cannot be renamed or deleted, nor can any of
+  its ancestors, while the handle is open. Tests: `contain::tests::cap_std_refuses_a_link_as_a_path_component` (the proof:
   a junction, and a directory symlink where one can be made, refuses as a path component, pointing
   out or in; a root that is a link is refused; a held directory and its ancestors cannot be renamed
   on Windows), and the race tests driven by the new hook `CODEX_CONSULT_TEST_CONTAIN_RACE` (a
@@ -596,18 +776,77 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   the patch placement without hard links (`CODEX_CONSULT_TEST_PATCH_NO_HARDLINK`,
   `CODEX_CONSULT_TEST_CONTAIN_WRITE_FAIL`). `c3_core::test_hooks::set_thread_hook` lets an
   in-process test set a hook for its own thread only.
-- **The secret gate no longer takes a plain word for a secret; the MCP finish tool takes
-  `allow_secret`.** `c3 finish` refused three commits on 2026-11-22/23 over the test-fixture line
-  `m.entry.auth = "endpoint".into();` and a saved patch holding it: the keyword-assignment rule took
-  any quoted value of 8+ characters after `auth`. A value now counts only when it can be a secret: a
-  single dictionary-shaped word (letters only, one case, fewer than 24 of them) never does, under
-  any keyword; under the bare keyword `auth` only a key-shaped value does (16+ characters, no white
-  space, two of lower case, upper case, digits and symbols); `auth_token`, `authorization` (now a
-  keyword of its own), `api_key`, `password` and the rest keep the plain rule, and a value an
-  earlier rule already replaced keeps that rule's kind. Packs and `--diff` patches use the same
-  rules; every service-shaped key is still caught by its own rule. The MCP tool `c3_finish_task`
-  gains `allow_secret` (repo-relative paths, the CLI's `--allow-secret`; a path that leaves the
-  working directory is refused). Tests: `redact.rs`'s `a_plain_word_is_not_taken_for_a_secret` and
+- **The handle containment now covers the project folder, the repair's discovery and a removal
+  that fails part way (F47-2, F43-5, F46-5, F43-6, F44-3).** (1) What `.c3/` and the move do inside
+  the repository goes through handles from the repository root: `.c3/` and its stubs are created
+  relative to its own handle, a writer's directory is reached one component at a time without
+  following any and its file is published by a temporary file and a rename (so a second hard link
+  of `JOURNAL.md` or a manifest no longer sees the write), the old tool's leftovers and the legacy
+  cache are renamed between directory handles, and `.eck` is renamed to `.c3` relative to the
+  repository root's handle, never over an existing name. The move lock stays a file in git's
+  directory; `.gitignore` and the files a caller writes into a prepared directory (scouts,
+  explains, the index store, the copy into `lastsnapshot/`) stay path-based. (2) The repository
+  repair finds its candidates the way it edits them: `.claude/agents/*.md`, `AGENTS.md` and the
+  rules files are listed and read through handles; nothing is read through a link on the way
+  (before, the bytes behind a linked `.claude/agents` were read and only the edit was refused).
+  Such a link is not a failed repair - no repair is known to be due behind it: the SessionStart
+  line says nothing about it, and `c3 doctor` names it in an `[i] <file>: not checked - <why>`
+  line (`not_checked` in `--json`) and stays clean, so a repository whose `AGENTS.md` is a link to
+  `CLAUDE.md` is an ordinary one. (3) The hook's repository
+  test reads `HEAD` as git does: a symref under `refs/` or an object id, else no repository; a
+  `.git` that is a symlink stays refused on purpose. (4) A worktree removal that meets an entry it
+  cannot remove goes on, removes everything else, names up to ten entries left and keeps the
+  worktree's `.git` file, so `c3 doctor` lists it and `--fix` finishes it once the obstacle is gone.
+  (5) On Unix a file is opened for reading without blocking, so a FIFO swapped in after the kind
+  check is refused on its handle instead of hanging the run (Windows has no FIFO in the file
+  system). Tests: `state_dir::tests::a_directory_in_the_old_folder_swapped_for_a_link_takes_nothing_outside`,
+  `the_folder_swapped_for_a_link_before_a_write_never_writes_outside`,
+  `repo_models::tests::discovery_never_reads_through_a_link_on_the_way`,
+  `rules::tests::a_linked_rules_directory_is_never_read_and_its_repairs_are_refused`,
+  `git_dir_tests::a_head_that_git_would_not_take_is_no_repository`,
+  `contain::tests::a_failed_removal_removes_what_it_can_and_names_what_is_left`,
+  `a_fifo_swapped_in_after_the_kind_check_is_refused_without_blocking` (Unix), and `branches.rs`'s
+  `a_half_removed_throwaway_is_listed_and_finished_once_the_obstacle_is_gone`.
+- **A linked `.c3` or `.eck` is refused by every run that reaches into it (F48-1).** A consultation,
+  a panel or a work run whose collab directory lies in a `.c3` or `.eck` that is a symlink, junction
+  or other reparse point - or reaches the folder through another link in the repository - is
+  refused at its start with one line and creates nothing, also when the path was already resolved
+  through the link; a collab directory inside `.c3/` is created through handles. The read-only
+  commands no longer read through a linked `.eck` either. Test:
+  `a_collab_directory_under_a_linked_folder_refuses_the_run_and_creates_nothing`.
+- **Nothing creates the legacy folder `.eck/` again, and a live owner's move lock is never taken
+  over (F48-2, F48-4, F47-3).** A command that went on with `.eck/` because the move had to wait
+  writes at the folder's place at the moment of the write (`c3 explain` included; the embedded
+  index refuses a `.eck` that is gone), so a move that completes meanwhile never leads to a second
+  `.eck/`. The lock of an owner alive on this machine is waited for and then the command goes on
+  without moving, whatever the lock's age. A collab path is recognised as inside the folder also by
+  identity - an 8.3 short name such as `ECK~1`, an alias that is a link to the folder (refused) -
+  and on Windows a name with trailing dots or spaces (`.eck.`, `.c3 `) is the folder. Tests:
+  `a_writer_that_lost_the_lock_ends_in_the_new_folder_and_no_old_folder_returns`,
+  `a_live_owners_old_lock_is_not_taken_over`, `short_names_and_aliases_resolve_to_the_folder`,
+  `collab_paths_are_normalised_before_they_are_classified`.
+- **The old tool's `anchor` is never taken for C3's own (F48-3, F47-1).** `.c3/` now carries a marker
+  file (`layout`), written last by a fresh creation, by the move and by the finish of an unfinished
+  folder. A `.c3/` without it is unfinished: the next writing command sends the old tool's
+  leftovers at its top - a lone `anchor` too - to `legacy/` before it writes the marker, and no
+  snapshot anchor is read from it meanwhile; the legacy cache move (C3's own `anchor`) runs after
+  that rule. A `.c3/` made by an earlier 0.2.5 build has no marker, so its `anchor` goes to
+  `legacy/` once and the next snapshot is a full one. Test:
+  `a_folder_without_its_marker_sends_a_lone_anchor_to_legacy`.
+- **The secret gate no longer takes a plain word under the bare keyword `auth` for a secret; the
+  MCP finish tool takes `allow_secret`.** `c3 finish` refused three commits on 2026-11-22/23 over
+  the test-fixture line `m.entry.auth = "endpoint".into();` and a saved patch holding it: the
+  keyword-assignment rule took any quoted value of 8+ characters after `auth`. Under the bare
+  keyword `auth` a value that is one single word of letters (one case, or one leading capital,
+  fewer than 24 of them) is now a setting; every other value of 8+ characters under `auth`, and
+  every such value under `auth_token`, `authorization` (now a keyword of its own), `api_key`,
+  `password` and the rest, is a secret as before (the first cut of this change exempted a plain word
+  under every keyword and asked for a key shape under `auth`; see the entry on the strict rule
+  below), and a value an earlier rule already replaced keeps that rule's kind. Packs and `--diff`
+  patches use the same rules; every service-shaped key is still caught by its own rule. The MCP tool
+  `c3_finish_task` gains `allow_secret` (repo-relative paths, the CLI's `--allow-secret`; a path
+  that leaves the working directory is refused). Tests: `redact.rs`'s
+  `a_plain_word_under_the_bare_auth_is_not_taken_for_a_secret` and
   `values_that_can_be_secrets_are_still_redacted`, `secret_gate.rs`'s
   `a_plain_word_under_auth_passes_the_gate`, the MCP unit test
   `finish_task_passes_allow_secret_paths` and `mcp_integration.rs`'s
@@ -619,7 +858,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   their end, so a wrapper that closed them and kept running was no longer stopped. The set now
   remembers every child it started (pid, start time, when it was reaped) and keeps each one
   registered until its exit is confirmed (polled under the lock); the stop reads the process table
-  once per round (up to three), kills the registered children by their handles and terminates every
+  once per round (now up to five, until a round finds nothing - see the fix below), kills the
+  registered children by their handles and terminates every
   descendant of every child the set started - found by parent pid and, on Unix, by the child's own
   process group (each registered child leads one; an orphan keeps it) - only when it started at or
   after that child did (for a child already reaped, not after it was reaped) and is still the same
@@ -630,9 +870,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - **The CI check learns the default branch from GitHub when the clone does not know it (F31-2).**
   With `origin/HEAD` unset and no `c3.defaultBranch` the check asked gh about a local `main` or
   `master`, which need not be the repository's default. It now asks gh once
-  (`gh repo view --json defaultBranchRef`, under the same deadline), remembers the answer in the
-  repository's gate file for a day (`default_branch`, `default_branch_at`; the attempt record and
-  the memory keep each other), and stays silent when gh cannot say - it never guesses. Tests:
+  (`gh repo view <owner/name> --json defaultBranchRef`, under the same deadline), remembers the
+  answer for a day (`default_branch`, `default_branch_at`; in a file of its own since the fix below,
+  `ci-check-<hash>.branch.json`, so the attempt record and the memory cannot drop each other), and
+  stays silent when gh cannot say - it never guesses. Tests:
   `ci_check.rs`'s `the_check_asks_github_for_the_default_branch_when_the_clone_does_not_know` and the
   end-to-end `without_origin_head_the_check_asks_github_for_the_default_branch`.
 - **Two session starts in one repository ask once (F31-3, F30-3, F31-5, F30-6).** The hook's daily
@@ -655,7 +896,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - **"Cannot tell" on Linux too (F12-1).** A `/proc/<pid>` that exists but cannot be read
   (permission, `hidepid=1`) now reads as "cannot tell" (a blank start time), never "gone"; so does a
   pid `/proc` hides altogether (`hidepid=2` / `invisible`) unless `kill -0` reports no such
-  process; and a zombie reads as gone, as the documentation always said. Test:
+  process; a missing `/proc/<pid>` without hidden pids is gone whatever error the read gave (see
+  the fix below); and a zombie reads as gone, as the documentation always said. Test:
   `an_unreadable_proc_entry_is_cannot_tell_never_gone` (Linux).
 - **A repository is recognised the way git recognises one (F13-2).** The hook's own root search (no
   process started) took any `.git` directory holding `HEAD`. It now applies git's own test: `HEAD`,
@@ -668,7 +910,9 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   (F36-1 .. F36-8).** A review of the S1 move found that what surrounds its one rename could split
   a project's journal and reports between two folders, write through a link, or be set off by a
   command that only reads. Now: (F36-1) the move is made under an exclusive lock file in the
-  repository's git directory (pid and start time inside, taken over when its owner is gone); a
+  repository's git directory (pid and start time inside; taken over when its owner is gone, when
+  its owner cannot be shown alive - another host's - and it is older than 10 minutes, or when it
+  does not parse and is older than 10 seconds; since R7b never while its owner lives); a
   command that cannot take it within a few seconds, and any rename error, reads the state again -
   `.c3/` there and `.eck/` gone means the move happened and `.c3/` is used - and every writer takes
   its folder from the state as it is now, so no path under `.eck/` is ever created again after the
@@ -768,10 +1012,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   included. Every patch now passes through the redactor packs for remote models use: a
   secret-shaped value is replaced by its `[REDACTED:<kind>]` marker, the rest is kept, the sha256 is
   of the file as written, the ledger's `diff` record gains `redactions` and the prompt says the
-  patch is for reading and how many values were redacted. Untracked files stay in for the
-  one-revision form (they are the change), but a file a `.eckignore` excludes, or a TRACKED file the
-  repository's ignore rules match, never enters a patch of either form. Test: a patch with an
-  OpenRouter-shaped key, an untracked note, an `.eckignore`d file and a force-added ignored file.
+  patch is for reading and how many values were redacted. (0.2.5 R8) Untracked files enter the
+  one-revision form only with `--diff-untracked` (see Changed); a file a `.eckignore` excludes, or a
+  TRACKED file the repository's ignore rules match, never enters a patch of either form. Test: a
+  patch with an OpenRouter-shaped key, an untracked note, an `.eckignore`d file and a force-added
+  ignored file.
 - **One patch file per content (F19-3, F20-3).** The patch was named after the brief only, so two
   runs (or two panel members) with different ranges wrote the same path and a ledger `diff.sha256`
   could describe bytes another run wrote. The file is now `<stem>.<sha8>.patch`, written by an
@@ -1000,16 +1245,14 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   exactly as for a preflight refusal - not a provider capability failure. A stageable brief is
   always staged or the run refused, so the prompt says "copied in" only when the copy was made.
 - **The agy write classifier neither passes a real write nor fails a pure read (F11-1, F10-1,
-  F10-2).** The parameters of all events of one tool step (ACTIVE / DONE / ERROR, also when one of
-  them carries no name) are merged, so an empty first object no longer hides the command a later
-  event logs; a tool not on the reader allow-list counts as writing whatever its parameters are
-  named, a reader whose parameters carry a command at any depth (or a command-shaped value outside
-  a search term) too, and agy's Cascade-vocabulary readers (`list_dir`, `grep_search`,
+  F10-2).** All events of one tool step (ACTIVE / DONE / ERROR, also when one of them carries no
+  name) are merged, so a name that arrives late is not lost; a tool not on the reader allow-list
+  counts as writing, and agy's Cascade-vocabulary readers (`list_dir`, `grep_search`,
   `find_by_name`, ...) joined the allow-list, so a pure read with them no longer fails a complete
   reply. The hand-over exemption needs a verified `finish` call (named `finish`, closed by a finish
-  event), never a step index alone. A tree change agy's log does not explain is reported as
-  "unattributed", never as someone else's; the integration test whose launcher writes the file
-  itself now says so.
+  event), never a step index alone. (0.2.5 R8) The parameter scanning this wave added is gone: a
+  step is judged by its tool's name, the classification is recorded, and agy's throwaway worktree
+  decides the run (see Changed).
 - **An agy reply whose brief or artifact changed during the run is not recorded as usable
   (F11-2).** A change of a BOUND input while agy read it is classified apart from ambient drift: the
   outcome fails (class `permission`, as a failed read-only check) with a message naming the changed
@@ -1302,12 +1545,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - **agy's (Gemini's) reply is no longer thrown away by the tree check.** Every agy panel seat of
   2026-11-07 was marked FAILED although its reply was complete: agy's `finish` call - its normal
   reply hand-over - was taken for a writing tool, and files that workers and the coordinator edited
-  meanwhile failed the post-check. A tool step is now judged from agy's own tool log: it is a write
-  only when it names a path, file, directory or command and is not a known reader, or when its
-  parameters were not logged; the `finish` hand-over and a tool given no path or command are not.
-  When the reply file and `reply.json` are complete and schema-valid, a tree or collab change the
-  log does not explain is a warning (`... - reply kept`) and the ledger entry and scoreboard mark
-  are written; a real writing call still fails the run. `c3 providers` now prints, per reviewer over
+  meanwhile failed the post-check. The `finish` hand-over is not a writing call. (0.2.5 R8) agy now
+  reviews a throwaway worktree of HEAD: a change of the live tree is only a warning, a change of
+  its worktree fails the run, and a writing tool in its log beside an unchanged worktree is a
+  warning (see Changed). `c3 providers` now prints, per reviewer over
   its 14-day ledger window, `usable / failed with a reply / failed without a reply`, and `--json`
   carries it as `reply_outcomes` (per row, and per entry with `--short`).
 - **A kimi seat no longer answers without its brief, and a panel member no longer sees a sibling's

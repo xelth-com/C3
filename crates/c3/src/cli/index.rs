@@ -820,6 +820,19 @@ fn lock_in_state_dir(ctx: &Ctx) -> Result<IndexLock, String> {
 #[cfg(feature = "index-surreal")]
 fn take_index_lock(state_dir: &Path) -> Result<IndexLock, String> {
     let dir = state_dir;
+    // (0.2.5 R7b, F48-2) the legacy folder is never created again: a `.eck` that is gone now (the
+    // folder moved after it was resolved) is a refusal, not a new directory
+    let legacy_gone = !dir.is_dir()
+        && dir.file_name().is_some_and(|n| {
+            crate::state_dir::names_equal(&n.to_string_lossy(), crate::state_dir::LEGACY_STATE_DIR)
+        });
+    if legacy_gone {
+        return Err(format!(
+            "{} is gone (the project folder moved to {}/) - run the command again",
+            dir.display(),
+            crate::state_dir::STATE_DIR
+        ));
+    }
     std::fs::create_dir_all(dir).map_err(|e| format!("index.lock dir: {e}"))?;
     let path = dir.join("index.lock");
     match try_open_exclusive(&path) {

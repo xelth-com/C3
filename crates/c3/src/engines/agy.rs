@@ -398,88 +398,23 @@ pub struct AgyEvents {
     /// `tool_name` of EVERY `step_update` with `step_type` `"tool"`, in order (the orchestrator's
     /// tree check names these in its messages and treats an empty list as "no tool call").
     pub tool_names: Vec<String>,
-    /// (A1) The name of every tool STEP (one per `step_index`, its ACTIVE/DONE/ERROR events merged)
-    /// that may have written, as decided from the step's own tool-log entry by
-    /// [`super::tree_check::agy_tool_step_is_writing`]: its name, the `tool_info.parameters` agy
-    /// logged for it, and whether it is the run's hand-over step (the step whose index the stream's
-    /// `step_type: "finish"` event closes - agy's `finish` tool, the reply hand-over). Empty when
-    /// every tool step was read-only or touched no file.
+    /// (A1; 0.2.5 R8) The name of every tool STEP (one per `step_index`, its ACTIVE/DONE/ERROR
+    /// events merged) that counts as writing by its NAME
+    /// ([`super::tree_check::agy_tool_step_is_writing`]: not on the reader allow-list, and not the
+    /// run's verified hand-over step - the step whose index the stream's `step_type: "finish"`
+    /// event closes). Recorded; the run's outcome turns on its throwaway worktree. Empty when every
+    /// tool step was a reader.
     pub writing_tool_names: Vec<String>,
     /// The first `result.denied_actions[].display_name` (else `.action`).
     pub denied_action: String,
 }
 
 /// (A1) One agy tool step as its event log recorded it: the `step_index` (when the stream names
-/// one), the tool name (the first non-empty one any event of the step carried) and the logged
-/// `tool_info.parameters` MERGED over every event of the step ([`merge_parameters`]).
+/// one) and the tool name - the first non-empty one any event of the step carried (F10-2: the name
+/// can arrive late, on the DONE event of a step whose ACTIVE event named none).
 struct AgyToolStep {
     index: Option<i64>,
     name: String,
-    parameters: Option<Value>,
-}
-
-/// (F10-2, F11-1, F24-4) Merge one event's logged parameters into a step's, at EVERY depth, so no
-/// event's evidence is lost before the step is classified: an empty value (`null`, `""`, `{}`,
-/// `[]`) gives way to a non-empty one (an empty ACTIVE object followed by a populated DONE command
-/// keeps the command); two objects are united key by key, recursively (a later event's command
-/// under a key whose object already has other keys is kept: `{"config":{"cwd":"."}}` then
-/// `{"config":{"action":"rm -rf x"}}`); two arrays are united; and two different non-empty values
-/// that cannot be united are BOTH kept, as an array under that key - so a command-shaped value from
-/// any event is never dropped (the classifier reads an array with the role of its key).
-fn merge_parameters(into: &mut Option<Value>, next: Option<Value>) {
-    fn empty(v: &Value) -> bool {
-        match v {
-            Value::Null => true,
-            Value::String(s) => s.is_empty(),
-            Value::Object(m) => m.is_empty(),
-            Value::Array(a) => a.is_empty(),
-            _ => false,
-        }
-    }
-    fn merge(cur: &mut Value, next: Value) {
-        if empty(&next) || *cur == next {
-            return;
-        }
-        if empty(cur) {
-            *cur = next;
-            return;
-        }
-        match (cur, next) {
-            (Value::Object(c), Value::Object(n)) => {
-                for (k, v) in n {
-                    match c.get_mut(&k) {
-                        Some(old) => merge(old, v),
-                        None => {
-                            c.insert(k, v);
-                        }
-                    }
-                }
-            }
-            (Value::Array(a), Value::Array(n)) => {
-                for x in n {
-                    if !a.contains(&x) {
-                        a.push(x);
-                    }
-                }
-            }
-            (Value::Array(a), n) => {
-                if !a.contains(&n) {
-                    a.push(n);
-                }
-            }
-            (c, n) => {
-                let old = std::mem::take(c);
-                *c = Value::Array(vec![old, n]);
-            }
-        }
-    }
-    let Some(next) = next else {
-        return;
-    };
-    match into.as_mut() {
-        None => *into = Some(next),
-        Some(cur) => merge(cur, next),
-    }
 }
 
 /// Parse one agy event stream tolerantly. `allow_partial_last` lets the LAST non-empty line be a
@@ -526,13 +461,8 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
                         // an unnamed tool step is kept too: the classifier counts an empty
                         // name as writing (Grok, review-2026-10-30)
                         r.tool_names.push(tn.clone());
-                        let parameters = su
-                            .get("tool_info")
-                            .and_then(|ti| ti.get("parameters"))
-                            .filter(|p| !p.is_null())
-                            .cloned();
                         // (F10-2) the events of ONE step (same index) merge, also when one of
-                        // them carries no tool name (a parameter-less ACTIVE, a named DONE)
+                        // them carries no tool name (an unnamed ACTIVE, a named DONE)
                         let known = index.and_then(|ix| {
                             steps.iter_mut().find(|s| {
                                 s.index == Some(ix)
@@ -544,13 +474,8 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
                                 if s.name.is_empty() {
                                     s.name = tn;
                                 }
-                                merge_parameters(&mut s.parameters, parameters);
                             }
-                            None => steps.push(AgyToolStep {
-                                index,
-                                name: tn,
-                                parameters,
-                            }),
+                            None => steps.push(AgyToolStep { index, name: tn }),
                         }
                     } else if step_type == Some("finish") {
                         if let Some(ix) = index {
@@ -585,11 +510,7 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
             // alone (a write step sharing an index with a finish event stays a write)
             let verified_finish = s.name.trim().eq_ignore_ascii_case("finish")
                 && s.index.is_some_and(|ix| finish_steps.contains(&ix));
-            super::tree_check::agy_tool_step_is_writing(
-                &s.name,
-                s.parameters.as_ref(),
-                verified_finish,
-            )
+            super::tree_check::agy_tool_step_is_writing(&s.name, verified_finish)
         })
         .map(|s| s.name.clone())
         .collect();
@@ -1067,7 +988,7 @@ mod tests {
             .tool_names
             .iter()
             .any(|t| crate::engines::tree_check::agy_tool_is_writing(t)));
-        // (A1) the unnamed step logged no parameters: its nature is unknown, so it is writing.
+        // (A1) an unnamed step is not a reader on the allow-list: it is writing.
         assert_eq!(e.writing_tool_names, vec![String::new()]);
     }
 
@@ -1105,12 +1026,11 @@ mod tests {
         assert_eq!(e.writing_tool_names, vec!["run_command".to_string()]);
     }
 
-    /// (F11-1, F10-1, F10-2) The step's events are merged before it is classified: a write step that
-    /// logs an EMPTY object on ACTIVE and its command on DONE is a write (the reviewer's Verify); a
-    /// read step whose ACTIVE carries no name and no parameters and whose DONE names `read_file` is a
-    /// read (a pure read must not fail); a write step sharing its index with a finish event is still
-    /// a write (the exemption needs a verified finish call); a command nested under an unknown key
-    /// is a write.
+    /// (F11-1, F10-2; 0.2.5 R8) The step's events are merged before it is classified by its name: a
+    /// write step is a write; a read step whose ACTIVE carries no name and whose DONE names
+    /// `read_file` is a read (the name arrives late); a write step sharing its index with a finish
+    /// event is still a write (the exemption needs a verified finish call); an unknown tool is a
+    /// write.
     #[test]
     fn a_steps_events_are_merged_before_it_is_classified() {
         let ev = |ix: i64, state: &str, ty: &str, name: &str, params: &str| {
@@ -1202,14 +1122,12 @@ mod tests {
             e.writing_tool_names
         );
     }
-    /// (F24-4, F32-3) One classifier, one table: each row is a step's events (merged at every depth
-    /// before the step is classified) and whether the step writes. A later event's command under a
-    /// key whose object already has keys is kept (F24-4, the reviewer's RC1); a file name - a value
-    /// under a path / file / directory / uri key of an allow-listed reader - is data, never a command
-    /// (F32-3: `notes&&draft.md`); a value under another key, or under a key the reader's schema does
-    /// not have, is scanned; an unknown tool stays writing.
+    /// (0.2.5 R8, F51-1 / F52-1 / F53-2) One classifier, by the tool's name: each row is a step's
+    /// events and whether the step writes. A tool on the reader allow-list is a reader whatever its
+    /// parameters carry - a "command" under any key, a file named like a command line, a key named
+    /// like a write -; any other tool is a writer whatever it names.
     #[test]
-    fn agy_steps_merge_at_every_depth_and_read_reader_parameters_by_their_role() {
+    fn agy_readers_are_readers_whatever_their_parameters_say() {
         let ev = |state: &str, name: &str, params: &str| {
             format!(
                 r#"{{"event":"step_update","step_update":{{"step_index":3,"state":"{state}","step_type":"tool","tool_name":"{name}","tool_info":{{"name":"{name}","parameters":{params}}}}}}}"#
@@ -1218,34 +1136,35 @@ mod tests {
         // (tool name, its events as (state, parameters), whether the step writes)
         type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
         let table: &[Row] = &[
-            // F24-4: ACTIVE {"config":{"cwd":"."}}, DONE {"config":{"action":"rm -rf x"}}
+            // the reviewers' shapes: a command under a reader's key is a file name or a pattern
+            ("read_file", &[("ACTIVE", r#"{"path":"rm -rf x"}"#)], false),
             (
                 "read_file",
                 &[
                     ("ACTIVE", r#"{"config":{"cwd":"."}}"#),
                     ("DONE", r#"{"config":{"action":"rm -rf x"}}"#),
                 ],
-                true,
+                false,
             ),
-            // a later scalar that differs is kept beside the first: a command is never dropped
             (
                 "view_file",
                 &[
                     ("ACTIVE", r#"{"Mode":"plain"}"#),
-                    ("DONE", r#"{"Mode":"del a.rs"}"#),
+                    ("DONE", r#"{"Mode":"sudo rm -rf x"}"#),
                 ],
-                true,
+                false,
             ),
-            // ... and a command-like key from any event is a write
             (
                 "read_file",
                 &[
                     ("ACTIVE", r#"{"Path":"a.md"}"#),
-                    ("DONE", r#"{"opts":{"CommandLine":"x"}}"#),
+                    (
+                        "DONE",
+                        r#"{"Path":"del b.rs","opts":{"CommandLine":"cat f | sh"}}"#,
+                    ),
                 ],
-                true,
+                false,
             ),
-            // F32-3: a file name is data, at the top and nested, in an array too
             (
                 "read_file",
                 &[("ACTIVE", r#"{"Path":"notes&&draft.md"}"#)],
@@ -1283,25 +1202,19 @@ mod tests {
                 &[("ACTIVE", r#"{"Query":"git diff && x","SearchPath":"C:/r"}"#)],
                 false,
             ),
-            // a key the reader's schema does not have is scanned; a redirect is not a directory
             (
                 "read_file",
                 &[("ACTIVE", r#"{"Path":"a.md","note":"rm -rf x"}"#)],
-                true,
+                false,
             ),
-            (
-                "read_file",
-                &[("ACTIVE", r#"{"redirect":"echo x > a.txt"}"#)],
-                true,
-            ),
-            // a file-name key whose name is also a write marker writes
             (
                 "read_file",
                 &[("ACTIVE", r#"{"OverwriteFile":"a.md"}"#)],
-                true,
+                false,
             ),
-            // an unknown tool stays writing, whatever it names
+            // any other tool is a writer, whatever it names (a path only, or nothing)
             ("open_notes", &[("ACTIVE", r#"{"Path":"notes.md"}"#)], true),
+            ("run_command", &[("ACTIVE", "{}")], true),
         ];
         for (name, events, writing) in table {
             let s = events

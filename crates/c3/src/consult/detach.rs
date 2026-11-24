@@ -130,6 +130,64 @@ pub fn note_engine_stream(note: NotedStream) {
     }
 }
 
+/// (0.2.5 R8, F10-7 / F52-4) Where a panel MEMBER notes the stream of its current turn - keyed by
+/// its handoff number, in the task directory (`.consult.stream-<NN>.json`, a bridge control file
+/// the tree checks ignore): a member is a process of its own, so it cannot write the panel's status
+/// record. A member that ends normally removes it ([`drop_member_stream`]); one that dies leaves it,
+/// and the panel's death record reads it ([`build_run_death`]).
+pub fn member_stream_path(task_dir: &Path, handoff: &str) -> PathBuf {
+    task_dir.join(format!(".consult.stream-{}.json", handoff.trim()))
+}
+
+/// (0.2.5 R8, F10-7) A panel member notes the stream of the turn it is starting (every turn
+/// transition), replacing its earlier note by one rename. Best effort.
+pub fn note_member_stream(task_dir: &Path, note: &NotedStream) {
+    let path = member_stream_path(task_dir, &note.handoff);
+    let Ok(text) = serde_json::to_string(note) else {
+        return;
+    };
+    let tmp = task_dir.join(format!(
+        ".consult.stream-{}.{}.tmp",
+        note.handoff.trim(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    if std::fs::write(&tmp, text).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// (0.2.5 R8, F10-7) A panel member that ended normally removes its stream note. Best effort.
+pub fn drop_member_stream(task_dir: &Path, handoff: &str) {
+    let _ = std::fs::remove_file(member_stream_path(task_dir, handoff));
+}
+
+/// (0.2.5 R8, F10-7) The stream notes the run's panel members left (members that did not end
+/// normally): the one whose stream was written last (by its file's modification time, resolved
+/// against `bases`), `None` when no member left one.
+fn member_stream_note(
+    task_dir: &Path,
+    bases: &[PathBuf],
+    members: &[DetachedMember],
+) -> Option<NotedStream> {
+    let mtime = |p: &str| {
+        bases
+            .iter()
+            .map(|b| b.join(p))
+            .find(|c| c.is_file())
+            .and_then(|c| std::fs::metadata(c).and_then(|m| m.modified()).ok())
+    };
+    members
+        .iter()
+        .filter(|m| !m.handoff.trim().is_empty())
+        .filter_map(|m| {
+            let text = std::fs::read_to_string(member_stream_path(task_dir, &m.handoff)).ok()?;
+            serde_json::from_str::<NotedStream>(&text)
+                .ok()
+                .filter(|n| !n.events_file.is_empty())
+        })
+        .max_by_key(|n| mtime(&n.events_file))
+}
+
 /// Replace the members of the detached run (a panel once its seats are known), and save.
 pub fn set_members(members: Vec<DetachedMember>) {
     if let Ok(mut g) = sink().lock() {
@@ -218,6 +276,9 @@ struct DetachArgs {
     /// (0.2.5 D1) the run's `--diff-tracked-only`.
     #[serde(default)]
     diff_tracked_only: bool,
+    /// (0.2.5 R8) the run's `--diff-untracked`.
+    #[serde(default)]
+    diff_untracked: bool,
     #[serde(default)]
     reply_name: String,
     #[serde(default)]
@@ -341,6 +402,7 @@ impl DetachArgs {
             rev: o.rev.clone(),
             diff: o.diff.clone(),
             diff_tracked_only: o.diff_tracked_only,
+            diff_untracked: o.diff_untracked,
             reply_name: o.reply_name.clone(),
             artifacts: artifacts_abs,
             raw: o.raw,
@@ -409,6 +471,7 @@ impl DetachArgs {
             rev: self.rev,
             diff: self.diff,
             diff_tracked_only: self.diff_tracked_only,
+            diff_untracked: self.diff_untracked,
             reply_name: self.reply_name,
             artifacts: self.artifacts,
             raw: self.raw,
@@ -1376,9 +1439,10 @@ fn engine_evidence(
 /// status record on every turn transition) replaces the one its own pending record names
 /// (`pending`): when the two name different streams (by file name), the stream written LAST wins -
 /// the events file with the newer modification time (paths resolved against `bases`) - and the
-/// note on a tie or when either time is unknown, since the note carries the turn transitions. A
-/// pending record that still names the main stream (its rewrite failed, or a later rewrite of the
-/// record kept its old `events`) therefore never hides a later continuation stream.
+/// note on a tie or when EITHER time is unknown ((0.2.5 R8, F51-6 / F52-4) a noted file that cannot
+/// be resolved included), since the note carries the turn transitions. A pending record that still
+/// names the main stream (its rewrite failed, or a later rewrite of the record kept its old
+/// `events`) therefore never hides a later continuation stream.
 fn noted_stream_wins(pending: &str, noted: &str, bases: &[PathBuf]) -> bool {
     if noted.is_empty() {
         return false;
@@ -1401,7 +1465,6 @@ fn noted_stream_wins(pending: &str, noted: &str, bases: &[PathBuf]) -> bool {
     };
     match (mtime(pending), mtime(noted)) {
         (Some(p), Some(n)) => n >= p,
-        (Some(_), None) => false,
         _ => true,
     }
 }
@@ -1445,6 +1508,14 @@ fn build_run_death(input: &RunDeathInputs) -> DeathRecord {
         now,
     } = input;
     let log_text = read_log_tail(log_path, 40);
+    // (0.2.5 R8, F10-7) a panel names no stream of its own: the stream a member that did not end
+    // normally noted on its last turn transition describes it
+    let member_note = if noted.is_none() {
+        member_stream_note(task_dir, bases, &record.members)
+    } else {
+        None
+    };
+    let noted = noted.or(member_note.as_ref());
     // (F11-11) the run's own handoffs: its members' numbers, and the one its stream note names
     let mut run_handoffs: Vec<String> = record
         .members
@@ -2383,6 +2454,107 @@ mod tests {
         assert_eq!(d.last_event, "2026-11-15T10:09:58Z");
         assert!(!d.events_mtime.is_empty());
         assert_eq!(d.partial_hint, noted.partial_hint);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (0.2.5 R8, F51-6 / F52-4) the note wins whenever the two times cannot be compared: the noted
+    // stream does not resolve while the pending one does, or both carry the same time.
+    #[test]
+    fn the_note_wins_when_the_stream_times_cannot_be_compared() {
+        let dir = std::env::temp_dir().join(format!("c3-tie-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(dir.join("handoffs")).unwrap();
+        let bases = vec![dir.clone()];
+        let main = "handoffs/03-codex-me.events.jsonl";
+        let cont = "handoffs/03-codex-me.continue.events.jsonl";
+        std::fs::write(dir.join(main), "{}\n").unwrap();
+        // the noted continuation cannot be resolved under the bases: the note wins
+        assert!(noted_stream_wins(
+            main,
+            "elsewhere/03-codex-me.continue.events.jsonl",
+            &bases
+        ));
+        // both resolve with the same modification time: the note wins
+        std::fs::write(dir.join(cont), "{}\n").unwrap();
+        let t = std::fs::metadata(dir.join(main))
+            .unwrap()
+            .modified()
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(dir.join(cont))
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+        assert!(noted_stream_wins(main, cont, &bases));
+        // a strictly older noted stream loses
+        std::fs::File::options()
+            .write(true)
+            .open(dir.join(cont))
+            .unwrap()
+            .set_modified(t - std::time::Duration::from_secs(60))
+            .unwrap();
+        assert!(!noted_stream_wins(main, cont, &bases));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (0.2.5 R8, F10-7) a panel member notes its stream on every turn transition, keyed by its
+    // handoff number: a member that died in a later turn describes the panel's death record by its
+    // own stream; a member that ended normally removed its note.
+    #[test]
+    fn a_panel_death_record_takes_the_stream_its_dead_member_noted() {
+        let dir = std::env::temp_dir().join(format!("c3-member-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(dir.join("handoffs")).unwrap();
+        let bases = vec![dir.clone()];
+        let cont = dir
+            .join("handoffs")
+            .join("04-grok-me.continue.events.jsonl");
+        std::fs::write(&cont, "{\"ts\":\"2026-11-15T10:05:00Z\"}\n").unwrap();
+        let note = |h: &str, ev: &Path| NotedStream {
+            handoff: h.into(),
+            turn: "continuation".into(),
+            events_file: ev.to_string_lossy().to_string(),
+            ..Default::default()
+        };
+        // member 03 ended normally (noted, then dropped); member 04 died in its continuation
+        note_member_stream(
+            &dir,
+            &note("03", &dir.join("handoffs").join("03-codex-me.events.jsonl")),
+        );
+        drop_member_stream(&dir, "03");
+        note_member_stream(
+            &dir,
+            &note("04", &dir.join("handoffs").join("04-grok-me.events.jsonl")),
+        );
+        note_member_stream(&dir, &note("04", &cont));
+        assert!(!member_stream_path(&dir, "03").exists());
+        let id = "abcdef12-0000-0000-0000-00000000bbbb";
+        let paths = detached_paths(&dir, id);
+        let member = |h: &str| DetachedMember {
+            handoff: h.into(),
+            ..Default::default()
+        };
+        let rec = DetachedRecord {
+            id: id.into(),
+            id8: paths.id8.clone(),
+            kind: "panel".into(),
+            state: "running".into(),
+            members: vec![member("03"), member("04")],
+            started: Some((Utc::now() - chrono::Duration::seconds(30)).to_rfc3339()),
+            ..Default::default()
+        };
+        let d = build_run_death(&RunDeathInputs {
+            record: &rec,
+            log_path: &paths.log,
+            task_dir: &dir,
+            bases: &bases,
+            noted: None,
+            recorded_by: "reader",
+            bridge_alive: false,
+            child_exit: None,
+            now: Utc::now(),
+        });
+        assert_eq!(d.events_file, cont.to_string_lossy());
+        assert_eq!(d.last_event, "2026-11-15T10:05:00Z");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

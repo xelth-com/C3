@@ -23,17 +23,23 @@
 //! it, and the temporary file is created, renamed onto the file and - on a failure - removed
 //! relative to the file's directory handle ([`crate::contain::publish`]). A directory swapped for a
 //! link between the last check and the rename cannot carry the replacement out of the repository.
+//! (0.2.5 R7b, F43-5) The candidates are found the same way: `.claude/agents` is listed and each
+//! file read through those handles ([`read_candidate`]), so a linked `.claude`, `.claude/agents` or
+//! file supplies no bytes - it is reported with the edit path's refusal ([`NOT_READ`] for the
+//! values) and nothing is read through it.
 //!
 //! It is used from two places: `c3 doctor --fix` (which then re-reports what is left) and the
 //! `c3 hook` SessionStart line (automatic, default ON, off with `C3_REPO_MODELS=off` or
 //! `"repo_models": false` in `<codex home>/c3/config.json`). Inside a child C3 started
 //! (`C3_CHILD`) it does nothing at all.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use c3_core::claude::model_family;
 use c3_core::roster::Roster;
 
+use crate::contain::Step;
 use crate::maintain::models::{dated_older, ModelsState};
 use crate::maintain::version::{parse_model_id, successor};
 use crate::setup::doctor::{agent_model, frontmatter_model, pinned_agent_model};
@@ -196,58 +202,117 @@ fn refresh_repo_models_at(
     models_state: &ModelsState,
 ) -> RepairReport {
     let mut report = RepairReport::default();
+    // (0.2.5 R7b, F43-5) The candidates are listed and read through handles from the repository
+    // root, as the edit reaches them: a link on the way is reported with the edit path's refusal
+    // and nothing is read through it ([`read_candidate`]).
+    let Ok(root) = crate::contain::Root::open_anchor(repo_root) else {
+        return report;
+    };
+    let unread = |report: &mut RepairReport, file: String, why: String| {
+        report.problems.push(RepairProblem {
+            file,
+            old: NOT_READ.to_string(),
+            new: NOT_READ.to_string(),
+            why,
+        })
+    };
 
-    // 1. `.claude/agents/*.md` pins -> the alias. The directory is read even when it is a link
-    //    (reading cannot harm, and the refused repair is then reported); an edit needs `.claude`
-    //    and `.claude/agents` to be real directories and the file a plain file with one name.
-    let claude_dir = repo_root.join(".claude");
-    let agents = claude_dir.join("agents");
-    let mut names: Vec<std::ffi::OsString> = std::fs::read_dir(&agents)
-        .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
-        .unwrap_or_default();
-    names.sort();
-    for name in names {
-        let name = name.to_string_lossy().to_string();
-        if !name.to_lowercase().ends_with(".md") {
-            continue;
+    // 1. `.claude/agents/*.md` pins -> the alias. An edit needs `.claude` and `.claude/agents` to be
+    //    real directories and the file a plain file with one name.
+    match open_dirs(&root, &[".claude", "agents"]) {
+        Ok(agents) => {
+            for name in crate::contain::list(&agents).unwrap_or_default() {
+                let name = name.to_string_lossy().to_string();
+                if !name.to_lowercase().ends_with(".md") {
+                    continue;
+                }
+                let file = format!(".claude/agents/{name}");
+                let snapshot = match crate::contain::read_file_in(&agents, OsStr::new(&name)) {
+                    Ok(b) => b,
+                    Err(why @ Step::Link { .. }) => {
+                        unread(&mut report, file, file_refusal(&why));
+                        continue;
+                    }
+                    Err(_) => continue,
+                };
+                let Ok(content) = std::str::from_utf8(&snapshot) else {
+                    continue;
+                };
+                if let Some((new_content, old, new)) = rewrite_agent_model(content) {
+                    let edit = Edit {
+                        file,
+                        root: repo_root,
+                        snapshot: &snapshot,
+                        new_content: new_content.as_bytes(),
+                    };
+                    apply(&mut report, &edit, old, new);
+                }
+            }
         }
-        let path = agents.join(&name);
-        let Ok(snapshot) = std::fs::read(&path) else {
-            continue;
-        };
-        let Ok(content) = std::str::from_utf8(&snapshot) else {
-            continue;
-        };
-        if let Some((new_content, old, new)) = rewrite_agent_model(content) {
-            let edit = Edit {
-                file: format!(".claude/agents/{name}"),
-                root: repo_root,
-                snapshot: &snapshot,
-                new_content: new_content.as_bytes(),
-            };
-            apply(&mut report, &edit, old, new);
-        }
+        Err((Step::Link { .. }, why)) => unread(&mut report, ".claude/agents".to_string(), why),
+        Err(_) => {}
     }
 
     // 2. The repository-root `AGENTS.md` -> the roster's successor (the same safety rules).
-    let agents_md = repo_root.join("AGENTS.md");
-    if let Ok(snapshot) = std::fs::read(&agents_md) {
-        if let Ok(content) = std::str::from_utf8(&snapshot) {
-            if let Some((new_content, old, new)) =
-                rewrite_agents_md_model(content, roster_models, models_state)
-            {
-                let edit = Edit {
-                    file: "AGENTS.md".to_string(),
-                    root: repo_root,
-                    snapshot: &snapshot,
-                    new_content: new_content.as_bytes(),
-                };
-                apply(&mut report, &edit, old, new);
+    match read_candidate(&root, "AGENTS.md") {
+        Candidate::Bytes(snapshot) => {
+            if let Ok(content) = std::str::from_utf8(&snapshot) {
+                if let Some((new_content, old, new)) =
+                    rewrite_agents_md_model(content, roster_models, models_state)
+                {
+                    let edit = Edit {
+                        file: "AGENTS.md".to_string(),
+                        root: repo_root,
+                        snapshot: &snapshot,
+                        new_content: new_content.as_bytes(),
+                    };
+                    apply(&mut report, &edit, old, new);
+                }
             }
         }
+        Candidate::Refused(why) => unread(&mut report, "AGENTS.md".to_string(), why),
+        Candidate::Absent => {}
     }
 
     report
+}
+
+/// (0.2.5 R7b, F43-5) What a [`RepairProblem`] names as the old and new value of a candidate that
+/// was not read (a link on its way). Such an entry is not a failed repair: nothing behind a link is
+/// read, so no repair is known to be due - the SessionStart line leaves it out
+/// ([`hook_line_for`]) and `c3 doctor` names it without counting it as a finding. A repository
+/// whose `AGENTS.md` is a link to `CLAUDE.md` is an ordinary one.
+pub const NOT_READ: &str = "(not read)";
+
+/// (0.2.5 R7b, F43-5) A repair candidate, read as the edit reaches it.
+pub(crate) enum Candidate {
+    /// Its bytes, read through handles from the repository root, nothing on the way followed.
+    Bytes(Vec<u8>),
+    /// Not there, not a regular file or not readable: nothing to repair (nothing is said).
+    Absent,
+    /// A link on its way, or the file itself a link: the edit path's refusal, word for word.
+    /// Nothing was read through it.
+    Refused(String),
+}
+
+/// (0.2.5 R7b, F43-5) The repository-relative `file` (`/`-separated) read from `root`'s handle the
+/// way [`replace_file`] reaches it: each directory opened without following it, the file opened
+/// without following it and checked on its handle ([`crate::contain::read_file_in`]).
+pub(crate) fn read_candidate(root: &crate::contain::Root, file: &str) -> Candidate {
+    let parts: Vec<&str> = file.split('/').filter(|p| !p.is_empty()).collect();
+    let Some((leaf, dirs)) = parts.split_last() else {
+        return Candidate::Absent;
+    };
+    let dir = match open_dirs(root, dirs) {
+        Ok(d) => d,
+        Err((Step::Link { .. }, why)) => return Candidate::Refused(why),
+        Err(_) => return Candidate::Absent,
+    };
+    match crate::contain::read_file_in(&dir, OsStr::new(leaf)) {
+        Ok(b) => Candidate::Bytes(b),
+        Err(why @ Step::Link { .. }) => Candidate::Refused(file_refusal(&why)),
+        Err(_) => Candidate::Absent,
+    }
 }
 
 /// One planned edit: the file (repository-relative, `/`-separated - every directory on its way
@@ -291,32 +356,55 @@ fn open_edit_dir(edit: &Edit<'_>) -> Result<(cap_std::fs::Dir, std::ffi::OsStrin
     let Some((leaf, dirs)) = parts.split_last() else {
         return Err("it names no file - not edited".to_string());
     };
-    let mut dir = root
-        .dir()
-        .try_clone()
-        .map_err(|e| format!("the repository root cannot be opened ({e}) - not edited"))?;
+    let dir = open_dirs(&root, dirs).map_err(|(_, why)| why)?;
+    Ok((dir, std::ffi::OsString::from(leaf)))
+}
+
+/// The directories `dirs` below `root`, each opened relative to its parent's handle without
+/// following it ([`crate::contain::open_child`]). `Err`: the step that refused and the edit path's
+/// refusal naming the directory by its repository-relative path.
+fn open_dirs(
+    root: &crate::contain::Root,
+    dirs: &[&str],
+) -> Result<cap_std::fs::Dir, (Step, String)> {
+    let mut dir = match root.dir().try_clone() {
+        Ok(d) => d,
+        Err(e) => {
+            let why = format!("the repository root cannot be opened ({e}) - not edited");
+            return Err((Step::Io(e), why));
+        }
+    };
     let mut label = String::new();
     for d in dirs {
         if !label.is_empty() {
             label.push('/');
         }
         label.push_str(d);
-        dir = crate::contain::open_child(&dir, std::ffi::OsStr::new(d), false).map_err(|why| {
-            format!(
+        dir = crate::contain::open_child(&dir, OsStr::new(d), false).map_err(|why| {
+            let words = format!(
                 "{label} is {} or no directory, so the file may lie outside the repository - not edited",
                 step_link_words(&why)
-            )
+            );
+            (why, words)
         })?;
     }
-    Ok((dir, std::ffi::OsString::from(leaf)))
+    Ok(dir)
 }
 
 /// [`link_words`] from a refused step: a link names what it is, anything else both words.
-fn step_link_words(why: &crate::contain::Step) -> &'static str {
+pub(crate) fn step_link_words(why: &Step) -> &'static str {
     match why {
-        crate::contain::Step::Link { symlink } => reparse_words(*symlink, true),
+        Step::Link { symlink } => reparse_words(*symlink, true),
         _ => reparse_words(false, false),
     }
+}
+
+/// The edit path's refusal of a file that is not a plain regular file.
+fn file_refusal(why: &Step) -> String {
+    format!(
+        "it is {} or no regular file, so its target may lie outside the repository - not edited",
+        step_link_words(why)
+    )
 }
 
 /// (0.2.5 D4) The file `leaf` of `dir` opened without following it and checked on that handle: a
@@ -326,12 +414,7 @@ fn open_edit_file(
     dir: &cap_std::fs::Dir,
     leaf: &std::ffi::OsStr,
 ) -> Result<cap_std::fs::File, String> {
-    let f = crate::contain::open_file_in(dir, leaf).map_err(|why| {
-        format!(
-            "it is {} or no regular file, so its target may lie outside the repository - not edited",
-            step_link_words(&why)
-        )
-    })?;
+    let f = crate::contain::open_file_in(dir, leaf).map_err(|why| file_refusal(&why))?;
     let links = f
         .metadata()
         .map(|m| cap_fs_ext::MetadataExt::nlink(&m))
@@ -526,6 +609,10 @@ pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
 /// itself: a real directory (not a link) that is a git directory ([`is_git_dir`]), or a regular
 /// file (not a link) whose first line is `gitdir: <path>` naming one - relative paths against the
 /// file's own directory. Anything else is not.
+///
+/// (0.2.5 R7b, F46-5) A `.git` that is a link (a symlink, a junction, any reparse point) is
+/// rejected DELIBERATELY, although git itself would follow a symlinked `.git` to a git directory:
+/// C3 never follows a link there, so the hook repairs nothing in such a checkout.
 fn is_git_entry(dotgit: &Path) -> bool {
     let Ok(m) = std::fs::symlink_metadata(dotgit) else {
         return false;
@@ -571,9 +658,10 @@ fn is_git_entry(dotgit: &Path) -> bool {
 /// (0.2.5, F13-2) git's own test of a git directory (`is_git_directory` in git's `setup.c`): it
 /// holds `HEAD`, and its common directory - the one its `commondir` file names (relative paths
 /// against the directory itself: a linked worktree's `.git/worktrees/<name>` names `../..`), else
-/// the directory itself - holds an `objects` and a `refs` directory.
+/// the directory itself - holds an `objects` and a `refs` directory. (0.2.5 R7b, F46-5) `HEAD` must
+/// read as git reads it ([`valid_head`]).
 fn is_git_dir(dir: &Path) -> bool {
-    if !dir.is_dir() || !dir.join("HEAD").is_file() {
+    if !dir.is_dir() || !valid_head(&dir.join("HEAD")) {
         return false;
     }
     let common = match std::fs::read_to_string(dir.join("commondir")) {
@@ -592,6 +680,36 @@ fn is_git_dir(dir: &Path) -> bool {
         Err(_) => return false,
     };
     common.join("objects").is_dir() && common.join("refs").is_dir()
+}
+
+/// (0.2.5 R7b, F46-5) git's own test of `HEAD` (`validate_headref` in `setup.c`): a symref - `ref:`,
+/// optional white space, then a name under `refs/` - or a detached object id (its first 40
+/// characters hex digits: a SHA-1 id, or the start of a SHA-256 one), or git's old form, a symlink
+/// whose target starts with `refs/`. An empty file or anything else is no `HEAD`, so the directory
+/// is no repository.
+fn valid_head(head: &Path) -> bool {
+    use std::io::Read;
+    let Ok(m) = std::fs::symlink_metadata(head) else {
+        return false;
+    };
+    if m.file_type().is_symlink() {
+        return std::fs::read_link(head)
+            .is_ok_and(|t| t.to_string_lossy().replace('\\', "/").starts_with("refs/"));
+    }
+    if !m.is_file() {
+        return false;
+    }
+    let mut buf = Vec::new();
+    if std::fs::File::open(head)
+        .and_then(|f| f.take(255).read_to_end(&mut buf))
+        .is_err()
+    {
+        return false;
+    }
+    if let Some(rest) = buf.strip_prefix(b"ref:") {
+        return rest.trim_ascii_start().starts_with(b"refs/");
+    }
+    buf.len() >= 40 && buf[..40].iter().all(u8::is_ascii_hexdigit)
 }
 
 #[cfg(test)]
@@ -667,6 +785,65 @@ mod git_dir_tests {
         assert_eq!(find_repo_root(&wt), None);
         let _ = std::fs::remove_dir_all(&base);
     }
+
+    // (0.2.5 R7b, F46-5) `HEAD` decides as it does for git: a symref under `refs/` or a 40- / 64-hex
+    // object id makes a full git directory a repository; an empty or garbage `HEAD`, or a `ref:`
+    // outside `refs/`, does not. A `.git` that is a link to a real git directory stays rejected (C3
+    // never follows a link there, although git would).
+    #[test]
+    fn a_head_that_git_would_not_take_is_no_repository() {
+        let base = scratch("head");
+        let repo = base.join("repo");
+        let dotgit = repo.join(".git");
+        git_dir(&dotgit, true);
+        let head = dotgit.join("HEAD");
+        let sha1 = "0123456789abcdef0123456789abcdef01234567";
+        let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let cases: Vec<(String, bool)> = vec![
+            ("ref: refs/heads/main\n".into(), true),
+            ("ref:refs/heads/main".into(), true),
+            ("ref: \trefs/heads/x\n".into(), true),
+            (format!("{sha1}\n"), true),
+            (format!("{sha256}\n"), true),
+            (String::new(), false),
+            ("garbage\n".into(), false),
+            ("ref: heads/main\n".into(), false),
+            ("ref:\n".into(), false),
+            ("0123456789abcdef\n".into(), false),
+            (format!("{}g\n", &sha1[..39]), false),
+        ];
+        for (body, ok) in cases {
+            std::fs::write(&head, &body).unwrap();
+            assert_eq!(
+                find_repo_root(&repo),
+                ok.then(|| repo.clone()),
+                "HEAD {body:?}"
+            );
+        }
+        // a `.git` that is a link to a real git directory: rejected on purpose
+        let real = base.join("real.git");
+        git_dir(&real, true);
+        let linked = base.join("linked");
+        std::fs::create_dir_all(&linked).unwrap();
+        let link = linked.join(".git");
+        #[cfg(windows)]
+        let made = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&real)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        #[cfg(not(windows))]
+        let made = std::os::unix::fs::symlink(&real, &link).is_ok();
+        assert!(made, "the directory link was not made");
+        assert_eq!(find_repo_root(&linked), None);
+        #[cfg(windows)]
+        let _ = std::fs::remove_dir(&link);
+        #[cfg(not(windows))]
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 /// The hook's line for a repair pass: what was refreshed and what could not be, in one line;
@@ -678,9 +855,11 @@ pub fn hook_line_for(report: &RepairReport) -> Option<String> {
         .map(|f| format!("{} {} -> {}", f.file, f.old, f.new))
         .collect::<Vec<_>>()
         .join("; ");
+    // a candidate that was not read (a link on its way) is no failed repair: the hook is silent
     let failed = report
         .problems
         .iter()
+        .filter(|p| p.old != NOT_READ)
         .map(|p| format!("{} {} -> {}: {}", p.file, p.old, p.new, p.why))
         .collect::<Vec<_>>()
         .join("; ");
@@ -1069,6 +1248,99 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    // (0.2.5 R7b, F43-5) Discovery goes through the handles the edit uses: a linked `.claude`, a
+    // linked `.claude/agents` and a linked `AGENTS.md` are reported with the edit path's refusal,
+    // their values are "(not read)" - the pinned model behind the link never enters the report -
+    // and the files behind them keep their bytes. A file symlink on Windows needs a privilege: that
+    // half is skipped with a message when the system refuses it.
+    #[test]
+    fn discovery_never_reads_through_a_link_on_the_way() {
+        let dir_link = |link: &Path, target: &Path| {
+            #[cfg(windows)]
+            {
+                let ok = std::process::Command::new("cmd")
+                    .args(["/c", "mklink", "/J"])
+                    .arg(link)
+                    .arg(target)
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                assert!(ok, "mklink /J failed");
+            }
+            #[cfg(not(windows))]
+            std::os::unix::fs::symlink(target, link).unwrap();
+        };
+        let drop_link = |link: &Path| {
+            let _ = std::fs::remove_dir(link).or_else(|_| std::fs::remove_file(link));
+        };
+        let base = scratch("discover");
+        let repo = base.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let outside = base.join("outside");
+        std::fs::create_dir_all(outside.join("agents")).unwrap();
+        std::fs::write(outside.join("agents").join("w.md"), PINNED).unwrap();
+        // `.claude` itself a link
+        dir_link(&repo.join(".claude"), &outside);
+        let r = refresh_repo_models_at(&repo, &[]);
+        assert!(r.fixes.is_empty(), "{r:?}");
+        assert_eq!(r.problems.len(), 1, "{r:?}");
+        let p = &r.problems[0];
+        assert_eq!(p.file, ".claude/agents");
+        assert_eq!((p.old.as_str(), p.new.as_str()), (NOT_READ, NOT_READ));
+        assert!(
+            p.why.starts_with(".claude is a link") && p.why.ends_with("- not edited"),
+            "{p:?}"
+        );
+        // not a failed repair: the session's start line says nothing about it
+        assert_eq!(hook_line_for(&r), None);
+        drop_link(&repo.join(".claude"));
+        // `.claude/agents` a link: the same, named at that component
+        std::fs::create_dir_all(repo.join(".claude")).unwrap();
+        dir_link(
+            &repo.join(".claude").join("agents"),
+            &outside.join("agents"),
+        );
+        let r = refresh_repo_models_at(&repo, &[]);
+        assert_eq!(r.problems.len(), 1, "{r:?}");
+        assert_eq!(r.problems[0].old, NOT_READ);
+        assert!(
+            r.problems[0].why.starts_with(".claude/agents is a link"),
+            "{r:?}"
+        );
+        drop_link(&repo.join(".claude").join("agents"));
+        assert_eq!(
+            std::fs::read_to_string(outside.join("agents").join("w.md")).unwrap(),
+            PINNED
+        );
+        // `AGENTS.md` a file symlink
+        let agents_md = repo.join("AGENTS.md");
+        std::fs::write(outside.join("AGENTS.md"), "---\nmodel: GLM-5.3\n---\n").unwrap();
+        #[cfg(windows)]
+        let made =
+            std::os::windows::fs::symlink_file(outside.join("AGENTS.md"), &agents_md).is_ok();
+        #[cfg(not(windows))]
+        let made = std::os::unix::fs::symlink(outside.join("AGENTS.md"), &agents_md).is_ok();
+        if made {
+            let r = refresh_repo_models_at(&repo, &["glm-5.4".to_string()]);
+            assert_eq!(r.problems.len(), 1, "{r:?}");
+            let p = &r.problems[0];
+            assert_eq!(
+                (p.file.as_str(), p.old.as_str()),
+                ("AGENTS.md", NOT_READ),
+                "{p:?}"
+            );
+            assert!(p.why.starts_with("it is a link"), "{p:?}");
+            assert_eq!(
+                std::fs::read_to_string(outside.join("AGENTS.md")).unwrap(),
+                "---\nmodel: GLM-5.3\n---\n"
+            );
+            let _ = std::fs::remove_file(&agents_md);
+        } else {
+            eprintln!("skipped the AGENTS.md half: the system made no file symlink");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     // (0.2.5, F02-2) A concurrent edit between the read and the replace wins: the file keeps the
     // newer bytes, the repair is reported, and no temporary file is left behind.
     #[test]
@@ -1241,7 +1513,7 @@ mod tests {
         std::fs::create_dir_all(repo.join(".git").join("refs")).unwrap();
         std::fs::write(
             repo.join(".git").join("worktrees").join("wt").join("HEAD"),
-            "0123\n",
+            "0123456789abcdef0123456789abcdef01234567\n",
         )
         .unwrap();
         std::fs::write(
@@ -1285,7 +1557,11 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(&dotgit, "gitdir: ../admin\n").unwrap();
         assert_eq!(find_repo_root(&deep), None);
-        std::fs::write(target.join("HEAD"), "0123\n").unwrap();
+        std::fs::write(
+            target.join("HEAD"),
+            "0123456789abcdef0123456789abcdef01234567\n",
+        )
+        .unwrap();
         // (0.2.5, F13-2) HEAD alone is not enough: objects and refs too
         assert_eq!(find_repo_root(&deep), None);
         std::fs::create_dir_all(target.join("objects")).unwrap();
