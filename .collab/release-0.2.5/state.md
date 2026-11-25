@@ -1448,3 +1448,29 @@ swap -> xelth.com/C3 page after the tag.
   `c3 maintain` (scheduled check Nov 26 15:37), agy's first live run (scheduled Nov 28 14:23),
   the first other project's move to `.c3/` (that project's own `c3 finish`), the Windows CI
   flake (the probe names the hung process since 6fe515b - wait for an occurrence).
+
+## 2026-11-25 05:50 - on prod; the 0.2.6 wave described on the site, not started; a safety defect found
+
+- CI for 1880367 (records only), first attempt: the Windows job died in the c3-cli test step
+  with "The hosted runner lost communication with the server" and no log; both Linux jobs green.
+  Rerun started 05:25 (attempt 2). Earlier incidents read again: 0f52246 and 0eea5f1 "exceeded
+  the maximum execution time" (the step's own limit did not stop them), 748ba3a a test failure.
+- A read-only audit of every kill path (an opus-worker) found a product defect that fits:
+  `liveness::proc::descendants_in` lists a root's descendants by PARENT PID alone; on Windows an
+  orphan keeps its dead parent's PID, so when one of our processes is handed that number again
+  the orphan's subtree reads as ours and `kill_tree_checked` / `kill_tree_by_pid` terminate it
+  (`taskkill /T` walks parent PIDs the same way). `bounded.rs` already filters by creation time.
+  Two test helpers kill by a PID proved dead earlier. Full text: tech-debt file, "SAFETY - a
+  tree kill can take a process C3 never started". Present in 0.2.5 and earlier.
+- The operator, about 05:20: "как примешь закинь на прод и опиши на сайте следующую волну для
+  0.2.6 не начинай сделаем на следующей неделе". And on the question whether the kill defect is
+  fixed now or next week: "На следующей неделе" - the first item of the 0.2.6 wave.
+- Done: release build of the clean tip, `c3 0.2.5 (1880367)`, installed as the working binary
+  (the tagged build kept as `c3-0.2.5-b4b2e3d.exe.old`); its code is that of 6fe515b, green in CI
+  on three jobs. xelth.com: a card "Next: 0.2.6" after "More than reviews", nine languages, six
+  items (the process-tree fix first), the page assistant told that it is a plan (commits
+  d5d0995, 414f43d there); `./deploy.sh` ran through with its new health wait - health 200,
+  i18n 200, forum 200, T/health ok, C3 200, ws 101; the live page shows the card in en, ru, de,
+  ja, zh.
+- Roadmap, "Next": the order of the 0.2.6 wave - the kill fix, the handle-bound run writes, then
+  the candidates. NOTHING of it is started.
