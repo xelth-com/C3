@@ -1436,3 +1436,15 @@ swap -> xelth.com/C3 page after the tag.
 - Waiting for the operator's word, nothing else: whether `gpt-6.2-sol` gets a reserve or
   `on_request` in the roster; whether a run's writes are bound to directory handles now or in
   0.2.6 (the coordinator's recommendation: 0.2.6, with Astra after Nov 29).
+
+## 2026-11-25 01:12 - the operator's two decisions; what stays open are four watch items
+
+- Asked in a dialog, answered 01:10: (1) a run's writes bound to directory handles - "В 0.2.6":
+  the first task of the next release (roadmap, "Next"), with its own acceptance after Nov 29;
+  (2) `gpt-6.2-sol` in the roster - "Оставить как есть": neither a reserve nor on-request.
+- CI for 071c858: GREEN on all three jobs.
+- The tech-debt file's open boxes are now four, all in "observations that need a live run
+  (nothing to build until they are seen)": the codex / kimi updates and a rollback by
+  `c3 maintain` (scheduled check Nov 26 15:37), agy's first live run (scheduled Nov 28 14:23),
+  the first other project's move to `.c3/` (that project's own `c3 finish`), the Windows CI
+  flake (the probe names the hung process since 6fe515b - wait for an occurrence).
