@@ -1437,9 +1437,9 @@ swap -> xelth.com/C3 page after the tag.
   `on_request` in the roster; whether a run's writes are bound to directory handles now or in
   0.2.6 (the coordinator's recommendation: 0.2.6, with Astra after Nov 29).
 
-## 2026-11-25 01:12 - the operator's two decisions; what stays open are four watch items
+## 2026-11-25 04:25 - the operator's two decisions; what stays open are four watch items
 
-- Asked in a dialog, answered 01:10: (1) a run's writes bound to directory handles - "В 0.2.6":
+- Asked in a dialog at 01:08, answered by 04:25: (1) a run's writes bound to directory handles - "В 0.2.6":
   the first task of the next release (roadmap, "Next"), with its own acceptance after Nov 29;
   (2) `gpt-6.2-sol` in the roster - "Оставить как есть": neither a reserve nor on-request.
 - CI for 071c858: GREEN on all three jobs.
